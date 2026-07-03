@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#241a10"/>
+      <stop offset="1" stop-color="#120c08"/>
+    </linearGradient>
+    <linearGradient id="cn" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e23b40"/>
+      <stop offset="1" stop-color="#7a1420"/>
+    </linearGradient>
+    <linearGradient id="jp" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a4c80"/>
+      <stop offset="1" stop-color="#141e3c"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f7e9b0"/>
+      <stop offset="0.5" stop-color="#e8c25a"/>
+      <stop offset="1" stop-color="#b8860b"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <circle cx="256" cy="256" r="190" fill="none" stroke="url(#gold)" stroke-width="8" opacity="0.6"/>
+  <path d="M256 70 A186 186 0 0 0 256 442 Z" fill="url(#cn)" opacity="0.92"/>
+  <path d="M256 70 A186 186 0 0 1 256 442 Z" fill="url(#jp)" opacity="0.92"/>
+  <text x="186" y="300" font-family="serif" font-size="150" font-weight="900" fill="url(#gold)" text-anchor="middle">三</text>
+  <text x="326" y="300" font-family="serif" font-size="150" font-weight="900" fill="url(#gold)" text-anchor="middle">戦</text>
+  <g stroke="url(#gold)" stroke-width="10" stroke-linecap="round">
+    <line x1="150" y1="150" x2="362" y2="362"/>
+    <line x1="362" y1="150" x2="150" y2="362"/>
+  </g>
+  <circle cx="256" cy="256" r="26" fill="url(#gold)"/>
+  <text x="256" y="270" font-family="serif" font-size="34" font-weight="900" fill="#7a1420" text-anchor="middle">斗</text>
+</svg>
