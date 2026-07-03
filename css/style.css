@@ -88,18 +88,20 @@ html, body {
 }
 .home-vs .flag { font-size: clamp(40px,12vw,72px); filter: drop-shadow(0 4px 8px var(--shadow)); }
 .home-vs .vs { font-size: 30px; font-weight: 900; color: var(--cn-red); text-shadow: 0 2px 6px #000; }
-.menu { display: flex; flex-direction: column; gap: 14px; width: min(420px, 86vw); }
+/* 两列紧凑网格：九大板块一屏放下 */
+.menu { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; width: min(470px, 94vw); }
 .menu-btn {
-  position: relative; padding: 20px 22px; border: none; cursor: pointer;
-  border-radius: 14px; font-size: 22px; font-family: inherit; color: var(--paper);
+  position: relative; padding: 11px 12px; border: none; cursor: pointer;
+  border-radius: 12px; font-size: 16px; font-family: inherit; color: var(--paper);
   background: linear-gradient(135deg, rgba(193,39,45,.85), rgba(120,20,30,.9));
   border: 1px solid rgba(212,175,55,.5);
-  box-shadow: 0 6px 20px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.15);
-  letter-spacing: 3px; transition: transform .15s, box-shadow .15s; text-align: left;
-  display: flex; align-items: center; gap: 14px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.15);
+  letter-spacing: 1px; transition: transform .15s, box-shadow .15s; text-align: left;
+  display: flex; align-items: center; gap: 8px; min-width: 0;
 }
-.menu-btn .mi { font-size: 30px; }
-.menu-btn small { display: block; font-size: 15px; letter-spacing: 1px; color: #f0dcae; opacity: .85; margin-top: 4px; }
+.menu-btn .mi { font-size: 22px; flex-shrink: 0; }
+.menu-btn > span:last-child { min-width: 0; }
+.menu-btn small { display: block; font-size: 10px; letter-spacing: 0; color: #f0dcae; opacity: .85; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .menu-btn:active { transform: scale(.97); }
 .menu-btn:nth-child(even) { background: linear-gradient(135deg, rgba(43,58,103,.9), rgba(20,30,60,.92)); }
 
@@ -479,7 +481,7 @@ html, body {
   25% { box-shadow: 0 0 20px rgba(255,60,40,.95); background: rgba(255,60,40,.25); transform: scale(1.03); }
   100% { box-shadow: 0 0 0 rgba(255,60,40,0); background: rgba(255,60,40,0); transform: scale(1); }
 }
-.tw-namewrap { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 4px; }
+.tw-namewrap { flex: 0 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 4px; }
 .tw-roster.jp .tw-namewrap { flex-direction: row-reverse; }
 .tw-name {
   flex: 0 1 auto; min-width: 0; font-size: 16px; font-weight: 700; color: var(--paper); cursor: pointer;
@@ -488,7 +490,10 @@ html, body {
 .tw-roster.jp .tw-name { text-align: right; }
 .tw-unit.dead .tw-name { text-decoration: line-through; cursor: default; }
 .tw-troops { flex: 0 0 auto; font-size: 15px; font-weight: 700; color: var(--cn-gold); font-family: "DotGothic16", monospace; }
-.tw-track { flex: 0 1 26%; min-width: 22px; height: 9px; border-radius: 5px; background: rgba(0,0,0,.5); overflow: hidden; }
+/* 兵力条区域占满剩余行宽（随屏宽自适应）；条本身长度按该将兵力占全场最大兵力的比例伸展 */
+.tw-track-area { flex: 1 1 26%; min-width: 22px; display: flex; align-items: center; }
+.tw-roster.jp .tw-track-area { justify-content: flex-end; }
+.tw-track { display: block; height: 9px; border-radius: 5px; background: rgba(0,0,0,.5); overflow: hidden; transition: width .5s ease; }
 .tw-fill { display: block; height: 100%; background: linear-gradient(90deg,#8bc34a,#4caf50); transition: width .5s ease; }
 .tw-roster.jp .tw-fill { margin-left: auto; background: linear-gradient(270deg,#8bc34a,#4caf50); }
 .tw-unit.dead .tw-fill { background: #666; }
@@ -607,6 +612,13 @@ html, body {
 .buff-btn .bt b { color: var(--cn-red); font-size: 16px; }
 .buff-btn .bt small { color: #5a4a30; font-size: 12px; }
 
+/* 养成页：姓名旁改名笔按钮 */
+.rpg-edit {
+  background: none; border: 1px solid rgba(212,175,55,.4); border-radius: 6px;
+  color: var(--cn-gold); font-size: 14px; line-height: 1; padding: 2px 6px;
+  cursor: pointer; vertical-align: middle; margin: 0 2px;
+}
+
 /* 国战 · 攻城略地：随机地图（绝对定位城池 + SVG 城际道路） */
 .cq-map { position: relative; margin: 6px 10px; height: clamp(300px, 44vh, 400px); }
 .cq-lines { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -627,6 +639,13 @@ html, body {
 .cqc-count { font-size: 11px; color: #c9b890; margin-top: 1px; }
 .cqc-tag { position: absolute; top: -9px; right: -6px; font-size: 15px; }
 .cq-actions { display: flex; gap: 8px; margin: 4px 10px; }
+/* 出兵行军标记：沿道路平滑滑行 */
+.cq-march {
+  position: absolute; z-index: 3; font-size: 22px; pointer-events: none;
+  transform: translate(-50%, -50%);
+  transition: left .7s ease-in-out, top .7s ease-in-out;
+  filter: drop-shadow(0 2px 4px #000);
+}
 
 /* 世界杯竞猜 */
 .pred-card { max-height: 86vh; overflow-y: auto; }

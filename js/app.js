@@ -327,18 +327,21 @@
         this.cv.width = W; this.cv.height = H;
         this.ctx.imageSmoothingEnabled = false;   // 改尺寸会重置 2d 上下文状态
       }
-      // 对战进行中则重定位骑将基准点到新的两侧
+      // 对战进行中则重定位骑将基准点
       if (this.riders && this.riders.length === 2) {
-        this.riders[0].baseX = 44; this.riders[1].baseX = W - 44;
-        if (!this.riders[0].anim) this.riders[0].x = 44;
-        if (!this.riders[1].anim) this.riders[1].x = W - 44;
+        const [x1, x2] = this.basePos(this.cv.width);
+        this.riders[0].baseX = x1; this.riders[1].baseX = x2;
+        if (!this.riders[0].anim) this.riders[0].x = x1;
+        if (!this.riders[1].anim) this.riders[1].x = x2;
       }
     },
+    // 站位：窄屏靠两侧；宽屏(折叠屏展开)站在 1/3 与 2/3 处，不贴屏幕边缘
+    basePos(W) { return W > 420 ? [Math.round(W / 3), Math.round(W * 2 / 3)] : [44, W - 44]; },
     setup(g1, g2) {
       if (!this.cv) this.init();
       this.resize();
-      const W = this.cv.width;
-      this.riders = [this.mk(g1, 44, false), this.mk(g2, W - 44, true)];
+      const [x1, x2] = this.basePos(this.cv.width);
+      this.riders = [this.mk(g1, x1, false), this.mk(g2, x2, true)];
       this.spark = 0; this.shake = 0;
       this.start();
     },
@@ -1384,6 +1387,8 @@
       }
       this.cn = (side === "cn" ? mine : theirs).map(g => makeTroopUnit(g, "cn"));
       this.jp = (side === "jp" ? mine : theirs).map(g => makeTroopUnit(g, "jp"));
+      // 全场最大兵力：兵力条长度按各将兵力占此值的比例伸展（最长一条到达数字边）
+      this.maxCap = Math.max(...[...this.cn, ...this.jp].map(u => u.maxTroops));
       this.kills = { player: 0, ai: 0 };
       showScreen("teamwar");
       $("#tw-log").innerHTML = "";
@@ -1608,7 +1613,7 @@
       if (container.children.length !== arr.length) {
         container.innerHTML = arr.map((u, i) => `<div class="tw-unit" data-idx="${i}">
           <div class="tw-namewrap"><span class="tw-name"></span><span class="tw-troops"></span></div>
-          <div class="tw-track"><span class="tw-fill"></span></div>
+          <div class="tw-track-area"><span class="tw-track"><span class="tw-fill"></span></span></div>
         </div>`).join("");
         $$(".tw-unit", container).forEach(el => {
           const u = arr[+el.dataset.idx];
@@ -1634,6 +1639,9 @@
         if (troopsEl.textContent === "") troopsEl.textContent = u.troops;
         else if (prevTroops !== u.troops) this.animateNumber(troopsEl, prevTroops, u.troops);
         u._dispTroops = u.troops;
+        // 条总长 ∝ 该将兵力上限 / 全场最大兵力；条内填充 = 现存兵力比例
+        const cap = this.maxCap || Math.max(...arr.map(x => x.maxTroops));
+        el.querySelector(".tw-track").style.width = Math.max(8, u.maxTroops / cap * 100) + "%";
         el.querySelector(".tw-fill").style.width = Math.max(0, u.troops / u.maxTroops * 100) + "%";
         // 击杀特效：刚由存活转为阵亡时，闪烁高亮一下再落定为灰暗状态
         if (!u.alive && u._wasAlive) {
@@ -1696,34 +1704,33 @@
     cities: [], edges: [], edgeSet: new Set(),
     playerSide: null, running: false, over: false, busyBattle: false,
     sel: null, turnNo: 1, rpg: false, kills: 0, captures: 0,
-    NAMES: { cn: ["成都", "洛阳", "长安", "许昌", "襄阳", "建业"], jp: ["京都", "江户", "安土", "名古屋", "大阪", "小田原"] },
+    NAMES: {
+      cn: ["成都", "洛阳", "长安", "许昌", "襄阳", "建业", "邺城", "汉中", "江陵", "合肥"],
+      jp: ["京都", "江户", "大阪", "安土", "名古屋", "小田原", "骏府", "甲府", "春日山", "姬路"],
+    },
     ek(i, j) { return i < j ? i + "-" + j : j + "-" + i; },
 
-    /* ---- 随机地图生成：位置=锚点+抖动(防重叠)，连边=Gabriel图(天然无交叉且连通)再修剪 ---- */
+    /* ---- 随机地图生成：城市总数随机、双方城数随机(≥1)、位置=锚点+抖动(防重叠)，
+            连边=Gabriel图(天然无交叉且连通)再修剪 ---- */
     genMap() {
-      const cn = this.NAMES.cn.slice(), jp = this.NAMES.jp.slice();
-      shuffle(cn); shuffle(jp);
-      // 4列×3行锚点：左两列三国、右两列战国；坐标为百分比
-      const colX = [13, 37, 63, 87], rowY = [18, 50, 82];
-      const cities = [];
-      let ci = 0, ji = 0;
-      for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) {
-        const side = c < 2 ? "cn" : "jp";
-        cities.push({
-          name: side === "cn" ? cn[ci++] : jp[ji++], side, units: [],
-          x: colX[c] + rand(-6, 6), y: rowY[r] + rand(-12, 12),
-        });
-      }
-      // 防重叠松弛：任意两城节点框过近则沿纵向推开（横向不动，保持左右分界）；
-      // 每轮松弛后立即收拢回边界，确保贴边节点也能被对方让开
+      // 城市总数 9~14；三国城数随机（双方至少 1 城、至多 10 城）
+      const N = randInt(9, 14);
+      const cnCount = randInt(Math.max(1, N - 10), Math.min(10, N - 1));
+      // 4×4 锚点池取 N 个 + 抖动
+      const colX = [13, 38, 62, 87], rowY = [12, 38, 62, 88];
+      const slots = [];
+      for (const y of rowY) for (const x of colX) slots.push({ x, y });
+      shuffle(slots);
+      const cities = slots.slice(0, N).map(s => ({ x: s.x + rand(-6, 6), y: s.y + rand(-8, 8), units: [] }));
+      // 防重叠松弛：过近则沿纵向推开；每轮松弛后收拢回边界
       const clampAll = () => cities.forEach(c => {
-        c.y = Math.max(10, Math.min(90, c.y));
-        c.x = c.side === "cn" ? Math.max(7, Math.min(44, c.x)) : Math.max(56, Math.min(93, c.x));
+        c.x = Math.max(7, Math.min(93, c.x));
+        c.y = Math.max(9, Math.min(91, c.y));
       });
       clampAll();
       for (let it = 0; it < 60; it++) {
         let moved = false;
-        for (let i = 0; i < 12; i++) for (let j = i + 1; j < 12; j++) {
+        for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
           const a = cities[i], b = cities[j];
           if (Math.abs(b.x - a.x) < 21 && Math.abs(b.y - a.y) < 15) {
             const s = b.y >= a.y ? 1 : -1;
@@ -1733,14 +1740,22 @@
         clampAll();
         if (!moved) break;
       }
+      // 归属：按 x 从左到右排序，最左 cnCount 城归三国、其余归战国（保持东西对峙、前线随机）
+      cities.sort((a, b) => a.x - b.x || a.y - b.y);
+      const cnNames = this.NAMES.cn.slice(), jpNames = this.NAMES.jp.slice();
+      shuffle(cnNames); shuffle(jpNames);
+      cities.forEach((c, i) => {
+        c.side = i < cnCount ? "cn" : "jp";
+        c.name = c.side === "cn" ? cnNames.pop() : jpNames.pop();
+      });
       // Gabriel 图：两城之间若「以其连线为直径的圆」内无第三城，则修路相连
       const d2 = (a, b) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
       let edges = [];
-      for (let i = 0; i < 12; i++) for (let j = i + 1; j < 12; j++) {
+      for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
         const mx = (cities[i].x + cities[j].x) / 2, my = (cities[i].y + cities[j].y) / 2;
         const r2 = d2(cities[i], cities[j]) / 4;
         let ok = true;
-        for (let k = 0; k < 12 && ok; k++) {
+        for (let k = 0; k < N && ok; k++) {
           if (k === i || k === j) continue;
           if ((cities[k].x - mx) ** 2 + (cities[k].y - my) ** 2 < r2 * 0.96) ok = false;
         }
@@ -1753,14 +1768,14 @@
           const u = q.shift();
           for (const [a, b] of eds) { const v = a === u ? b : b === u ? a : -1; if (v >= 0 && !seen.has(v)) { seen.add(v); q.push(v); } }
         }
-        return seen.size === 12;
+        return seen.size === N;
       };
       const canDrop = e => {
         const rest = edges.filter(x => x !== e);
         return deg(rest, e[0]) >= 2 && deg(rest, e[1]) >= 2 && connected(rest);
       };
       // 修剪：每城最多 4 条路（从最长的边开始拆）
-      for (let n = 0; n < 12; n++) {
+      for (let n = 0; n < N; n++) {
         let mine = edges.filter(e => e[0] === n || e[1] === n).sort((a, b) => d2(cities[b[0]], cities[b[1]]) - d2(cities[a[0]], cities[a[1]]));
         for (const e of mine) {
           if (deg(edges, n) <= 4) break;
@@ -1778,7 +1793,7 @@
       const crossCount = () => edges.filter(([a, b]) => cities[a].side !== cities[b].side).length;
       if (crossCount() < 2) {
         const cand = [];
-        for (let i = 0; i < 12; i++) for (let j = i + 1; j < 12; j++) {
+        for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
           if (cities[i].side === cities[j].side) continue;
           if (edges.some(e => e[0] === i && e[1] === j)) continue;
           cand.push([i, j]);
@@ -1793,7 +1808,8 @@
     },
     // 图上 BFS：各城到起点的路网步数
     graphDists(start) {
-      const dist = Array(12).fill(Infinity); dist[start] = 0;
+      const n = this.cities.length;
+      const dist = Array(n).fill(Infinity); dist[start] = 0;
       const q = [start];
       while (q.length) {
         const u = q.shift();
@@ -1812,7 +1828,7 @@
     askSide() {
       openOverlay(`<div class="result-card">
         <h1>国战 · 攻城略地</h1>
-        <div class="wdesc">12 座城池，三国与战国各占一半。<br>每回合可「攻城」或「调兵」一次：点选己方城池，再点相邻目标。<br>攻城战按组队大战规则展开——败方全军覆没，武将阵亡本局不复活。<br>占领全部城池者，一统天下！</div>
+        <div class="wdesc">每局随机生成城池地图与道路——城市数量、双方地盘、各城驻军皆随机（双方武将总数相同）。<br>每回合可「攻城」或「调兵」一次：点选己方城池，再点相邻目标。<br>攻城战按组队大战规则展开——败方全军覆没，武将阵亡本局不复活。<br>占领全部城池者，一统天下！</div>
         <div class="btns">
           <button class="btn-primary" id="cq-side-cn">🐲 执三国</button>
           <button class="btn-primary" style="background:linear-gradient(135deg,var(--jp-indigo),#141e3c)" id="cq-side-jp">🏯 执战国</button>
@@ -1825,19 +1841,31 @@
       this.running = true; this.over = false; this.busyBattle = false;
       this.sel = null; this.turnNo = 1;
       this.rpg = !!opts.rpg; this.kills = 0; this.captures = 0;
+      this.genMap();   // 每局随机生成城池布局与道路连通
+      const cnCities = this.cities.filter(c => c.side === "cn");
+      const jpCities = this.cities.filter(c => c.side === "jp");
+      // 双方武将总数相同（随机 10~16，且 ≥ 双方城数、≤ 单城8将的容量上限）
+      const total = Math.max(cnCities.length, jpCities.length,
+        Math.min(randInt(10, 16), cnCities.length * 8, jpCities.length * 8));
       const mkArmy = (s, hero) => {
         const pool = DB.bySide(s).slice(); shuffle(pool);
-        let arr = pool.slice(0, 18).map(clone);
-        if (hero) arr = [clone(hero), ...arr.slice(0, 17)];
+        let arr = pool.slice(0, total).map(clone);
+        if (hero) arr = [clone(hero), ...arr.slice(0, total - 1)];
         return arr;
       };
-      const cnG = mkArmy("cn", opts.hero && opts.hero.side === "cn" ? opts.hero : null);
-      const jpG = mkArmy("jp", opts.hero && opts.hero.side === "jp" ? opts.hero : null);
-      this.genMap();   // 每局随机生成城池布局与道路连通
-      this.cities.filter(c => c.side === "cn").forEach((c, i) => c.units = cnG.slice(i * 3, i * 3 + 3));
-      this.cities.filter(c => c.side === "jp").forEach((c, i) => c.units = jpG.slice(i * 3, i * 3 + 3));
+      // 每城初始武将数随机：先保证每城 1 将，剩余随机分配（单城≤8）
+      const deploy = (cityList, gens) => {
+        cityList.forEach(c => c.units = []);
+        gens.forEach((g, i) => {
+          if (i < cityList.length) { cityList[i].units.push(g); return; }
+          const open = cityList.filter(c => c.units.length < 8);
+          open[randInt(0, open.length - 1)].units.push(g);
+        });
+      };
+      deploy(cnCities, mkArmy("cn", opts.hero && opts.hero.side === "cn" ? opts.hero : null));
+      deploy(jpCities, mkArmy("jp", opts.hero && opts.hero.side === "jp" ? opts.hero : null));
       $("#cq-log").innerHTML = "";
-      this.log(`天下大乱，${sideName(side)}（你）与${sideName(this.aiSide())}隔界对峙。山川各异、道路相通，攻城略地开始！`);
+      this.log(`天下大乱：三国 ${cnCities.length} 城、战国 ${jpCities.length} 城，双方各拥 ${total} 员武将。你执${sideName(side)}，攻城略地开始！`);
       showScreen("conquest");
       this.render();
     },
@@ -1847,6 +1875,20 @@
     log(text) {
       const el = document.createElement("div"); el.className = "ln"; el.textContent = text;
       const box = $("#cq-log"); box.appendChild(el); box.scrollTop = box.scrollHeight;
+    },
+    // 出兵行军动画：一枚兵马标记沿道路从出发城滑向目的城
+    async marchAnim(A, B) {
+      const box = $("#cq-map");
+      const el = document.createElement("div");
+      el.className = "cq-march";
+      el.textContent = "🐎";
+      el.style.left = A.x + "%"; el.style.top = A.y + "%";
+      box.appendChild(el);
+      AudioSystem.sfx.gallop();
+      void el.offsetWidth;
+      el.style.left = B.x + "%"; el.style.top = B.y + "%";
+      await sleep(720);
+      el.remove();
     },
 
     render() {
@@ -1875,7 +1917,7 @@
       $$(".cq-city", box).forEach(el => el.onclick = () => this.onCity(+el.dataset.i));
       const cnN = this.cities.filter(c => c.side === "cn").length;
       $("#cq-status").textContent = this.over ? "战局已定"
-        : `第 ${this.turnNo} 回合 · 你的行动 —— 三国 ${cnN} 城 : 战国 ${12 - cnN} 城${selCity ? ` · ${selCity.name}【${selCity.units.map(g => g.name).join("、")}】→ 点相邻城 ⚔攻/➡移` : " · 点选己方城池"}`;
+        : `第 ${this.turnNo} 回合 · 你的行动 —— 三国 ${cnN} 城 : 战国 ${this.cities.length - cnN} 城${selCity ? ` · ${selCity.name}【${selCity.units.map(g => g.name).join("、")}】→ 点相邻城 ⚔攻/➡移` : " · 点选己方城池"}`;
       $("#cq-actions").innerHTML = this.over
         ? `<button class="cup-go primary" id="cq-restart">再来一局</button>`
         : `<button class="cup-go" id="cq-cancel" ${this.sel == null ? "disabled" : ""}>取消选择</button>
@@ -1900,27 +1942,32 @@
       }
       if (c.side === this.playerSide && c.units.length) { this.sel = i; this.render(); }
     },
-    move(a, b) {
+    async move(a, b) {
       const A = this.cities[a], B = this.cities[b];
       if (A.units.length + B.units.length > 8) { toast("单城驻军上限 8 将"); return; }
+      this.sel = null;
+      this.busyBattle = true; this.render();
+      await this.marchAnim(A, B);
+      this.busyBattle = false;
       this.log(`你把 ${A.name} 的 ${A.units.length} 将调往 ${B.name}。`);
       B.units.push(...A.units); A.units = [];
-      this.sel = null;
       this.afterPlayerAction();
     },
-    attack(a, b, byPlayer) {
+    async attack(a, b, byPlayer) {
       const A = this.cities[a], B = this.cities[b];
       const atkSide = byPlayer ? this.playerSide : this.aiSide();
       this.sel = null;
+      this.busyBattle = true;
+      this.render();
+      await this.marchAnim(A, B);   // 出征行军动画后再入战
       if (!B.units.length) {   // 空城直接占领
+        this.busyBattle = false;
         this.log(`${byPlayer ? "你" : "敌军"}兵不血刃，${A.name} 之军开入空城 ${B.name}！`);
         B.side = atkSide; B.units = A.units; A.units = [];
         if (byPlayer) this.captures++;
         if (byPlayer) this.afterPlayerAction(); else this.afterAiAction();
         return;
       }
-      this.busyBattle = true;
-      this.render();
       const atkUnits = A.units.slice(), defUnits = B.units.slice();
       this.log(`⚔ ${byPlayer ? "你" : "敌军"}自 ${A.name} 发兵攻打 ${B.name}（${atkUnits.length} 将 vs ${defUnits.length} 将）！`);
       // 攻城战：玩家一方永远作为 TeamBattle 的「我方」；胜负由 onDone 回传
@@ -2014,10 +2061,11 @@
 
     checkEnd() {
       if (this.over) return true;
+      const N = this.cities.length;
       const cnCities = this.cities.filter(c => c.side === "cn").length;
       const sideUnits = s => this.cities.filter(c => c.side === s).reduce((n, c) => n + c.units.length, 0);
       let winner = null;
-      if (cnCities === 12 || sideUnits("jp") === 0) winner = "cn";
+      if (cnCities === N || sideUnits("jp") === 0) winner = "cn";
       else if (cnCities === 0 || sideUnits("cn") === 0) winner = "jp";
       if (!winner) return false;
       this.over = true; this.running = false;
@@ -2045,7 +2093,7 @@
    *  武将世界杯：随机分组 → 小组循环赛(取前二) → 单败淘汰
    * ============================================================ */
   const Tournament = {
-    size: 16, participants: [], groups: [], koRounds: [], koOffsets: [], champion: null, stage: "setup",
+    size: 32, participants: [], groups: [], koRounds: [], koOffsets: [], champion: null, stage: "setup",
     busy: false, grpReveal: null, grpActive: -1, koReveal: 0, koActive: -1,
     rpgMode: false, fight: null,
     GROUP_NAMES: "ABCDEFGH".split(""),
@@ -2501,6 +2549,11 @@
       this.load();
       if (this.char) this.renderHub();
       else this.renderCreate();
+      // 重建角色按钮常驻右上角（音乐按钮左侧）
+      $("#rpg-reset").onclick = () => {
+        if (!this.char) { this.renderCreate(); return; }
+        if (confirm("放弃当前角色，重新创建？")) { this.char = null; localStorage.removeItem(RPG_KEY); this.renderCreate(); }
+      };
       showScreen("rpg");
     },
 
@@ -2590,7 +2643,7 @@
         <div class="rpg-card ${c.side}">
           <div class="rpg-av">${avatarChar(c.name)}</div>
           <div class="rpg-meta">
-            <div class="rpg-name">${c.name} <span class="rpg-lv">Lv.${c.level}</span></div>
+            <div class="rpg-name">${c.name} <button class="rpg-edit" id="rpg-rename" title="改名">✎</button> <span class="rpg-lv">Lv.${c.level}</span></div>
             <div class="rpg-side-tag">${c.side === 'cn' ? '三国风' : '战国风'} · 战绩 ${c.wins}胜${c.losses}负</div>
             <div class="rpg-exp"><span class="rpg-exp-fill" style="width:${expPct}%"></span><span class="rpg-exp-txt">EXP ${c.exp}/${need}</span></div>
           </div>
@@ -2616,10 +2669,7 @@
           <button class="cup-go primary" id="rpg-war">🚩 阵营大战</button>
           <button class="cup-go primary" id="rpg-teamwar">🛡 组队厮杀</button>
           <button class="cup-go primary" id="rpg-conquest">🗺 国战略地</button>
-          <button class="cup-go primary" id="rpg-cup16">🏆 世界杯 16 强</button>
           <button class="cup-go primary" id="rpg-cup32">🏆 世界杯 32 强</button>
-          <button class="cup-go" id="rpg-rename">✎ 改名</button>
-          <button class="cup-go" id="rpg-reset">↺ 重建角色</button>
         </div>
         <div class="section-hint">历练 / 车轮 / 百人斩 / 2v2 / 阵营 / 组队 / 世界杯（含竞猜）均可获得经验，升级获得加点；战绩越好经验越多。</div>
       </div>`;
@@ -2637,12 +2687,10 @@
       $("#rpg-war").onclick = () => this.war();
       $("#rpg-teamwar").onclick = () => this.teamBattle();
       $("#rpg-conquest").onclick = () => this.conquest();
-      $("#rpg-cup16").onclick = () => this.joinCup(16);
       $("#rpg-cup32").onclick = () => this.joinCup(32);
       $("#rpg-rename").onclick = () => {
         const n = prompt("新的名字：", c.name); if (n && n.trim()) { c.name = n.trim().slice(0, 6); this.save(); this.renderHub(); }
       };
-      $("#rpg-reset").onclick = () => { if (confirm("放弃当前角色，重新创建？")) { this.char = null; localStorage.removeItem(RPG_KEY); this.renderCreate(); } };
     },
     allocate(k) {
       if (this.char.points <= 0) return;
