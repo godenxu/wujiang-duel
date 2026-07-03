@@ -1370,7 +1370,8 @@
       this.rpg = !!opts.rpg;
       this.onDone = opts.onDone || null;   // 国战等外部玩法的战斗回调：结束时回传战果而非标准结算
       const oppSide = side === "cn" ? "jp" : "cn";
-      let mine = picks.slice(0, 10).map(clone);
+      // exact 模式（国战攻城等）：双方名单原样上阵、不足不补、不设 10 人上限
+      let mine = (opts.exact ? picks.slice() : picks.slice(0, 10)).map(clone);
       if (mine.length < 10 && !opts.exact) {
         const have = new Set(mine.map(p => p.id));
         const pool = DB.bySide(side).filter(g => !have.has(g.id));
@@ -1379,7 +1380,7 @@
       }
       let theirs;
       if (opts.enemies) {
-        theirs = opts.enemies.slice(0, 10).map(clone);
+        theirs = opts.enemies.map(clone);
       } else {
         theirs = DB.bySide(oppSide).slice();
         shuffle(theirs);
@@ -1844,22 +1845,21 @@
       this.genMap();   // 每局随机生成城池布局与道路连通
       const cnCities = this.cities.filter(c => c.side === "cn");
       const jpCities = this.cities.filter(c => c.side === "jp");
-      // 双方武将总数相同（随机 10~16，且 ≥ 双方城数、≤ 单城8将的容量上限）
+      // 双方武将总数相同：完全随机 8~100（合计最多200），且 ≥ 双方城数、≤ 阵营卡池数量
       const total = Math.max(cnCities.length, jpCities.length,
-        Math.min(randInt(10, 16), cnCities.length * 8, jpCities.length * 8));
+        Math.min(randInt(8, 100), DB.bySide("cn").length, DB.bySide("jp").length));
       const mkArmy = (s, hero) => {
         const pool = DB.bySide(s).slice(); shuffle(pool);
         let arr = pool.slice(0, total).map(clone);
         if (hero) arr = [clone(hero), ...arr.slice(0, total - 1)];
         return arr;
       };
-      // 每城初始武将数随机：先保证每城 1 将，剩余随机分配（单城≤8）
+      // 每城初始武将数随机：先保证每城 1 将，剩余完全随机分配（不设单城上限）
       const deploy = (cityList, gens) => {
         cityList.forEach(c => c.units = []);
         gens.forEach((g, i) => {
           if (i < cityList.length) { cityList[i].units.push(g); return; }
-          const open = cityList.filter(c => c.units.length < 8);
-          open[randInt(0, open.length - 1)].units.push(g);
+          cityList[randInt(0, cityList.length - 1)].units.push(g);
         });
       };
       deploy(cnCities, mkArmy("cn", opts.hero && opts.hero.side === "cn" ? opts.hero : null));
@@ -1944,7 +1944,6 @@
     },
     async move(a, b) {
       const A = this.cities[a], B = this.cities[b];
-      if (A.units.length + B.units.length > 8) { toast("单城驻军上限 8 将"); return; }
       this.sel = null;
       this.busyBattle = true; this.render();
       await this.marchAnim(A, B);
@@ -2045,7 +2044,6 @@
       for (const A of srcs) {
         for (const B of this.cities) {
           if (B.side !== ai || B === A || !this.adj(A, B)) continue;
-          if (A.units.length + B.units.length > 8) continue;
           if (distToFoe(B) < distToFoe(A)) { mv = { A, B }; break; }
         }
         if (mv) break;
