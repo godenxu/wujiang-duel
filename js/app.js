@@ -1693,17 +1693,117 @@
    *  败方全军覆没、武将阵亡本局不复活；空城可直接占领；占领全部 12 城获胜
    * ============================================================ */
   const Conquest = {
-    cities: [], playerSide: null, running: false, over: false, busyBattle: false,
+    cities: [], edges: [], edgeSet: new Set(),
+    playerSide: null, running: false, over: false, busyBattle: false,
     sel: null, turnNo: 1, rpg: false, kills: 0, captures: 0,
-    // 4×3 地图：左两列三国，右两列战国
-    LAYOUT: [
-      { name: "成都", x: 0, y: 0, side: "cn" }, { name: "洛阳", x: 1, y: 0, side: "cn" },
-      { name: "京都", x: 2, y: 0, side: "jp" }, { name: "江户", x: 3, y: 0, side: "jp" },
-      { name: "长安", x: 0, y: 1, side: "cn" }, { name: "许昌", x: 1, y: 1, side: "cn" },
-      { name: "安土", x: 2, y: 1, side: "jp" }, { name: "名古屋", x: 3, y: 1, side: "jp" },
-      { name: "襄阳", x: 0, y: 2, side: "cn" }, { name: "建业", x: 1, y: 2, side: "cn" },
-      { name: "大阪", x: 2, y: 2, side: "jp" }, { name: "小田原", x: 3, y: 2, side: "jp" },
-    ],
+    NAMES: { cn: ["成都", "洛阳", "长安", "许昌", "襄阳", "建业"], jp: ["京都", "江户", "安土", "名古屋", "大阪", "小田原"] },
+    ek(i, j) { return i < j ? i + "-" + j : j + "-" + i; },
+
+    /* ---- 随机地图生成：位置=锚点+抖动(防重叠)，连边=Gabriel图(天然无交叉且连通)再修剪 ---- */
+    genMap() {
+      const cn = this.NAMES.cn.slice(), jp = this.NAMES.jp.slice();
+      shuffle(cn); shuffle(jp);
+      // 4列×3行锚点：左两列三国、右两列战国；坐标为百分比
+      const colX = [13, 37, 63, 87], rowY = [18, 50, 82];
+      const cities = [];
+      let ci = 0, ji = 0;
+      for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) {
+        const side = c < 2 ? "cn" : "jp";
+        cities.push({
+          name: side === "cn" ? cn[ci++] : jp[ji++], side, units: [],
+          x: colX[c] + rand(-6, 6), y: rowY[r] + rand(-12, 12),
+        });
+      }
+      // 防重叠松弛：任意两城节点框过近则沿纵向推开（横向不动，保持左右分界）；
+      // 每轮松弛后立即收拢回边界，确保贴边节点也能被对方让开
+      const clampAll = () => cities.forEach(c => {
+        c.y = Math.max(10, Math.min(90, c.y));
+        c.x = c.side === "cn" ? Math.max(7, Math.min(44, c.x)) : Math.max(56, Math.min(93, c.x));
+      });
+      clampAll();
+      for (let it = 0; it < 60; it++) {
+        let moved = false;
+        for (let i = 0; i < 12; i++) for (let j = i + 1; j < 12; j++) {
+          const a = cities[i], b = cities[j];
+          if (Math.abs(b.x - a.x) < 21 && Math.abs(b.y - a.y) < 15) {
+            const s = b.y >= a.y ? 1 : -1;
+            a.y -= s * 2; b.y += s * 2; moved = true;
+          }
+        }
+        clampAll();
+        if (!moved) break;
+      }
+      // Gabriel 图：两城之间若「以其连线为直径的圆」内无第三城，则修路相连
+      const d2 = (a, b) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+      let edges = [];
+      for (let i = 0; i < 12; i++) for (let j = i + 1; j < 12; j++) {
+        const mx = (cities[i].x + cities[j].x) / 2, my = (cities[i].y + cities[j].y) / 2;
+        const r2 = d2(cities[i], cities[j]) / 4;
+        let ok = true;
+        for (let k = 0; k < 12 && ok; k++) {
+          if (k === i || k === j) continue;
+          if ((cities[k].x - mx) ** 2 + (cities[k].y - my) ** 2 < r2 * 0.96) ok = false;
+        }
+        if (ok) edges.push([i, j]);
+      }
+      const deg = (eds, n) => eds.reduce((s, e) => s + (e[0] === n || e[1] === n ? 1 : 0), 0);
+      const connected = eds => {
+        const seen = new Set([0]), q = [0];
+        while (q.length) {
+          const u = q.shift();
+          for (const [a, b] of eds) { const v = a === u ? b : b === u ? a : -1; if (v >= 0 && !seen.has(v)) { seen.add(v); q.push(v); } }
+        }
+        return seen.size === 12;
+      };
+      const canDrop = e => {
+        const rest = edges.filter(x => x !== e);
+        return deg(rest, e[0]) >= 2 && deg(rest, e[1]) >= 2 && connected(rest);
+      };
+      // 修剪：每城最多 4 条路（从最长的边开始拆）
+      for (let n = 0; n < 12; n++) {
+        let mine = edges.filter(e => e[0] === n || e[1] === n).sort((a, b) => d2(cities[b[0]], cities[b[1]]) - d2(cities[a[0]], cities[a[1]]));
+        for (const e of mine) {
+          if (deg(edges, n) <= 4) break;
+          if (canDrop(e)) edges = edges.filter(x => x !== e);
+        }
+      }
+      // 随机再拆 0~2 条边，增加每局地形变化
+      const spare = edges.slice(); shuffle(spare);
+      let drops = randInt(0, 2);
+      for (const e of spare) {
+        if (!drops) break;
+        if (canDrop(e)) { edges = edges.filter(x => x !== e); drops--; }
+      }
+      // 保底：至少 2 条跨阵营通路（不足则补最短的跨界城对）
+      const crossCount = () => edges.filter(([a, b]) => cities[a].side !== cities[b].side).length;
+      if (crossCount() < 2) {
+        const cand = [];
+        for (let i = 0; i < 12; i++) for (let j = i + 1; j < 12; j++) {
+          if (cities[i].side === cities[j].side) continue;
+          if (edges.some(e => e[0] === i && e[1] === j)) continue;
+          cand.push([i, j]);
+        }
+        cand.sort((a, b) => d2(cities[a[0]], cities[a[1]]) - d2(cities[b[0]], cities[b[1]]));
+        while (crossCount() < 2 && cand.length) edges.push(cand.shift());
+      }
+      this.cities = cities;
+      this.cities.forEach((c, i) => c.idx = i);
+      this.edges = edges;
+      this.edgeSet = new Set(edges.map(e => this.ek(e[0], e[1])));
+    },
+    // 图上 BFS：各城到起点的路网步数
+    graphDists(start) {
+      const dist = Array(12).fill(Infinity); dist[start] = 0;
+      const q = [start];
+      while (q.length) {
+        const u = q.shift();
+        for (const [a, b] of this.edges) {
+          const v = a === u ? b : b === u ? a : -1;
+          if (v >= 0 && dist[v] > dist[u] + 1) { dist[v] = dist[u] + 1; q.push(v); }
+        }
+      }
+      return dist;
+    },
     open() {
       showScreen("conquest");
       if (this.running && !this.over) { this.render(); return; }
@@ -1733,16 +1833,16 @@
       };
       const cnG = mkArmy("cn", opts.hero && opts.hero.side === "cn" ? opts.hero : null);
       const jpG = mkArmy("jp", opts.hero && opts.hero.side === "jp" ? opts.hero : null);
-      this.cities = this.LAYOUT.map(c => ({ ...c, units: [] }));
+      this.genMap();   // 每局随机生成城池布局与道路连通
       this.cities.filter(c => c.side === "cn").forEach((c, i) => c.units = cnG.slice(i * 3, i * 3 + 3));
       this.cities.filter(c => c.side === "jp").forEach((c, i) => c.units = jpG.slice(i * 3, i * 3 + 3));
       $("#cq-log").innerHTML = "";
-      this.log(`天下大乱，${sideName(side)}（你）与${sideName(this.aiSide())}隔界对峙。每城驻守 3 将，攻城略地开始！`);
+      this.log(`天下大乱，${sideName(side)}（你）与${sideName(this.aiSide())}隔界对峙。山川各异、道路相通，攻城略地开始！`);
       showScreen("conquest");
       this.render();
     },
     aiSide() { return this.playerSide === "cn" ? "jp" : "cn"; },
-    adj(a, b) { return Math.abs(a.x - b.x) + Math.abs(a.y - b.y) === 1; },
+    adj(a, b) { return this.edgeSet.has(this.ek(a.idx, b.idx)); },
     power(units) { return units.reduce((s, g) => s + ratingScore(g), 0); },
     log(text) {
       const el = document.createElement("div"); el.className = "ln"; el.textContent = text;
@@ -1752,21 +1852,30 @@
     render() {
       const box = $("#cq-map");
       const selCity = this.sel != null ? this.cities[this.sel] : null;
-      box.innerHTML = this.cities.map((c, i) => {
+      // 城际道路（SVG）：与选中城相连的道路按 攻(红)/移(绿) 高亮
+      const lines = this.edges.map(([i, j]) => {
+        const A = this.cities[i], B = this.cities[j];
+        let cls = "";
+        if (selCity) {
+          const o = selCity.idx === i ? j : (selCity.idx === j ? i : -1);
+          if (o >= 0) cls = this.cities[o].side !== this.playerSide ? "atk" : "mov";
+        }
+        return `<line x1="${A.x}" y1="${A.y}" x2="${B.x}" y2="${B.y}" class="${cls}" vector-effect="non-scaling-stroke"/>`;
+      }).join("");
+      box.innerHTML = `<svg class="cq-lines" viewBox="0 0 100 100" preserveAspectRatio="none">${lines}</svg>` + this.cities.map((c, i) => {
         const isSel = this.sel === i;
         let tag = "";
         if (selCity && !isSel && this.adj(selCity, c)) tag = c.side !== this.playerSide ? "atk" : "mov";
-        return `<div class="cq-city ${c.side} ${isSel ? 'sel' : ''} ${tag}" data-i="${i}">
+        return `<div class="cq-city ${c.side} ${isSel ? 'sel' : ''} ${tag}" data-i="${i}" style="left:${c.x}%;top:${c.y}%">
           <div class="cqc-name">${c.name}</div>
           <div class="cqc-count">${c.units.length ? c.units.length + " 将" : "空城"}</div>
-          <div class="cqc-units">${c.units.slice(0, 3).map(g => g.name).join("、")}${c.units.length > 3 ? "…" : ""}</div>
           ${tag === "atk" ? '<div class="cqc-tag">⚔</div>' : tag === "mov" ? '<div class="cqc-tag">➡</div>' : ''}
         </div>`;
       }).join("");
       $$(".cq-city", box).forEach(el => el.onclick = () => this.onCity(+el.dataset.i));
       const cnN = this.cities.filter(c => c.side === "cn").length;
       $("#cq-status").textContent = this.over ? "战局已定"
-        : `第 ${this.turnNo} 回合 · 你的行动 —— 三国 ${cnN} 城 : 战国 ${12 - cnN} 城${selCity ? ` · 已选 ${selCity.name}，点相邻城池 ⚔攻 / ➡移` : " · 点选己方城池"}`;
+        : `第 ${this.turnNo} 回合 · 你的行动 —— 三国 ${cnN} 城 : 战国 ${12 - cnN} 城${selCity ? ` · ${selCity.name}【${selCity.units.map(g => g.name).join("、")}】→ 点相邻城 ⚔攻/➡移` : " · 点选己方城池"}`;
       $("#cq-actions").innerHTML = this.over
         ? `<button class="cup-go primary" id="cq-restart">再来一局</button>`
         : `<button class="cup-go" id="cq-cancel" ${this.sel == null ? "disabled" : ""}>取消选择</button>
@@ -1880,8 +1989,11 @@
         this.attack(ai2, bi, false);
         return;
       }
-      // 2) 调兵：后方兵力向前线聚拢（往离敌更近的己方城并军，上限8）
-      const distToFoe = c => Math.min(...this.cities.filter(x => x.side === this.playerSide).map(x => Math.abs(x.x - c.x) + Math.abs(x.y - c.y)));
+      // 2) 调兵：后方兵力向前线聚拢（沿路网往离敌更近的己方城并军，上限8）
+      const distToFoe = c => {
+        const d = this.graphDists(c.idx);
+        return Math.min(...this.cities.filter(x => x.side === this.playerSide).map(x => d[x.idx]));
+      };
       let mv = null;
       for (const A of srcs) {
         for (const B of this.cities) {

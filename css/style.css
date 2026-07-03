@@ -607,21 +607,25 @@ html, body {
 .buff-btn .bt b { color: var(--cn-red); font-size: 16px; }
 .buff-btn .bt small { color: #5a4a30; font-size: 12px; }
 
-/* 国战 · 攻城略地 */
-.cq-map { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 8px 10px; }
+/* 国战 · 攻城略地：随机地图（绝对定位城池 + SVG 城际道路） */
+.cq-map { position: relative; margin: 6px 10px; height: clamp(300px, 44vh, 400px); }
+.cq-lines { position: absolute; inset: 0; width: 100%; height: 100%; }
+.cq-lines line { stroke: rgba(212,175,55,.32); stroke-width: 2px; }
+.cq-lines line.atk { stroke: #ff5a3c; stroke-width: 3px; }
+.cq-lines line.mov { stroke: #5ad66a; stroke-width: 3px; }
 .cq-city {
-  position: relative; border: 2px solid rgba(212,175,55,.3); border-radius: 10px;
-  padding: 7px 6px; background: rgba(0,0,0,.35); min-height: 72px; cursor: pointer;
+  position: absolute; transform: translate(-50%, -50%); width: 72px; z-index: 1;
+  border: 2px solid rgba(212,175,55,.3); border-radius: 9px; text-align: center;
+  padding: 4px 4px; background: rgba(20,12,8,.88); cursor: pointer;
 }
-.cq-city.cn { border-color: rgba(255,107,107,.55); background: rgba(122,20,32,.28); }
-.cq-city.jp { border-color: rgba(122,144,255,.55); background: rgba(20,30,60,.4); }
+.cq-city.cn { border-color: rgba(255,107,107,.6); background: linear-gradient(135deg, rgba(90,16,24,.95), rgba(40,10,10,.95)); }
+.cq-city.jp { border-color: rgba(122,144,255,.6); background: linear-gradient(135deg, rgba(24,34,70,.95), rgba(12,16,34,.95)); }
 .cq-city.sel { border-color: var(--cn-gold); box-shadow: 0 0 10px rgba(232,194,90,.7); }
 .cq-city.atk { border-color: #ff5a3c; box-shadow: 0 0 8px rgba(255,90,60,.6); }
 .cq-city.mov { border-color: #5ad66a; box-shadow: 0 0 8px rgba(90,214,106,.5); }
-.cqc-name { font-weight: 800; font-size: 15px; color: var(--cn-gold); line-height: 1.2; }
-.cqc-count { font-size: 12px; color: #c9b890; margin-top: 1px; }
-.cqc-units { font-size: 11px; color: #9a8c66; line-height: 1.35; word-break: keep-all; }
-.cqc-tag { position: absolute; top: 3px; right: 6px; font-size: 14px; }
+.cqc-name { font-weight: 800; font-size: 14px; color: var(--cn-gold); line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cqc-count { font-size: 11px; color: #c9b890; margin-top: 1px; }
+.cqc-tag { position: absolute; top: -9px; right: -6px; font-size: 15px; }
 .cq-actions { display: flex; gap: 8px; margin: 4px 10px; }
 
 /* 世界杯竞猜 */
