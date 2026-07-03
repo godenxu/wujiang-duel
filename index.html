@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#120c08">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="武将大单挑">
+<title>中日武将大单挑</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&family=DotGothic16&display=swap">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="bg-canvas"></div>
+<div id="app">
+
+  <!-- ========== 首页 ========== -->
+  <section id="screen-home" class="screen active">
+    <div class="home-title">中日武将<br>大单挑</div>
+    <div class="home-sub">三 國 · 戰 國</div>
+    <div class="home-vs">
+      <span class="flag">🐲</span>
+      <span class="vs">VS</span>
+      <span class="flag">🏯</span>
+    </div>
+    <div class="menu">
+      <button class="menu-btn" data-go="select" data-mode="classic">
+        <span class="mi">⚔️</span><span>经典单挑<small>自选双将，亲自指挥每一招</small></span>
+      </button>
+      <button class="menu-btn" data-go="select" data-mode="gauntlet">
+        <span class="mi">🔥</span><span>车轮大战<small>一员上将，连斩敌方群雄</small></span>
+      </button>
+      <button class="menu-btn" data-go="select" data-mode="tower">
+        <span class="mi">🗼</span><span>百人斩·爬塔<small>守将逐层增强，每五层天赐机缘</small></span>
+      </button>
+      <button class="menu-btn" data-go="select" data-mode="duo">
+        <span class="mi">🤝</span><span>2v2 主副将<small>副将属性加成主将，危急舍身驰援</small></span>
+      </button>
+      <button class="menu-btn" data-go="war">
+        <span class="mi">🚩</span><span>阵营大战<small>三国 VS 战国，百将捉对厮杀</small></span>
+      </button>
+      <button class="menu-btn" data-go="select" data-mode="team">
+        <span class="mi">🛡️</span><span>组队大战<small>各带兵最多10将，攻城计谋挑唆征兵</small></span>
+      </button>
+      <button class="menu-btn" data-go="conquest">
+        <span class="mi">🗺️</span><span>国战·攻城略地<small>十二城对峙，攻城调兵一统天下</small></span>
+      </button>
+      <button class="menu-btn" data-go="cup">
+        <span class="mi">🏆</span><span>武将世界杯<small>随机分组，小组赛+淘汰赛争霸</small></span>
+      </button>
+      <button class="menu-btn" data-go="rpg">
+        <span class="mi">🎭</span><span>角色扮演<small>培养专属武将，历练成长加点</small></span>
+      </button>
+      <button class="menu-btn" data-go="db">
+        <span class="mi">📜</span><span>武将图鉴<small>查阅、编辑、丰富武将数据库</small></span>
+      </button>
+    </div>
+  </section>
+
+  <!-- ========== 选将 ========== -->
+  <section id="screen-select" class="screen">
+    <div class="topbar">
+      <span class="back" data-back>‹</span>
+      <h2 id="select-title">选择武将</h2>
+      <div class="audio-btns">
+        <button id="btn-music">♪</button>
+        <button id="btn-sfx">🔊</button>
+      </div>
+    </div>
+    <div class="section-hint" id="select-hint"></div>
+    <div class="side-tabs">
+      <div class="side-tab cn active" data-side="cn">🐲 三国 (<span id="cn-count">0</span>)</div>
+      <div class="side-tab jp" data-side="jp">🏯 战国 (<span id="jp-count">0</span>)</div>
+    </div>
+    <div class="search-box"><input id="select-search" placeholder="搜索武将姓名…"></div>
+    <div class="grid" id="select-grid"></div>
+    <div class="confirm-bar">
+      <div class="info" id="select-info">请选择武将</div>
+      <button id="select-random" class="btn-random">🎲 随机双将</button>
+      <button id="select-confirm" disabled>对决</button>
+    </div>
+  </section>
+
+  <!-- ========== 战斗 ========== -->
+  <section id="screen-battle" class="screen">
+    <div class="topbar">
+      <span class="back" data-back>‹</span>
+      <h2 id="battle-title">单挑</h2>
+      <div class="audio-btns">
+        <button id="btn-auto" class="ctrl-btn">▶ 自动</button>
+        <button id="btn-speed" class="ctrl-btn">×1</button>
+        <button id="btn-music2">♪</button>
+        <button id="btn-sfx2">🔊</button>
+      </div>
+    </div>
+    <div class="arena" id="arena">
+      <div class="fighters">
+        <div class="fighter left" id="f-left">
+          <div class="ftop">
+            <div class="fid">
+              <div class="favatar" data-info></div>
+              <div class="fname"></div>
+              <div class="ftotal"></div>
+            </div>
+            <div class="fstats-wrap">
+              <div class="fstats"></div>
+            </div>
+          </div>
+          <div class="hpbar-wrap"><div class="hpbar"><div class="fill"></div><div class="txt"></div></div></div>
+          <div class="stam-wrap"><div class="stambar"><div class="fill"></div></div></div>
+        </div>
+        <div class="fighter right" id="f-right">
+          <div class="ftop">
+            <div class="fid">
+              <div class="favatar" data-info></div>
+              <div class="fname"></div>
+              <div class="ftotal"></div>
+            </div>
+            <div class="fstats-wrap">
+              <div class="fstats"></div>
+            </div>
+          </div>
+          <div class="hpbar-wrap"><div class="hpbar"><div class="fill"></div><div class="txt"></div></div></div>
+          <div class="stam-wrap"><div class="stambar"><div class="fill"></div></div></div>
+        </div>
+      </div>
+      <div class="vs-center"><span class="round-badge" id="round-badge">第 1 回合</span></div>
+      <div class="stage" id="stage">
+        <canvas id="duel-canvas" width="256" height="160"></canvas>
+        <div class="clash" id="clash"></div>
+      </div>
+      <div class="battle-log" id="battle-log"></div>
+      <div class="tactics" id="tactics"></div>
+      <div class="battle-foot" id="battle-foot">选择你的打法</div>
+    </div>
+  </section>
+
+  <!-- ========== 阵营大战 ========== -->
+  <section id="screen-war" class="screen">
+    <div class="topbar">
+      <span class="back" data-back>‹</span>
+      <h2>阵营大战</h2>
+      <div class="audio-btns">
+        <button id="btn-music3">♪</button>
+        <button id="btn-sfx3">🔊</button>
+      </div>
+    </div>
+    <div class="war-board">
+      <div class="war-side cn"><div class="big" id="war-cn">0</div><div class="lbl">🐲 三国存活</div></div>
+      <div class="war-vs">VS</div>
+      <div class="war-side jp"><div class="big" id="war-jp">0</div><div class="lbl">🏯 战国存活</div></div>
+    </div>
+    <div class="war-mode">
+      <span class="war-mode-lbl">观战模式</span>
+      <button class="war-mode-btn active" id="war-mode-fast">⚡ 快捷</button>
+      <button class="war-mode-btn" id="war-mode-detail">🎬 详情</button>
+    </div>
+    <div class="section-hint" id="war-status">点击「开战」，让两军百将随机捉对厮杀</div>
+    <div class="war-duel" id="war-duel"></div>
+    <div class="war-log" id="war-log"></div>
+    <div class="war-rank" id="war-rank"></div>
+    <div class="confirm-bar">
+      <div class="info" id="war-info">规模：每方 100 名武将</div>
+      <button id="war-start">开战</button>
+    </div>
+  </section>
+
+  <!-- ========== 组队大战 ========== -->
+  <section id="screen-teamwar" class="screen">
+    <div class="topbar">
+      <span class="back" data-back>‹</span>
+      <h2>组队大战</h2>
+      <div class="audio-btns">
+        <button id="btn-music7">♪</button>
+        <button id="btn-sfx7">🔊</button>
+      </div>
+    </div>
+    <div class="section-hint" id="tw-status">两军列阵，大战一触即发！</div>
+    <div class="tw-summary">
+      <div class="tw-summary-side cn" id="tw-sum-cn"></div>
+      <div class="tw-summary-side jp" id="tw-sum-jp"></div>
+    </div>
+    <div class="tw-board">
+      <div class="tw-roster cn" id="tw-cn"></div>
+      <div class="tw-roster jp" id="tw-jp"></div>
+    </div>
+    <div class="tw-log" id="tw-log"></div>
+    <div class="tw-actions" id="tw-actions"></div>
+  </section>
+
+  <!-- ========== 国战 · 攻城略地 ========== -->
+  <section id="screen-conquest" class="screen">
+    <div class="topbar">
+      <span class="back" data-back>‹</span>
+      <h2>国战 · 攻城略地</h2>
+      <div class="audio-btns">
+        <button id="btn-music8">♪</button>
+        <button id="btn-sfx8">🔊</button>
+      </div>
+    </div>
+    <div class="section-hint" id="cq-status">点选己方城池开始行动</div>
+    <div class="cq-map" id="cq-map"></div>
+    <div class="cq-actions" id="cq-actions"></div>
+    <div class="tw-log" id="cq-log"></div>
+  </section>
+
+  <!-- ========== 世界杯淘汰赛 ========== -->
+  <section id="screen-cup" class="screen">
+    <div class="topbar">
+      <span class="back" data-back>‹</span>
+      <h2>武将世界杯</h2>
+      <div class="audio-btns">
+        <button id="btn-music5">♪</button>
+        <button id="btn-sfx5">🔊</button>
+      </div>
+    </div>
+    <div id="cup-setup">
+      <div class="section-hint">世界杯赛制：随机分组 → 小组循环赛取前二 → 单败淘汰决出冠军</div>
+      <div class="cup-opt">
+        <div class="cup-opt-label">规模</div>
+        <div class="cup-sizes">
+          <button class="cup-size active" data-size="16">16 强</button>
+          <button class="cup-size" data-size="32">32 强</button>
+        </div>
+      </div>
+      <div class="cup-start-btns">
+        <button id="cup-manual" class="cup-go">🖐 手动选将</button>
+        <button id="cup-random" class="cup-go primary">🎲 随机开赛</button>
+      </div>
+    </div>
+    <div id="cup-content"></div>
+  </section>
+
+  <!-- ========== 角色扮演 ========== -->
+  <section id="screen-rpg" class="screen">
+    <div class="topbar">
+      <span class="back" data-back>‹</span>
+      <h2>角色扮演 · 武将养成</h2>
+      <div class="audio-btns">
+        <button id="btn-music6">♪</button>
+        <button id="btn-sfx6">🔊</button>
+      </div>
+    </div>
+    <div id="rpg-content"></div>
+  </section>
+
+  <!-- ========== 数据库 ========== -->
+  <section id="screen-db" class="screen">
+    <div class="topbar">
+      <span class="back" data-back>‹</span>
+      <h2>武将图鉴 · 数据库</h2>
+      <div class="audio-btns">
+        <button id="btn-music4">♪</button>
+        <button id="btn-sfx4">🔊</button>
+      </div>
+    </div>
+    <div class="db-toolbar">
+      <button id="db-add">＋ 新增武将</button>
+      <button id="db-export">⬇ 导出 JSON</button>
+      <label>⬆ 导入<input type="file" id="db-import" accept="application/json" hidden></label>
+      <button id="db-reset">↺ 恢复默认</button>
+    </div>
+    <div class="search-box"><input id="db-search" placeholder="搜索…"></div>
+    <div class="side-tabs">
+      <div class="side-tab cn active" data-dbside="cn">🐲 三国</div>
+      <div class="side-tab jp" data-dbside="jp">🏯 战国</div>
+    </div>
+    <div class="db-list" id="db-list"></div>
+  </section>
+
+  <!-- 通用弹窗 -->
+  <div class="overlay" id="overlay"><div id="overlay-content"></div></div>
+  <div class="toast" id="toast"></div>
+</div>
+
+<script src="data/generals.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/app.js"></script>
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(()=>{}));
+  }
+</script>
+</body>
+</html>

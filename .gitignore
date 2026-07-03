@@ -1,0 +1,13 @@
+# 编辑器/工具
+.claude/
+.vscode/
+.idea/
+
+# 依赖与构建
+node_modules/
+dist/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+*.log
