@@ -491,11 +491,13 @@ html, body {
 .tw-unit.dead .tw-name { text-decoration: line-through; cursor: default; }
 .tw-troops { flex: 0 0 auto; font-size: 15px; font-weight: 700; color: var(--cn-gold); font-family: "DotGothic16", monospace; }
 /* 兵力条区域占满剩余行宽（随屏宽自适应）；条本身长度按该将兵力占全场最大兵力的比例伸展。
-   条与填充均居中对齐：受创时从两端向中间收缩 */
-.tw-track-area { flex: 1 1 26%; min-width: 22px; display: flex; align-items: center; justify-content: center; }
+   条的「中间端」固定对齐屏幕中央：左方(三国)条靠右对齐、右方(战国)条靠左对齐；
+   受创时填充从武将名字一侧向屏幕中间方向收缩 */
+.tw-track-area { flex: 1 1 26%; min-width: 22px; display: flex; align-items: center; justify-content: flex-end; }
+.tw-roster.jp .tw-track-area { justify-content: flex-start; }
 .tw-track { display: block; height: 9px; border-radius: 5px; background: rgba(0,0,0,.5); overflow: hidden; transition: width .5s ease; }
-.tw-fill { display: block; height: 100%; margin-inline: auto; background: linear-gradient(90deg,#8bc34a,#4caf50); transition: width .5s ease; }
-.tw-roster.jp .tw-fill { background: linear-gradient(270deg,#8bc34a,#4caf50); }
+.tw-fill { display: block; height: 100%; margin-left: auto; background: linear-gradient(90deg,#8bc34a,#4caf50); transition: width .5s ease; }
+.tw-roster.jp .tw-fill { margin-left: 0; margin-right: auto; background: linear-gradient(270deg,#8bc34a,#4caf50); }
 .tw-unit.dead .tw-fill { background: #666; }
 
 .tw-log {

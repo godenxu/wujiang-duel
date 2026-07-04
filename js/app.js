@@ -1967,41 +1967,52 @@
         if (byPlayer) this.afterPlayerAction(); else this.afterAiAction();
         return;
       }
-      const atkUnits = A.units.slice(), defUnits = B.units.slice();
-      this.log(`⚔ ${byPlayer ? "你" : "敌军"}自 ${A.name} 发兵攻打 ${B.name}（${atkUnits.length} 将 vs ${defUnits.length} 将）！`);
+      // 每方最多 10 将上阵：超编则随机选拔，攻方其余留守出发城、守方其余城内候命
+      const pickSquad = arr => {
+        if (arr.length <= 10) return { squad: arr.slice(), reserve: [] };
+        const pool = arr.slice(); shuffle(pool);
+        return { squad: pool.slice(0, 10), reserve: pool.slice(10) };
+      };
+      const atk = pickSquad(A.units), def = pickSquad(B.units);
+      A.units = atk.reserve;   // 出征队伍即刻离城，留守者驻原城
+      this.log(`⚔ ${byPlayer ? "你" : "敌军"}自 ${A.name} 发兵攻打 ${B.name}：出征 ${atk.squad.length} 将${atk.reserve.length ? `（${atk.reserve.length} 将留守）` : ""}，守方 ${def.squad.length} 将上阵${def.reserve.length ? `（${def.reserve.length} 将城内候命）` : ""}！`);
       // 攻城战：玩家一方永远作为 TeamBattle 的「我方」；胜负由 onDone 回传
-      const mine = byPlayer ? atkUnits : defUnits;
-      const foes = byPlayer ? defUnits : atkUnits;
+      const mine = byPlayer ? atk.squad : def.squad;
+      const foes = byPlayer ? def.squad : atk.squad;
       TeamBattle.begin(mine, this.playerSide, {
         exact: true, enemies: foes,
-        onDone: res => this.applyBattle(A, B, byPlayer, res),
+        onDone: res => this.applyBattle(A, B, byPlayer, res, atk, def),
       });
     },
-    applyBattle(A, B, byPlayer, res) {
+    // 城破时未上阵守军撤往相邻友城；无路可退则溃散
+    retreatReserve(B, defSide, reserve) {
+      if (!reserve.length) return;
+      const ret = this.cities.find(c => c.side === defSide && c !== B && this.adj(B, c));
+      if (ret) {
+        ret.units.push(...reserve);
+        this.log(`🏃 ${B.name} 城内候命的 ${reserve.length} 将退往 ${ret.name}。`);
+      } else {
+        this.log(`💨 ${B.name} 城内候命的 ${reserve.length} 将无路可退，四散溃逃……`);
+      }
+    },
+    applyBattle(A, B, byPlayer, res, atk, def) {
       this.busyBattle = false;
       this.kills += res.kills;
       const byId = list => new Set(list.map(g => g.id));
-      if (byPlayer) {
-        if (res.playerWon) {
-          const surv = byId(res.mySurvivors);
-          B.side = this.playerSide; B.units = A.units.filter(g => surv.has(g.id)); A.units = [];
-          this.captures++;
-          this.log(`🎉 你攻克 ${B.name}！${B.units.length} 将入城驻守。`);
-        } else {
-          const surv = byId(res.theirSurvivors);
-          B.units = B.units.filter(g => surv.has(g.id)); A.units = [];
-          this.log(`💀 攻城失败，${A.name} 出征之军全军覆没……`);
-        }
+      const defSide = byPlayer ? this.aiSide() : this.playerSide;
+      const atkSide = byPlayer ? this.playerSide : this.aiSide();
+      const atkWon = byPlayer ? res.playerWon : !res.playerWon;
+      const survIds = byId(atkWon ? (byPlayer ? res.mySurvivors : res.theirSurvivors)
+                                  : (byPlayer ? res.theirSurvivors : res.mySurvivors));
+      if (atkWon) {
+        B.side = atkSide;
+        B.units = atk.squad.filter(g => survIds.has(g.id));
+        this.retreatReserve(B, defSide, def.reserve);
+        if (byPlayer) { this.captures++; this.log(`🎉 你攻克 ${B.name}！${B.units.length} 将入城驻守。`); }
+        else this.log(`🔥 ${B.name} 失守！上阵守军全军覆没。`);
       } else {
-        if (res.playerWon) {
-          const surv = byId(res.mySurvivors);
-          B.units = B.units.filter(g => surv.has(g.id)); A.units = [];
-          this.log(`🛡 你守住了 ${B.name}，敌军全军覆没！`);
-        } else {
-          const surv = byId(res.theirSurvivors);
-          B.side = this.aiSide(); B.units = A.units.filter(g => surv.has(g.id)); A.units = [];
-          this.log(`🔥 ${B.name} 失守！守军全军覆没。`);
-        }
+        B.units = def.squad.filter(g => survIds.has(g.id)).concat(def.reserve);
+        this.log(byPlayer ? `💀 攻城失败，出征之军全军覆没……` : `🛡 你守住了 ${B.name}，来犯之敌全军覆没！`);
       }
       showScreen("conquest");
       if (byPlayer) this.afterPlayerAction(); else this.afterAiAction();
