@@ -20,6 +20,14 @@
       } else {
         this.list = clone(ALL_GENERALS);
       }
+      // 默认卡池扩充后按姓名合并进老存档，使新增武将对已有玩家生效
+      const have = new Set(this.list.map(g => g.name));
+      const missing = ALL_GENERALS.filter(g => !have.has(g.name));
+      if (missing.length) {
+        let nid = this.list.reduce((m, g) => Math.max(m, g.id), 0) + 1;
+        missing.forEach(g => this.list.push(Object.assign(clone(g), { id: nid++ })));
+        if (saved) this.save();
+      }
       this._nextId = this.list.reduce((m, g) => Math.max(m, g.id), 0) + 1;
     },
     save() { localStorage.setItem(DB_KEY, JSON.stringify(this.list)); },
@@ -1845,9 +1853,9 @@
       this.genMap();   // 每局随机生成城池布局与道路连通
       const cnCities = this.cities.filter(c => c.side === "cn");
       const jpCities = this.cities.filter(c => c.side === "jp");
-      // 双方武将总数相同：完全随机 8~100（合计最多200），且 ≥ 双方城数、≤ 阵营卡池数量
+      // 双方武将总数相同：完全随机 8~200（各200名真实武将卡池直选，不复编），且 ≥ 双方城数
       const total = Math.max(cnCities.length, jpCities.length,
-        Math.min(randInt(8, 100), DB.bySide("cn").length, DB.bySide("jp").length));
+        Math.min(randInt(8, 200), DB.bySide("cn").length, DB.bySide("jp").length));
       const mkArmy = (s, hero) => {
         const pool = DB.bySide(s).slice(); shuffle(pool);
         let arr = pool.slice(0, total).map(clone);
