@@ -676,7 +676,7 @@
         if (!Bond.spend(100)) { res(false); return; }
         BATTLE.p1.hp = BATTLE.p1.g.ti;
         BATTLE.revived = true;
-        logLine(`💊 ${BATTLE.p1.g.name} 服下回魂丹，满血复活再战！（-100金）`, "sys");
+        logLine(`💊 ${BATTLE.p1.g.name} 服下回魂丹，满血复活再战！（-100金，余 ${Bond.gold()} 金）`, "sys");
         updateBars($("#f-left"), BATTLE.p1);
         AudioSystem.sfx.victory();
         res(true);
@@ -1208,7 +1208,7 @@
       const rr = $("#twr-reroll");
       if (rr) rr.onclick = () => {
         if (!Bond.spend(50)) { toast("金币不足（重抽需 50 金）"); return; }
-        toast("🎲 天机再转…（-50金）");
+        toast(`🎲 天机再转…（-50金，余 ${Bond.gold()}）`);
         this.offerBuffs(healed);
       };
       $("#twr-down2").onclick = () => { closeOverlay(); this.floor++; this.finish(null); };
@@ -2043,7 +2043,7 @@
       const rr = $("#cq-reroll"); if (rr) rr.onclick = () => {
         if (this.busyBattle) return;
         if (!Bond.spend(30)) { toast("金币不足（重掷需 30 金）"); return; }
-        toast("🎲 山川重定！（-30金）");
+        toast(`🎲 山川重定！（-30金，余 ${Bond.gold()}）`);
         this.start(this.playerSide, this._opts);
       };
       const ps = $("#cq-pass"); if (ps) ps.onclick = () => { if (this.busyBattle) return; this.sel = null; this.log("你按兵不动。"); this.afterPlayerAction(); };
@@ -2480,7 +2480,7 @@
       openOverlay(`<div class="result-card">
         <h1>竞猜结算</h1>
         <div class="wname">${champHit ? "🎯 神机妙算！猜中冠军，得分翻倍！" : "赛果揭晓"}</div>
-        <div class="wdesc">${lines.join("<br>")}<br>冠军预测：${champHit ? "✅ 命中" : "❌ 未中"}<br>竞猜得分 <b style="font-size:22px;color:var(--cn-red)">${score}</b>${rpg ? `<br>竞猜奖金 <b style="color:var(--cn-red)">+${score} 金</b>` : ""}</div>
+        <div class="wdesc">${lines.join("<br>")}<br>冠军预测：${champHit ? "✅ 命中" : "❌ 未中"}<br>竞猜得分 <b style="font-size:22px;color:var(--cn-red)">${score}</b>${rpg ? Bond.goldLine(score) : ""}</div>
         <div class="btns"><button class="btn-primary" id="pred-ok">确定</button></div></div>`);
       $("#pred-ok").onclick = () => { closeOverlay(); next && next(); };
     },
@@ -2662,10 +2662,17 @@
     },
     save() { localStorage.setItem(BOND_KEY, JSON.stringify(this.data)); },
     gold() { return this.data.gold; },
+    // 获得金币（静默入账；数额统一在各结算弹窗与经验一起展示）
     addGold(n, why) {
-      if (!RPG.char || n <= 0) return;
-      this.data.gold += Math.round(n); this.save();
-      if (why) toast(`💰 +${Math.round(n)} 金 · ${why}`);
+      if (!RPG.char || n <= 0) return 0;
+      n = Math.round(n);
+      this.data.gold += n; this.save();
+      return n;
+    },
+    // 结算弹窗用的金币行（+入账 / 现有余额）
+    goldLine(gain) {
+      if (!RPG.char) return "";
+      return `<br>💰 金币 ${gain > 0 ? `<b style="color:#b8860b">+${gain}</b> · ` : ""}现有 <b style="color:#b8860b">${this.gold()}</b>`;
     },
     spend(n) { if (this.data.gold < n) return false; this.data.gold -= n; this.save(); return true; },
     pts(id) { return this.data.friends[id] || 0; },
@@ -2691,7 +2698,7 @@
       if (cost > 0 && !this.spend(cost)) { toast(`金币不足（需 ${cost} 金）`); return false; }
       this.data.team.push(g.id); this.save();
       AudioSystem.sfx.victory();
-      toast(`🎉 ${g.name} 加入了你的团队！${cost ? `（花费 ${cost} 金）` : "（生死之交，分文不取）"}`);
+      toast(`🎉 ${g.name} 加入了你的团队！${cost ? `（-${cost}金，余 ${this.gold()}）` : "（生死之交，分文不取）"}`);
       return true;
     },
     dismiss(id) { this.data.team = this.data.team.filter(x => x !== id); this.save(); },
@@ -2709,7 +2716,7 @@
       this.data.giftDay[g.id] = today;
       this.addF(g.id, def.add); this.save();
       AudioSystem.sfx.select();
-      toast(`${def.icon} 赠 ${g.name}【${def.n}】，友谊 +${def.add}`);
+      toast(`${def.icon} 赠 ${g.name}【${def.n}】-${def.cost}金，友谊 +${def.add}（余 ${this.gold()} 金）`);
       return true;
     },
   };
@@ -2927,8 +2934,9 @@
         gain = 10 + Math.round(Math.max(0, diff) / 30);
       }
       if (heroWon) c.wins++; else c.losses++;
+      let goldGain = 0;
       if (heroWon) {
-        Bond.addGold(15, BATTLE && BATTLE.mode === "duo" ? "2v2 获胜" : "历练获胜");
+        goldGain = Bond.addGold(15);
         Bond.addF(opp.id, 5);                        // 不打不相识
         if (BATTLE && BATTLE.duo) Bond.addF(BATTLE.duo.d1.id, 15);   // 与副将并肩获胜
         Bond.save();
@@ -2942,7 +2950,7 @@
         <h1>${heroWon ? '历练胜利' : '虽败犹荣'}</h1>
         <div class="winner-av" style="background:${bg}">${avatarChar(c.name)}</div>
         <div class="wname">${c.name}</div>
-        <div class="wdesc">${heroWon ? '击败' : '不敌'} ${opp.name}（武将评分 ${oppSum} / 你 ${heroSum}）${tag}<br>获得经验 <b style="color:var(--cn-red)">+${gain}</b>
+        <div class="wdesc">${heroWon ? '击败' : '不敌'} ${opp.name}（武将评分 ${oppSum} / 你 ${heroSum}）${tag}<br>获得经验 <b style="color:var(--cn-red)">+${gain}</b>${Bond.goldLine(goldGain)}
           ${lvUp ? `<br>🎉 升级 ${lvUp} 级！获得加点 <b style="color:var(--cn-red)">+${lvUp * 1}</b>` : ''}</div>
         <div class="btns">
           <button class="btn-primary" id="rpg-again">再历练</button>
@@ -2966,22 +2974,22 @@
     /* ---- 车轮大战 ---- */
     gauntlet() { Gauntlet.start(this.heroGeneral(), true); },
     onGauntletResult(streak, allCleared, killer) {
-      Bond.addGold(streak * 8, "车轮战果");
+      const gold = Bond.addGold(streak * 8);
       const exp = streak * 25 + (allCleared ? 200 : 0);
       this.grantExp(exp, "车轮大战 · 连胜 " + streak,
         `连斩 <b style="color:var(--cn-red)">${streak}</b> 员${allCleared ? '，横扫群雄！' : (killer ? '，终被 ' + killer.name + ' 所阻。' : '。')}`,
-        () => this.gauntlet());
+        () => this.gauntlet(), gold);
     },
 
     /* ---- 百人斩 · 爬塔 ---- */
     tower() { Tower.start(this.heroGeneral(), true); },
     onTowerResult(cleared, killer, gains) {
-      Bond.addGold(cleared * 8, "攀塔战果");
+      const gold = Bond.addGold(cleared * 8);
       Bond.addMany(Tower.slain, 4);   // 被斩守将：不打不相识
       const exp = cleared * 20 + (cleared >= 10 ? 100 : 0);
       this.grantExp(exp, "百人斩 · 斩 " + cleared + " 将",
         `攀塔连斩 <b style="color:var(--cn-red)">${cleared}</b> 员守将${killer ? `，止步于 ${killer.name} 之手。` : '，全身而退。'}${gains && gains.length ? `<br>此行机缘：${gains.join('、')}` : ''}`,
-        () => this.tower());
+        () => this.tower(), gold);
     },
 
     /* ---- 2v2 主副将单挑：有队友则从团队挑副将，否则随机配 ---- */
@@ -3011,12 +3019,12 @@
     /* ---- 阵营大战：进入后先选规模/模式，点「开战」再出阵 ---- */
     war() { War.open(this.heroGeneral()); },
     onWarResult(kills, sideWon, cnWin, comrades) {
-      if (sideWon) Bond.addGold(40, "阵营大捷");
+      const gold = sideWon ? Bond.addGold(40) : 0;
       Bond.addMany(comrades, 2);   // 并肩存活的同袍
       const exp = kills * 22 + (sideWon ? 120 : 0);
       this.grantExp(exp, "阵营大战 " + (sideWon ? "· 获胜" : "· 落败"),
         `你麾下斩敌 <b style="color:var(--cn-red)">${kills}</b> 员，本方阵营${sideWon ? '获胜！' : '惜败。'}`,
-        () => this.war());
+        () => this.war(), gold);
     },
 
     /* ---- 组队大战：同阵营队友必上阵，余位随机补满 ---- */
@@ -3030,13 +3038,13 @@
       TeamBattle.begin([hero, ...mates, ...fill], hero.side, { rpg: true });
     },
     onTeamBattleResult(kills, won) {
-      if (won) Bond.addGold(30 + kills * 3, "组队大捷");
+      const gold = won ? Bond.addGold(30 + kills * 3) : 0;
       const mates = TeamBattle.playerArr().map(u => u.g).filter(g => g.id !== -1);
       Bond.addMany(mates, won ? 6 : 3);   // 同队并肩 +3，获胜再 +3
       const exp = kills * 20 + (won ? 150 : 0);
       this.grantExp(exp, "组队大战 " + (won ? "· 获胜" : "· 落败"),
         `本场麾下击杀敌将 <b style="color:var(--cn-red)">${kills}</b> 员，全军${won ? '大捷！' : '溃败。'}`,
-        () => this.teamBattle());
+        () => this.teamBattle(), gold);
     },
 
     /* ---- 国战 · 攻城略地：主角与同阵营队友编入己方军团 ---- */
@@ -3047,7 +3055,7 @@
       Conquest.start(hero.side, { rpg: true, hero, mates });
     },
     onConquestResult(won, captures, kills) {
-      Bond.addGold(captures * 40 + (won ? 200 : 0), "国战战果");
+      const gold = Bond.addGold(captures * 40 + (won ? 200 : 0));
       // 战至终局仍在麾下的同袍
       const hero = this.heroGeneral();
       const allies = Conquest.cities.filter(c => c.side === hero.side)
@@ -3056,11 +3064,11 @@
       const exp = captures * 40 + kills * 15 + (won ? 250 : 0);
       this.grantExp(exp, "国战 " + (won ? "· 一统天下" : "· 大势已去"),
         `攻克 <b style="color:var(--cn-red)">${captures}</b> 城，斩敌将 <b style="color:var(--cn-red)">${kills}</b> 员，${won ? '天下归一！' : '霸业未成。'}`,
-        () => this.conquest());
+        () => this.conquest(), gold);
     },
 
-    // 统一发放经验/升级并弹窗
-    grantExp(gain, title, descHtml, againFn) {
+    // 统一发放经验/升级并弹窗（goldGain：本次一并入账的金币，与经验同屏展示）
+    grantExp(gain, title, descHtml, againFn, goldGain = 0) {
       const c = this.char;
       c.exp += gain;
       let lvUp = 0;
@@ -3072,7 +3080,7 @@
           <h1>${title}</h1>
           <div class="winner-av" style="background:${bg}">${avatarChar(c.name)}</div>
           <div class="wname">${c.name}</div>
-          <div class="wdesc">${descHtml}<br>获得经验 <b style="color:var(--cn-red)">+${gain}</b>
+          <div class="wdesc">${descHtml}<br>获得经验 <b style="color:var(--cn-red)">+${gain}</b>${Bond.goldLine(goldGain)}
             ${lvUp ? `<br>🎉 升级 ${lvUp} 级！获得加点 <b style="color:var(--cn-red)">+${lvUp * 1}</b>` : ''}</div>
           <div class="btns">
             <button class="btn-primary" id="rpg-r-again">再来一次</button>
@@ -3086,8 +3094,9 @@
       const c = this.char;
       if (!placement) { showScreen("rpg"); this.renderHub(); return; }
       // 名次奖金 + 同组交手友谊
-      if (placement.label === "夺冠") Bond.addGold(100, "世界杯夺冠");
-      else if (/半决赛|决赛/.test(placement.label)) Bond.addGold(50, "世界杯四强");
+      let cupGold = 0;
+      if (placement.label === "夺冠") cupGold = Bond.addGold(100);
+      else if (/半决赛|决赛/.test(placement.label)) cupGold = Bond.addGold(50);
       const myGroup = Tournament.groups.find(g => g.teams.some(t => t.id === -1));
       if (myGroup) Bond.addMany(myGroup.teams.filter(t => t.id !== -1), 3);
       const winGain = Math.round(cupWinExp || 0);   // 各场单挑获胜累计经验
@@ -3105,7 +3114,7 @@
           <div class="wname">${c.name}</div>
           <div class="wdesc">本届世界杯成绩：<b>${placement.label}</b><br>
             单挑获胜经验 <b style="color:var(--cn-red)">+${winGain}</b> · 晋级奖励 <b style="color:var(--cn-red)">+${bonus}</b><br>
-            合计获得经验 <b style="color:var(--cn-red)">+${gain}</b>
+            合计获得经验 <b style="color:var(--cn-red)">+${gain}</b>${Bond.goldLine(cupGold)}
             ${lvUp ? `<br>🎉 升级 ${lvUp} 级！获得加点 <b style="color:var(--cn-red)">+${lvUp * 1}</b>` : ''}</div>
           <div class="btns">
             <button class="btn-primary" id="rpg-cup-again">再战世界杯</button>
