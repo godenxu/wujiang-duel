@@ -399,6 +399,7 @@
     },
     hit(who) { const r = this.riders[who]; r.hitT = performance.now(); this.shake = 6; },
     ko(who) { const r = this.riders[who]; r.ko = true; r.koT = performance.now(); },
+    revive(who) { const r = this.riders[who]; r.ko = false; r.koT = 0; },
     setCharge(who, on) { this.riders[who].charge = on; },
 
     frame(now) {
@@ -657,6 +658,33 @@
     enterBattle();
     logLine(`副将【${d1.name}】辅佐 ${m1.name}，副将【${d2.name}】辅佐 ${m2.name}——副将六维15%并入主将，危急时驰援一次！`, "sys");
   }
+  // 回魂丹：主角在 RPG 相关单挑（历练/2v2/百人斩/车轮）倒地时，可花 100 金满血续战，每场一次
+  function maybeRevive() {
+    const eligible = RPG.char && !BATTLE.revived &&
+      (BATTLE.rpg || (BATTLE.mode === "tower" && Tower.rpg) || (BATTLE.mode === "gauntlet" && Gauntlet.rpg));
+    if (!eligible || Bond.gold() < 100) return Promise.resolve(false);
+    return new Promise(res => {
+      openOverlay(`<div class="result-card">
+        <h1>命悬一线</h1>
+        <div class="wdesc">${BATTLE.p1.g.name} 倒地！是否服下回魂丹，原地满血续战？<br>（100 金 · 现有 ${Bond.gold()} 金 · 每场限一次）</div>
+        <div class="btns">
+          <button class="btn-primary" id="rv-yes">💊 服回魂丹</button>
+          <button class="btn-ghost" id="rv-no">认输</button>
+        </div></div>`);
+      $("#rv-yes").onclick = () => {
+        closeOverlay();
+        if (!Bond.spend(100)) { res(false); return; }
+        BATTLE.p1.hp = BATTLE.p1.g.ti;
+        BATTLE.revived = true;
+        logLine(`💊 ${BATTLE.p1.g.name} 服下回魂丹，满血复活再战！（-100金）`, "sys");
+        updateBars($("#f-left"), BATTLE.p1);
+        AudioSystem.sfx.victory();
+        res(true);
+      };
+      $("#rv-no").onclick = () => { closeOverlay(); res(false); };
+    });
+  }
+
   // 2v2 副将驰援：主将体力≤35%（含被击倒的瞬间）时舍身疗伤，每场限一次
   async function maybeRescue(stale) {
     const list = [[BATTLE.p1, "#f-left", "left"], [BATTLE.p2, "#f-right", "right"]];
@@ -836,6 +864,13 @@
     // 2v2：主将危急时副将驰援（可从倒地边缘救回，故在 KO 判定之前结算）
     await maybeRescue(stale);
     if (stale()) return;
+
+    // 三期便利：主角倒地可花 100 金服回魂丹满血续战（每场一次）
+    if (BATTLE.p1.hp <= 0 && BATTLE.p2.hp > 0) {
+      const saved = await maybeRevive();
+      if (stale()) return;
+      if (saved) { Duel.revive(0); }
+    }
 
     if (BATTLE.p1.hp <= 0 || BATTLE.p2.hp <= 0) {
       await battleSleep(500);
@@ -1160,13 +1195,22 @@
         <div class="buff-list">
           ${three.map(o => `<button class="buff-btn" data-k="${o.k}"><span class="bi">${o.icon}</span><span class="bt"><b>${o.n}</b><small>${o.d}</small></span></button>`).join("")}
         </div>
-        <div class="btns"><button class="btn-ghost" id="twr-down2">收兵下塔</button></div></div>`);
+        <div class="btns">
+          ${RPG.char ? `<button class="btn-ghost" id="twr-reroll">🎲 重抽（50金 · 现有${Bond.gold()}）</button>` : ""}
+          <button class="btn-ghost" id="twr-down2">收兵下塔</button>
+        </div></div>`);
       $$(".buff-btn").forEach(btn => btn.onclick = () => {
         this.applyBuff(btn.dataset.k);
         closeOverlay();
         this.floor++;
         this.next();
       });
+      const rr = $("#twr-reroll");
+      if (rr) rr.onclick = () => {
+        if (!Bond.spend(50)) { toast("金币不足（重抽需 50 金）"); return; }
+        toast("🎲 天机再转…（-50金）");
+        this.offerBuffs(healed);
+      };
       $("#twr-down2").onclick = () => { closeOverlay(); this.floor++; this.finish(null); };
     },
     applyBuff(k) {
@@ -1293,10 +1337,15 @@
       let jp = DB.bySide("jp").map(clone);
       shuffle(cn); shuffle(jp);
       const total = this.scaleTotal(Math.min(cn.length, jp.length));
+      // RPG 英雄出战：主角与同阵营队友排在本方队首，任何规模都必上阵
+      if (hero) {
+        const forced = [clone(hero), ...Bond.teamGenerals().filter(g => g.side === hero.side).map(clone)];
+        const ids = new Set(forced.map(g => g.id));
+        if (hero.side === "cn") cn = [...forced, ...cn.filter(g => !ids.has(g.id))];
+        else jp = [...forced, ...jp.filter(g => !ids.has(g.id))];
+      }
       cn = cn.slice(0, total); jp = jp.slice(0, total);
       $("#war-info").textContent = `规模：每方 ${total} 名武将`;
-      // RPG 英雄出战：替入其所属阵营的首位（自选武将必上阵，任何规模都占一席）
-      if (hero) { (hero.side === "cn" ? cn : jp)[0] = clone(hero); }
       let heroKills = 0;
       const kills = new Map();  // 击杀榜：fighter -> {g, kills}
       const bump = g => { const k = kills.get(g) || { g, kills: 0 }; k.kills++; kills.set(g, k); };
@@ -1385,16 +1434,19 @@
       $("#war-rank").innerHTML = `<div class="wr-title">⚔ 击杀排行榜</div>` + top.map((s, i) =>
         `<div class="wr-row ${s.g.side}"><span class="wr-no">${i + 1}</span><span class="wr-name">${s.g.id === -1 ? '★' : ''}${s.g.name}</span><span class="wr-k">${s.kills}</span></div>`).join("");
     },
-    open() {
+    open(hero) {
+      this.pendingHero = hero || null;   // RPG 入口：先选规模/模式，点「开战」再率军出阵
       $("#war-cn").textContent = DB.bySide("cn").length;
       $("#war-jp").textContent = DB.bySide("jp").length;
       $("#war-log").innerHTML = "";
       $("#war-duel").innerHTML = "";
       $("#war-rank").innerHTML = "";
       $("#war-start").disabled = false;   // 确保任何进入路径都可再次开战
-      $("#war-status").textContent = this.mode === "detail"
-        ? "详情模式：每一阵都将进入经典单挑画面亲历厮杀（可调速/中途返回）"
-        : "点击「开战」，让两军百将随机捉对厮杀";
+      $("#war-status").textContent = hero
+        ? `${hero.name} 整军待发——选好规模与模式后点「开战」率军出阵`
+        : (this.mode === "detail"
+          ? "详情模式：每一阵都将进入经典单挑画面亲历厮杀（可调速/中途返回）"
+          : "点击「开战」，让两军百将随机捉对厮杀");
       showScreen("war");
     },
   };
@@ -1897,6 +1949,7 @@
       $("#cq-side-jp").onclick = () => { closeOverlay(); this.start("jp"); };
     },
     start(side, opts = {}) {
+      this._opts = opts;   // 供「重掷地图」原样重开
       this.playerSide = side;
       this.running = true; this.over = false; this.busyBattle = false;
       this.sel = null; this.turnNo = 1;
@@ -1904,14 +1957,16 @@
       this.genMap();   // 每局随机生成城池布局与道路连通
       const cnCities = this.cities.filter(c => c.side === "cn");
       const jpCities = this.cities.filter(c => c.side === "jp");
-      // 双方武将总数相同：完全随机 8~200（各200名真实武将卡池直选，不复编），且 ≥ 双方城数
-      const total = Math.max(cnCities.length, jpCities.length,
+      // 双方武将总数相同：完全随机 8~200（各200名真实武将卡池直选，不复编），
+      // 且 ≥ 双方城数、≥ 主角+队友人数（同阵营队友必上阵）
+      const forcedN = opts.hero ? 1 + (opts.mates || []).length : 0;
+      const total = Math.max(cnCities.length, jpCities.length, forcedN,
         Math.min(randInt(8, 200), DB.bySide("cn").length, DB.bySide("jp").length));
-      const mkArmy = (s, hero) => {
-        const pool = DB.bySide(s).slice(); shuffle(pool);
-        let arr = pool.slice(0, total).map(clone);
-        if (hero) arr = [clone(hero), ...arr.slice(0, total - 1)];
-        return arr;
+      const mkArmy = (s, hero, mates) => {
+        const forced = hero ? [clone(hero), ...(mates || []).map(clone)] : [];
+        const ids = new Set(forced.map(g => g.id));
+        const pool = DB.bySide(s).filter(g => !ids.has(g.id)); shuffle(pool);
+        return [...forced, ...pool.map(clone)].slice(0, total);
       };
       // 每城初始武将数随机：先保证每城 1 将，剩余完全随机分配（不设单城上限）
       const deploy = (cityList, gens) => {
@@ -1921,8 +1976,8 @@
           cityList[randInt(0, cityList.length - 1)].units.push(g);
         });
       };
-      deploy(cnCities, mkArmy("cn", opts.hero && opts.hero.side === "cn" ? opts.hero : null));
-      deploy(jpCities, mkArmy("jp", opts.hero && opts.hero.side === "jp" ? opts.hero : null));
+      deploy(cnCities, mkArmy("cn", opts.hero && opts.hero.side === "cn" ? opts.hero : null, opts.hero && opts.hero.side === "cn" ? opts.mates : null));
+      deploy(jpCities, mkArmy("jp", opts.hero && opts.hero.side === "jp" ? opts.hero : null, opts.hero && opts.hero.side === "jp" ? opts.mates : null));
       $("#cq-log").innerHTML = "";
       this.log(`天下大乱：三国 ${cnCities.length} 城、战国 ${jpCities.length} 城，双方各拥 ${total} 员武将。你执${sideName(side)}，攻城略地开始！`);
       showScreen("conquest");
@@ -1977,12 +2032,20 @@
       const cnN = this.cities.filter(c => c.side === "cn").length;
       $("#cq-status").textContent = this.over ? "战局已定"
         : `第 ${this.turnNo} 回合 · 你的行动 —— 三国 ${cnN} 城 : 战国 ${this.cities.length - cnN} 城${selCity ? ` · ${selCity.name}【${selCity.units.map(g => g.name).join("、")}】→ 点相邻城 ⚔攻/➡移` : " · 点选己方城池"}`;
+      const canReroll = !this.over && this.rpg && RPG.char && this.turnNo === 1 && !this.busyBattle;
       $("#cq-actions").innerHTML = this.over
         ? `<button class="cup-go primary" id="cq-restart">再来一局</button>`
         : `<button class="cup-go" id="cq-cancel" ${this.sel == null ? "disabled" : ""}>取消选择</button>
+           ${canReroll ? `<button class="cup-go" id="cq-reroll">🎲 重掷地图(30金)</button>` : ""}
            <button class="cup-go primary" id="cq-pass">结束回合</button>`;
       const rs = $("#cq-restart"); if (rs) rs.onclick = () => this.askSide();
       const cc = $("#cq-cancel"); if (cc) cc.onclick = () => { this.sel = null; this.render(); };
+      const rr = $("#cq-reroll"); if (rr) rr.onclick = () => {
+        if (this.busyBattle) return;
+        if (!Bond.spend(30)) { toast("金币不足（重掷需 30 金）"); return; }
+        toast("🎲 山川重定！（-30金）");
+        this.start(this.playerSide, this._opts);
+      };
       const ps = $("#cq-pass"); if (ps) ps.onclick = () => { if (this.busyBattle) return; this.sel = null; this.log("你按兵不动。"); this.afterPlayerAction(); };
     },
 
@@ -2792,7 +2855,7 @@
           </div>
         </div>
         <div class="bond-team">
-          <div class="bt-head">💰 金币 <b>${Bond.gold()}</b> ｜ 👥 我的团队 ${Bond.data.team.length}/${Bond.teamLimit()}<small>（与武将并肩征战积累友谊，挚友可招募；点武将 ⓘ 详情赠礼/招募）</small></div>
+          <div class="bt-head">💰 金币 <b>${Bond.gold()}</b> ｜ 👥 我的团队 ${Bond.data.team.length}/${Bond.teamLimit()}<small>（挚友可招募；队友任 2v2 副将，同阵营队友在组队/国战/阵营大战必上阵）</small></div>
           <div class="bt-list">${Bond.teamGenerals().map(t => `<span class="bt-chip" data-id="${t.id}">${t.name}<i data-x="${t.id}">✕</i></span>`).join("") || '<span class="bt-empty">尚无队友——先去结交武将吧</span>'}</div>
         </div>
         <div class="rpg-actions">
@@ -2945,8 +3008,8 @@
       $("#duo-cancel").onclick = closeOverlay;
     },
 
-    /* ---- 阵营大战 ---- */
-    war() { showScreen("war"); $("#war-log").innerHTML = ""; $("#war-status").textContent = "整军待发…"; setTimeout(() => War.start(this.heroGeneral()), 60); },
+    /* ---- 阵营大战：进入后先选规模/模式，点「开战」再出阵 ---- */
+    war() { War.open(this.heroGeneral()); },
     onWarResult(kills, sideWon, cnWin, comrades) {
       if (sideWon) Bond.addGold(40, "阵营大捷");
       Bond.addMany(comrades, 2);   // 并肩存活的同袍
@@ -2956,13 +3019,15 @@
         () => this.war());
     },
 
-    /* ---- 组队大战 ---- */
+    /* ---- 组队大战：同阵营队友必上阵，余位随机补满 ---- */
     teamBattle() {
       const hero = this.heroGeneral();
-      const pool = DB.bySide(hero.side).slice();
+      const mates = Bond.teamGenerals().filter(g => g.side === hero.side).slice(0, 9).map(clone);
+      const ids = new Set(mates.map(g => g.id));
+      const pool = DB.bySide(hero.side).filter(g => !ids.has(g.id));
       shuffle(pool);
-      const mates = pool.slice(0, 9);
-      TeamBattle.begin([hero, ...mates], hero.side, { rpg: true });
+      const fill = pool.slice(0, Math.max(0, 9 - mates.length)).map(clone);
+      TeamBattle.begin([hero, ...mates, ...fill], hero.side, { rpg: true });
     },
     onTeamBattleResult(kills, won) {
       if (won) Bond.addGold(30 + kills * 3, "组队大捷");
@@ -2974,11 +3039,12 @@
         () => this.teamBattle());
     },
 
-    /* ---- 国战 · 攻城略地：主角编入己方军团 ---- */
+    /* ---- 国战 · 攻城略地：主角与同阵营队友编入己方军团 ---- */
     conquest() {
       const hero = this.heroGeneral();
+      const mates = Bond.teamGenerals().filter(g => g.side === hero.side);
       showScreen("conquest");
-      Conquest.start(hero.side, { rpg: true, hero });
+      Conquest.start(hero.side, { rpg: true, hero, mates });
     },
     onConquestResult(won, captures, kills) {
       Bond.addGold(captures * 40 + (won ? 200 : 0), "国战战果");
@@ -3075,12 +3141,14 @@
         let va, vb;
         if (key === "name") return a.name.localeCompare(b.name, "zh") * dir;
         if (key === "rating") { va = ratingScore(a); vb = ratingScore(b); }
+        else if (key === "bond") { va = Bond.pts(a.id); vb = Bond.pts(b.id); }
         else { va = a[key]; vb = b[key]; }
         return (va - vb) * dir;
       });
       const arrow = k => this.sort.key === k ? (this.sort.dir > 0 ? " ▲" : " ▼") : "";
       const th = (k, label) => `<th data-sort="${k}" class="${this.sort.key === k ? 'sorted' : ''}">${label}${arrow(k)}</th>`;
-      const head = `<tr>${th("name", "姓名")}${DIMS.map(([k, l]) => th(k, l[0])).join("")}${th("rating", "评分")}<th>评级</th><th>操作</th></tr>`;
+      const hasBond = !!RPG.char;   // 有自选武将时显示与其的友谊值
+      const head = `<tr>${th("name", "姓名")}${DIMS.map(([k, l]) => th(k, l[0])).join("")}${th("rating", "评分")}<th>评级</th>${hasBond ? th("bond", "友谊") : ""}<th>操作</th></tr>`;
       const body = arr.map(g => {
         const cells = DIMS.map(([k]) => `<td class="num gt-${rateLetter(g[k])}">${g[k]}</td>`).join("");
         return `<tr data-id="${g.id}">
@@ -3088,6 +3156,7 @@
           ${cells}
           <td class="dt-total">${ratingScore(g)}</td>
           <td class="dt-grade">${ratingChip(g)}</td>
+          ${hasBond ? `<td class="dt-bond">${Bond.inTeam(g.id) ? "👥" : ""}${Bond.pts(g.id)}</td>` : ""}
           <td class="dt-act">
             <button class="db-view" data-act="view">详</button>
             <button class="db-edit" data-act="edit">改</button>
@@ -3252,7 +3321,7 @@
     $("#select-random").onclick = () => SelectUI.randomPick();
 
     // 阵营战
-    $("#war-start").onclick = () => War.start();
+    $("#war-start").onclick = () => War.start(War.pendingHero);
     $("#war-mode-fast").onclick = () => War.setMode("fast");
     $("#war-mode-detail").onclick = () => War.setMode("detail");
     $$(".war-scale").forEach(b => b.onclick = () => War.setScale(b.dataset.scale));
