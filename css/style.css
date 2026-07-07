@@ -621,6 +621,32 @@ html, body {
   cursor: pointer; vertical-align: middle; margin: 0 2px;
 }
 
+/* 友谊 & 金币：详情弹窗面板 + 养成页团队栏 */
+.bond-box { margin: 10px 0 4px; padding: 8px 10px; border-radius: 10px; background: rgba(0,0,0,.06); border: 1px solid rgba(0,0,0,.15); text-align: left; }
+.bond-line { font-size: 13px; color: var(--ink); }
+.bond-line b { color: var(--cn-red); }
+.bond-track { height: 8px; border-radius: 4px; background: rgba(0,0,0,.15); overflow: hidden; margin: 6px 0; }
+.bond-fill { display: block; height: 100%; background: linear-gradient(90deg, #e8a54b, #c1272d); }
+.bond-gifts { display: flex; flex-wrap: wrap; gap: 6px; }
+.gift-btn {
+  padding: 6px 8px; border-radius: 8px; border: 1px solid rgba(0,0,0,.25); background: #fff8ea;
+  color: var(--ink); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+}
+.gift-btn small { color: #8a6d3b; font-weight: 400; }
+.gift-btn.recruit { background: linear-gradient(135deg,#ffe9c9,#f7d9a0); border-color: var(--cn-red); color: var(--cn-red); }
+.gift-btn.recruit.dim { opacity: .55; }
+.bond-team { margin: 10px 0 2px; padding: 8px 10px; border-radius: 10px; background: rgba(0,0,0,.3); border: 1px solid rgba(212,175,55,.25); }
+.bt-head { font-size: 13px; color: #c9b890; }
+.bt-head b { color: var(--cn-gold); }
+.bt-head small { display: block; font-size: 11px; opacity: .75; margin-top: 2px; }
+.bt-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.bt-chip {
+  padding: 4px 8px; border-radius: 14px; background: rgba(212,175,55,.16);
+  border: 1px solid rgba(212,175,55,.5); color: var(--cn-gold); font-size: 13px; cursor: pointer;
+}
+.bt-chip i { font-style: normal; margin-left: 5px; color: #9a8c66; }
+.bt-empty { font-size: 12px; color: #9a8c66; }
+
 /* 国战 · 攻城略地：随机地图（绝对定位城池 + SVG 城际道路） */
 .cq-map { position: relative; margin: 6px 10px; height: clamp(300px, 44vh, 400px); }
 .cq-lines { position: absolute; inset: 0; width: 100%; height: 100%; }

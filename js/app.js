@@ -124,11 +124,32 @@
   }
 
   function showDetail(g, opts = {}) {
+    // 友谊面板：有自选武将(角色扮演)且对象是库中武将时显示
+    let bondHtml = "";
+    const bondable = RPG.char && g.id !== -1 && DB.get(g.id);
+    if (bondable) {
+      const p = Bond.pts(g.id), lv = Bond.levelName(p), next = Bond.nextThreshold(p);
+      const inTeam = Bond.inTeam(g.id);
+      const pct = Math.min(100, p / 250 * 100);
+      const recruitLbl = inTeam ? "✓ 已在队中"
+        : p >= 250 ? "🤝 招募入队（免费）"
+        : p >= 150 ? `🤝 招募入队（${Bond.recruitCost(g)} 金）`
+        : "🔒 挚友后可招募";
+      bondHtml = `<div class="bond-box">
+        <div class="bond-line">友谊 <b>${p}</b> · ${lv}${next ? `（还差 ${next - p} 至下一级）` : "（已至最高）"} · 💰 ${Bond.gold()} 金</div>
+        <div class="bond-track"><span class="bond-fill" style="width:${pct}%"></span></div>
+        <div class="bond-gifts">
+          ${Bond.GIFTS.map(x => `<button class="gift-btn" data-g="${x.k}">${x.icon} ${x.n} <small>${x.cost}金 +${x.add}</small></button>`).join("")}
+          <button class="gift-btn recruit ${inTeam || p < 150 ? "dim" : ""}" id="bond-recruit">${recruitLbl}</button>
+        </div>
+      </div>`;
+    }
     const html = `<div class="result-card detail-card">
       <div class="winner-av" style="background:${g.side === 'cn' ? 'linear-gradient(135deg,var(--cn-red),#7a1420)' : 'linear-gradient(135deg,var(--jp-indigo),#141e3c)'}">${avatarChar(g.name)}</div>
       <div class="wname">${g.name}</div>
       <div style="font-size:13px;color:#8a6d3b;margin-top:2px">${g.title || ''}</div>
       <div class="wdesc">${g.intro || ''}</div>
+      ${bondHtml}
       <div class="radar-wrap">${radarSVG(g)}</div>
       <div class="overall-line">武将评分 <b class="ov-sum">${ratingScore(g)}</b> <span class="ov-num">(六维 ${sumStats(g)} + 突出加成 ${Math.round(ratingScore(g) - sumStats(g))})</span> · 武将评级 ${ratingChip(g)}</div>
       <div class="stat-rows">${statRow('体力', g.ti)}${statRow('武力', g.wu)}${statRow('统帅', g.tong)}${statRow('智力', g.zhi)}${statRow('政治', g.zheng)}${statRow('魅力', g.mei)}</div>
@@ -140,6 +161,10 @@
     openOverlay(html);
     $("#detail-close").onclick = closeOverlay;
     if (opts.pickable) $("#detail-pick").onclick = () => { closeOverlay(); opts.onPick(g); };
+    if (bondable) {
+      $$(".gift-btn[data-g]").forEach(b => b.onclick = () => { if (Bond.gift(g, b.dataset.g)) showDetail(g, opts); });
+      $("#bond-recruit").onclick = () => { if (Bond.recruit(g)) showDetail(g, opts); };
+    }
   }
   function statRow(lbl, val) {
     return `<div class="stat-row"><span class="lbl">${lbl}</span>
@@ -1074,6 +1099,7 @@
       this.floor = 1;
       this.carryHp = this.hero.ti;
       this.gains = [];
+      this.slain = [];   // 被斩守将名录（RPG 友谊结算用）
       this.next();
     },
     // 守将 = 随机武将按层数放大六维
@@ -1101,6 +1127,7 @@
     onResult(winner) {
       if (winner.id !== this.hero.id) { AudioSystem.sfx.ko(); this.finish(BATTLE.p2.g); return; }
       AudioSystem.sfx.victory();
+      this.slain.push(BATTLE.p2.g);
       const healed = Math.round(this.hero.ti * 0.25);
       this.carryHp = Math.min(this.hero.ti, Math.max(0, Math.round(BATTLE.p1.hp)) + healed);
       this.saveBest(this.floor);
@@ -1173,7 +1200,22 @@
    *  阵营大战（自动模拟 100 vs 100）
    * ============================================================ */
   const War = {
-    running: false, mode: "fast", gen: 0, detached: false,
+    running: false, mode: "fast", gen: 0, detached: false, scale: "100",
+    // 参战规模选择：50 / 100 / 全部 / 随机数量（双方相同）
+    setScale(s) {
+      if (this.running) { toast("大战进行中，结束后再调整规模"); return; }
+      this.scale = s;
+      $$(".war-scale").forEach(b => b.classList.toggle("active", b.dataset.scale === s));
+      const cap = Math.min(DB.bySide("cn").length, DB.bySide("jp").length);
+      const lbl = { "50": "每方 50 名武将", "100": "每方 100 名武将", all: `全部上阵（每方 ${cap} 名）`, random: "随机数量（双方相同）" }[s];
+      $("#war-info").textContent = "规模：" + lbl;
+    },
+    scaleTotal(cap) {
+      if (this.scale === "50") return Math.min(50, cap);
+      if (this.scale === "100") return Math.min(100, cap);
+      if (this.scale === "all") return cap;
+      return randInt(20, cap);   // 随机数量
+    },
     // 中止进行中的大战：作废循环、解开等待的观战对决、复位界面
     abort() {
       this.gen++;
@@ -1250,9 +1292,10 @@
       let cn = DB.bySide("cn").map(clone);
       let jp = DB.bySide("jp").map(clone);
       shuffle(cn); shuffle(jp);
-      const total = Math.min(cn.length, jp.length);
+      const total = this.scaleTotal(Math.min(cn.length, jp.length));
       cn = cn.slice(0, total); jp = jp.slice(0, total);
-      // RPG 英雄出战：替入其所属阵营的首位
+      $("#war-info").textContent = `规模：每方 ${total} 名武将`;
+      // RPG 英雄出战：替入其所属阵营的首位（自选武将必上阵，任何规模都占一席）
       if (hero) { (hero.side === "cn" ? cn : jp)[0] = clone(hero); }
       let heroKills = 0;
       const kills = new Map();  // 击杀榜：fighter -> {g, kills}
@@ -1314,7 +1357,15 @@
       const survivors = cnWin ? cn.length - cnIdx : jp.length - jpIdx;
       this.running = false;
       $("#war-start").disabled = false;
-      if (hero) { const heroSideWon = (cnWin ? "cn" : "jp") === hero.side; RPG.onWarResult(heroKills, heroSideWon, cnWin); return; }
+      if (hero) {
+        const heroSideWon = (cnWin ? "cn" : "jp") === hero.side;
+        // 与主角同阵营并肩存活到最后的同袍（不含主角自身）
+        const mySide = hero.side === "cn" ? cn : jp;
+        const myIdx = hero.side === "cn" ? cnIdx : jpIdx;
+        const comrades = mySide.slice(myIdx).filter(g => g.id !== -1 && g.hp !== 0);
+        RPG.onWarResult(heroKills, heroSideWon, cnWin, comrades);
+        return;
+      }
       const bg = cnWin ? 'linear-gradient(135deg,var(--cn-red),#7a1420)' : 'linear-gradient(135deg,var(--jp-indigo),#141e3c)';
       openOverlay(`<div class="result-card">
         <h1>${cnWin ? '三国' : '战国'} 胜!</h1>
@@ -2362,12 +2413,11 @@
       }
       const champHit = this.champion && P.champion === this.champion.id;
       if (champHit) score *= 2;
-      const exp = rpg ? Math.round(score / 2) : 0;
-      if (rpg) this.cupExp += exp;
+      if (rpg && score > 0) Bond.addGold(score, "世界杯竞猜");
       openOverlay(`<div class="result-card">
         <h1>竞猜结算</h1>
         <div class="wname">${champHit ? "🎯 神机妙算！猜中冠军，得分翻倍！" : "赛果揭晓"}</div>
-        <div class="wdesc">${lines.join("<br>")}<br>冠军预测：${champHit ? "✅ 命中" : "❌ 未中"}<br>竞猜得分 <b style="font-size:22px;color:var(--cn-red)">${score}</b>${rpg ? `<br>折算历练经验 <b style="color:var(--cn-red)">+${exp}</b>` : ""}</div>
+        <div class="wdesc">${lines.join("<br>")}<br>冠军预测：${champHit ? "✅ 命中" : "❌ 未中"}<br>竞猜得分 <b style="font-size:22px;color:var(--cn-red)">${score}</b>${rpg ? `<br>竞猜奖金 <b style="color:var(--cn-red)">+${score} 金</b>` : ""}</div>
         <div class="btns"><button class="btn-primary" id="pred-ok">确定</button></div></div>`);
       $("#pred-ok").onclick = () => { closeOverlay(); next && next(); };
     },
@@ -2539,6 +2589,69 @@
   };
 
   /* ============================================================
+   *  友谊 & 金币（随自选武将征战积累；挚友可花金招募入队，生死之交免费）
+   * ============================================================ */
+  const BOND_KEY = "wujiang_bond_v1";
+  const Bond = {
+    data: { gold: 0, friends: {}, team: [], giftDay: {} },
+    load() {
+      try { const d = JSON.parse(localStorage.getItem(BOND_KEY)); if (d) this.data = Object.assign({ gold: 0, friends: {}, team: [], giftDay: {} }, d); } catch { }
+    },
+    save() { localStorage.setItem(BOND_KEY, JSON.stringify(this.data)); },
+    gold() { return this.data.gold; },
+    addGold(n, why) {
+      if (!RPG.char || n <= 0) return;
+      this.data.gold += Math.round(n); this.save();
+      if (why) toast(`💰 +${Math.round(n)} 金 · ${why}`);
+    },
+    spend(n) { if (this.data.gold < n) return false; this.data.gold -= n; this.save(); return true; },
+    pts(id) { return this.data.friends[id] || 0; },
+    addF(id, n) {
+      if (!RPG.char || id == null || id === -1) return;
+      this.data.friends[id] = Math.min(999, (this.data.friends[id] || 0) + n);
+    },
+    addMany(gens, n) { (gens || []).forEach(g => g && this.addF(g.id, n)); this.save(); },
+    LEVELS: [[250, "生死之交"], [150, "挚友"], [80, "好友"], [30, "相识"], [0, "陌生"]],
+    levelName(p) { return this.LEVELS.find(([t]) => p >= t)[1]; },
+    nextThreshold(p) { const up = this.LEVELS.slice().reverse().find(([t]) => t > p); return up ? up[0] : null; },
+    teamLimit() { return 5 + Math.floor(((RPG.char && RPG.char.level) || 1) / 10); },
+    inTeam(id) { return this.data.team.includes(id); },
+    teamGenerals() { return this.data.team.map(id => DB.get(id)).filter(Boolean); },
+    recruitCost(g) { return ratingScore(g) * 2; },
+    // 招募：挚友(150)可花金，生死之交(250)免费
+    recruit(g) {
+      const p = this.pts(g.id);
+      if (this.inTeam(g.id)) { toast(`${g.name} 已在队中`); return false; }
+      if (p < 150) { toast("友谊未到「挚友」，还不能招募"); return false; }
+      if (this.data.team.length >= this.teamLimit()) { toast(`团队已满（${this.teamLimit()} 人上限）`); return false; }
+      const cost = p >= 250 ? 0 : this.recruitCost(g);
+      if (cost > 0 && !this.spend(cost)) { toast(`金币不足（需 ${cost} 金）`); return false; }
+      this.data.team.push(g.id); this.save();
+      AudioSystem.sfx.victory();
+      toast(`🎉 ${g.name} 加入了你的团队！${cost ? `（花费 ${cost} 金）` : "（生死之交，分文不取）"}`);
+      return true;
+    },
+    dismiss(id) { this.data.team = this.data.team.filter(x => x !== id); this.save(); },
+    GIFTS: [
+      { k: "wine", n: "浊酒", icon: "🍶", cost: 20, add: 10 },
+      { k: "horse", n: "名马", icon: "🐎", cost: 80, add: 20 },
+      { k: "sword", n: "宝刀", icon: "⚔️", cost: 200, add: 30 },
+    ],
+    // 赠礼：每名武将每天限一次
+    gift(g, kind) {
+      const def = this.GIFTS.find(x => x.k === kind);
+      const today = new Date().toISOString().slice(0, 10);
+      if (this.data.giftDay[g.id] === today) { toast(`今天已赠过 ${g.name}，明日再来`); return false; }
+      if (!this.spend(def.cost)) { toast(`金币不足（${def.n} 需 ${def.cost} 金）`); return false; }
+      this.data.giftDay[g.id] = today;
+      this.addF(g.id, def.add); this.save();
+      AudioSystem.sfx.select();
+      toast(`${def.icon} 赠 ${g.name}【${def.n}】，友谊 +${def.add}`);
+      return true;
+    },
+  };
+
+  /* ============================================================
    *  角色扮演：自创/选用武将，随机六维(基线+加点)，历练获经验成长
    * ============================================================ */
   const RPG_KEY = "wujiang_rpg_v1";
@@ -2678,6 +2791,10 @@
             <div class="rpg-dims">${dims}</div>
           </div>
         </div>
+        <div class="bond-team">
+          <div class="bt-head">💰 金币 <b>${Bond.gold()}</b> ｜ 👥 我的团队 ${Bond.data.team.length}/${Bond.teamLimit()}<small>（与武将并肩征战积累友谊，挚友可招募；点武将 ⓘ 详情赠礼/招募）</small></div>
+          <div class="bt-list">${Bond.teamGenerals().map(t => `<span class="bt-chip" data-id="${t.id}">${t.name}<i data-x="${t.id}">✕</i></span>`).join("") || '<span class="bt-empty">尚无队友——先去结交武将吧</span>'}</div>
+        </div>
         <div class="rpg-actions">
           <button class="cup-go primary" id="rpg-train">⚔ 历练单挑</button>
           <button class="cup-go primary" id="rpg-gauntlet">🔥 车轮大战</button>
@@ -2700,6 +2817,11 @@
       $("#rpg-train").onclick = () => this.train();
       $("#rpg-gauntlet").onclick = () => this.gauntlet();
       $("#rpg-tower").onclick = () => this.tower();
+      $$(".bt-chip").forEach(el => el.onclick = e => {
+        const xid = e.target.dataset && e.target.dataset.x;
+        if (xid != null) { if (confirm("将其请出团队？")) { Bond.dismiss(+xid); this.renderHub(); } return; }
+        const tg = DB.get(+el.dataset.id); if (tg) showDetail(tg);
+      });
       $("#rpg-duo").onclick = () => this.duo();
       $("#rpg-war").onclick = () => this.war();
       $("#rpg-teamwar").onclick = () => this.teamBattle();
@@ -2742,6 +2864,12 @@
         gain = 10 + Math.round(Math.max(0, diff) / 30);
       }
       if (heroWon) c.wins++; else c.losses++;
+      if (heroWon) {
+        Bond.addGold(15, BATTLE && BATTLE.mode === "duo" ? "2v2 获胜" : "历练获胜");
+        Bond.addF(opp.id, 5);                        // 不打不相识
+        if (BATTLE && BATTLE.duo) Bond.addF(BATTLE.duo.d1.id, 15);   // 与副将并肩获胜
+        Bond.save();
+      }
       c.exp += gain;
       let lvUp = 0;
       while (c.exp >= this.expNeed(c.level)) { c.exp -= this.expNeed(c.level); c.level++; c.points += 1; lvUp++; }
@@ -2775,6 +2903,7 @@
     /* ---- 车轮大战 ---- */
     gauntlet() { Gauntlet.start(this.heroGeneral(), true); },
     onGauntletResult(streak, allCleared, killer) {
+      Bond.addGold(streak * 8, "车轮战果");
       const exp = streak * 25 + (allCleared ? 200 : 0);
       this.grantExp(exp, "车轮大战 · 连胜 " + streak,
         `连斩 <b style="color:var(--cn-red)">${streak}</b> 员${allCleared ? '，横扫群雄！' : (killer ? '，终被 ' + killer.name + ' 所阻。' : '。')}`,
@@ -2784,24 +2913,43 @@
     /* ---- 百人斩 · 爬塔 ---- */
     tower() { Tower.start(this.heroGeneral(), true); },
     onTowerResult(cleared, killer, gains) {
+      Bond.addGold(cleared * 8, "攀塔战果");
+      Bond.addMany(Tower.slain, 4);   // 被斩守将：不打不相识
       const exp = cleared * 20 + (cleared >= 10 ? 100 : 0);
       this.grantExp(exp, "百人斩 · 斩 " + cleared + " 将",
         `攀塔连斩 <b style="color:var(--cn-red)">${cleared}</b> 员守将${killer ? `，止步于 ${killer.name} 之手。` : '，全身而退。'}${gains && gains.length ? `<br>此行机缘：${gains.join('、')}` : ''}`,
         () => this.tower());
     },
 
-    /* ---- 2v2 主副将单挑：随机为你与对手各配一名副将 ---- */
+    /* ---- 2v2 主副将单挑：有队友则从团队挑副将，否则随机配 ---- */
     duo() {
       const hero = this.heroGeneral();
       const pool = DB.list.slice();
       shuffle(pool);
-      const dep = clone(pool[0]), m2 = clone(pool[1]), d2 = clone(pool[2]);
-      startDuoBattle(hero, dep, m2, d2, true);
+      const m2 = clone(pool[0]), d2 = clone(pool[1]);
+      const mates = Bond.teamGenerals();
+      if (!mates.length) { startDuoBattle(hero, clone(pool[2]), m2, d2, true); return; }
+      openOverlay(`<div class="result-card">
+        <h1>选择副将</h1>
+        <div class="wdesc">从团队中挑一名副将与你并肩（其六维15%并入你，并可驰援一次）：</div>
+        <div class="buff-list">
+          ${mates.map(t => `<button class="buff-btn" data-id="${t.id}"><span class="bi">👥</span><span class="bt"><b>${t.name}</b><small>评分 ${ratingScore(t)} · 友谊 ${Bond.pts(t.id)}</small></span></button>`).join("")}
+          <button class="buff-btn" data-id="rand"><span class="bi">🎲</span><span class="bt"><b>随机路人副将</b><small>不使用团队</small></span></button>
+        </div>
+        <div class="btns"><button class="btn-ghost" id="duo-cancel">取消</button></div></div>`);
+      $$(".buff-btn[data-id]").forEach(b => b.onclick = () => {
+        closeOverlay();
+        const dep = b.dataset.id === "rand" ? clone(pool[2]) : clone(DB.get(+b.dataset.id));
+        startDuoBattle(hero, dep, m2, d2, true);
+      });
+      $("#duo-cancel").onclick = closeOverlay;
     },
 
     /* ---- 阵营大战 ---- */
     war() { showScreen("war"); $("#war-log").innerHTML = ""; $("#war-status").textContent = "整军待发…"; setTimeout(() => War.start(this.heroGeneral()), 60); },
-    onWarResult(kills, sideWon) {
+    onWarResult(kills, sideWon, cnWin, comrades) {
+      if (sideWon) Bond.addGold(40, "阵营大捷");
+      Bond.addMany(comrades, 2);   // 并肩存活的同袍
       const exp = kills * 22 + (sideWon ? 120 : 0);
       this.grantExp(exp, "阵营大战 " + (sideWon ? "· 获胜" : "· 落败"),
         `你麾下斩敌 <b style="color:var(--cn-red)">${kills}</b> 员，本方阵营${sideWon ? '获胜！' : '惜败。'}`,
@@ -2817,6 +2965,9 @@
       TeamBattle.begin([hero, ...mates], hero.side, { rpg: true });
     },
     onTeamBattleResult(kills, won) {
+      if (won) Bond.addGold(30 + kills * 3, "组队大捷");
+      const mates = TeamBattle.playerArr().map(u => u.g).filter(g => g.id !== -1);
+      Bond.addMany(mates, won ? 6 : 3);   // 同队并肩 +3，获胜再 +3
       const exp = kills * 20 + (won ? 150 : 0);
       this.grantExp(exp, "组队大战 " + (won ? "· 获胜" : "· 落败"),
         `本场麾下击杀敌将 <b style="color:var(--cn-red)">${kills}</b> 员，全军${won ? '大捷！' : '溃败。'}`,
@@ -2830,6 +2981,12 @@
       Conquest.start(hero.side, { rpg: true, hero });
     },
     onConquestResult(won, captures, kills) {
+      Bond.addGold(captures * 40 + (won ? 200 : 0), "国战战果");
+      // 战至终局仍在麾下的同袍
+      const hero = this.heroGeneral();
+      const allies = Conquest.cities.filter(c => c.side === hero.side)
+        .flatMap(c => c.units).filter(g => g.id !== -1);
+      Bond.addMany(allies, won ? 6 : 3);
       const exp = captures * 40 + kills * 15 + (won ? 250 : 0);
       this.grantExp(exp, "国战 " + (won ? "· 一统天下" : "· 大势已去"),
         `攻克 <b style="color:var(--cn-red)">${captures}</b> 城，斩敌将 <b style="color:var(--cn-red)">${kills}</b> 员，${won ? '天下归一！' : '霸业未成。'}`,
@@ -2862,6 +3019,11 @@
     onCupResult(placement, cupWinExp) {
       const c = this.char;
       if (!placement) { showScreen("rpg"); this.renderHub(); return; }
+      // 名次奖金 + 同组交手友谊
+      if (placement.label === "夺冠") Bond.addGold(100, "世界杯夺冠");
+      else if (/半决赛|决赛/.test(placement.label)) Bond.addGold(50, "世界杯四强");
+      const myGroup = Tournament.groups.find(g => g.teams.some(t => t.id === -1));
+      if (myGroup) Bond.addMany(myGroup.teams.filter(t => t.id !== -1), 3);
       const winGain = Math.round(cupWinExp || 0);   // 各场单挑获胜累计经验
       const bonus = placement.exp;                   // 按最终轮次的晋级奖励
       const gain = winGain + bonus;
@@ -3026,6 +3188,8 @@
    * ============================================================ */
   function init() {
     DB.load();
+    Bond.load();
+    RPG.load();   // 提前载入角色：友谊/金币的累计以其存在为前提
 
     // 首屏需用户交互才能启动音频
     let audioStarted = false;
@@ -3091,6 +3255,7 @@
     $("#war-start").onclick = () => War.start();
     $("#war-mode-fast").onclick = () => War.setMode("fast");
     $("#war-mode-detail").onclick = () => War.setMode("detail");
+    $$(".war-scale").forEach(b => b.onclick = () => War.setScale(b.dataset.scale));
 
     // 战斗控制：自动作战 / 速度
     $("#btn-auto").onclick = () => {
