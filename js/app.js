@@ -4,6 +4,7 @@
 (() => {
   "use strict";
 
+  const APP_VERSION = "202607072331";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -3267,6 +3268,7 @@
   function init() {
     DB.load();
     Bond.load();
+    $("#app-ver").textContent = APP_VERSION;
     RPG.load();   // 提前载入角色：友谊/金币的累计以其存在为前提
 
     // 首屏需用户交互才能启动音频
