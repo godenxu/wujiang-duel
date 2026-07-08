@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607082310";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607082336";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -133,8 +133,10 @@
 
   function showDetail(g, opts = {}) {
     // 友谊面板：有自选武将(角色扮演)且对象是库中武将时显示
-    let bondHtml = "";
+    let bondHtml = "", eqHtml = "";
     const bondable = RPG.char && g.id !== -1 && DB.get(g.id);
+    // 装备加成：六维数值、雷达图、总评均按「若此武将佩戴其当前装备」实时展示
+    const hg = Armory.geared(g, g.id);
     if (bondable) {
       const p = Bond.pts(g.id), lv = Bond.levelName(p), next = Bond.nextThreshold(p);
       const inTeam = Bond.inTeam(g.id);
@@ -143,17 +145,15 @@
         : p >= 250 ? "🤝 招募入队（免费）"
         : p >= 150 ? `🤝 招募入队（${Bond.recruitCost(g)} 金）`
         : "🔒 挚友后可招募";
-      const giftedToday = Bond.data.giftDay[g.id] === new Date().toISOString().slice(0, 10);
       const visitedToday = (Bond.data.visitDay || {})[g.id] === new Date().toISOString().slice(0, 10);
+      eqHtml = `<div class="eq-slots-wrap"><div class="bt-head">🎒 携带宝物<small>（点击槽位选择宝物即为赠送；宝物只在首次赠给某位武将时计入友谊）</small></div><div class="eq-slots compact">${eqSlotsHtml(g.id, true)}</div></div>`;
       bondHtml = `<div class="bond-box">
         <div class="bond-line">友谊 <b>${p}</b> · ${lv}${next ? `（还差 ${next - p} 至下一级）` : "（已至最高）"} · 💰 ${Bond.gold()} 金</div>
         <div class="bond-track"><span class="bond-fill" style="width:${pct}%"></span></div>
         <div class="bond-gifts">
-          <button class="gift-btn ${giftedToday ? "dim" : ""}" id="bond-gift">🎁 赠送宝物${giftedToday ? "（今日已赠）" : ""}</button>
           <button class="gift-btn ${visitedToday ? "dim" : ""}" id="bond-visit">🚶 拜访（+${Bond.VISIT_ADD}）${visitedToday ? "（今日已访）" : ""}</button>
           <button class="gift-btn recruit ${inTeam || p < 150 ? "dim" : ""}" id="bond-recruit">${recruitLbl}</button>
         </div>
-        <div class="eq-slots-wrap"><div class="bt-head" style="margin:10px 0 4px">🎒 携带宝物<small>（点击槽位可装备/更换）</small></div><div class="eq-slots">${eqSlotsHtml(g.id)}</div></div>
       </div>`;
     }
     const html = `<div class="result-card detail-card">
@@ -161,9 +161,10 @@
       <div class="wname">${g.name}</div>
       <div style="font-size:13px;color:#8a6d3b;margin-top:2px">${g.title || ''}</div>
       <div class="wdesc">${g.intro || ''}</div>
-      <div class="radar-wrap">${radarSVG(g)}</div>
-      <div class="overall-line">武将评分 <b class="ov-sum">${ratingScore(g)}</b> <span class="ov-num">(六维 ${sumStats(g)} + 突出加成 ${Math.round(ratingScore(g) - sumStats(g))})</span> · 武将评级 ${ratingChip(g)}</div>
-      <div class="stat-rows">${statRow('体力', g.ti)}${statRow('武力', g.wu)}${statRow('统帅', g.tong)}${statRow('智力', g.zhi)}${statRow('政治', g.zheng)}${statRow('魅力', g.mei)}</div>
+      <div class="radar-wrap">${radarSVG(hg)}</div>
+      <div class="overall-line">武将评分 <b class="ov-sum">${ratingScore(hg)}</b> <span class="ov-num">(六维 ${sumStats(hg)} + 突出加成 ${Math.round(ratingScore(hg) - sumStats(hg))})</span> · 武将评级 ${ratingChip(hg)}</div>
+      <div class="stat-rows">${statRow('体力', hg.ti, hg.ti - g.ti)}${statRow('武力', hg.wu, hg.wu - g.wu)}${statRow('统帅', hg.tong, hg.tong - g.tong)}${statRow('智力', hg.zhi, hg.zhi - g.zhi)}${statRow('政治', hg.zheng, hg.zheng - g.zheng)}${statRow('魅力', hg.mei, hg.mei - g.mei)}</div>
+      ${eqHtml}
       ${bondHtml}
       <div class="btns">
         ${opts.pickable ? `<button class="btn-primary" id="detail-pick">选他出战</button>` : ''}
@@ -174,16 +175,15 @@
     $("#detail-close").onclick = closeOverlay;
     if (opts.pickable) $("#detail-pick").onclick = () => { closeOverlay(); opts.onPick(g); };
     if (bondable) {
-      $("#bond-gift").onclick = () => openGiftPicker(g, () => showDetail(g, opts));
       $("#bond-visit").onclick = () => { if (Bond.visit(g)) showDetail(g, opts); };
       $("#bond-recruit").onclick = () => { if (Bond.recruit(g)) showDetail(g, opts); };
       bindEqSlots(() => showDetail(g, opts));
     }
   }
-  function statRow(lbl, val) {
+  function statRow(lbl, val, gear) {
     return `<div class="stat-row"><span class="lbl">${lbl}</span>
       <span class="track"><span class="bar" style="width:${Math.min(100, val / 1.2)}%;background:${gradeColor(val)}"></span></span>
-      <span class="val">${val}</span>${gradeChip(val)}</div>`;
+      <span class="val">${val}${gear ? `<i class="rd-gear">(+${gear})</i>` : ''}</span>${gradeChip(val)}</div>`;
   }
 
   /* ============================================================
@@ -2670,9 +2670,9 @@
    * ============================================================ */
   const BOND_KEY = "wujiang_bond_v1";
   const Bond = {
-    data: { gold: 0, friends: {}, team: [], giftDay: {}, visitDay: {} },
+    data: { gold: 0, friends: {}, team: [], giftDay: {}, visitDay: {}, gifted: {} },
     load() {
-      try { const d = JSON.parse(localStorage.getItem(BOND_KEY)); if (d) this.data = Object.assign({ gold: 0, friends: {}, team: [], giftDay: {}, visitDay: {} }, d); } catch { }
+      try { const d = JSON.parse(localStorage.getItem(BOND_KEY)); if (d) this.data = Object.assign({ gold: 0, friends: {}, team: [], giftDay: {}, visitDay: {}, gifted: {} }, d); } catch { }
     },
     save() { localStorage.setItem(BOND_KEY, JSON.stringify(this.data)); },
     gold() { return this.data.gold; },
@@ -2718,26 +2718,22 @@
       return true;
     },
     dismiss(id) { this.data.team = this.data.team.filter(x => x !== id); this.save(); },
-    // 赠礼：赠送一件自己拥有且已鉴定的宝物（每名武将每天限赠一次），友谊增幅按稀有度分档；
-    // 宝物本身不再额外花金——它的价值已体现在获取它所付出的代价上。
+    // 赠礼：为一名史实武将装备宝物即视为赠送——直接在其装备槽点选宝物即可，无需另开弹窗。
+    // 友谊按「(武将, 宝物) 是否首次相赠」发放而非按天限次：同一件宝物只在第一次装到某位
+    // 武将身上时给一次友谊，日后无论怎么卸下/换回都不会重复计——避免拿两件宝物来回横跳刷友谊；
+    // 想再赚友谊就得去战场/商店/锻造真正获得新的宝物，从根源上把友谊和宝物消耗绑定。
     GIFT_FRIEND: { normal: 8, fine: 15, rare: 25, legend: 40 },
-    giftItem(g, uid) {
-      const today = new Date().toISOString().slice(0, 10);
-      if (this.data.giftDay[g.id] === today) { toast(`今天已赠过 ${g.name}，明日再来`); return false; }
-      const item = Armory.data.items.find(i => i.uid === uid);
-      if (!item || item.identified === false) { toast("请选择一件已鉴定的宝物"); return false; }
-      // 若对方该槽位已佩戴其他宝物，先将其卸下退回玩家宝物库，再为其换上新赠之物
-      Armory.data.items.filter(i => i.equippedBy === g.id && i.type === item.type).forEach(i => i.equippedBy = null);
-      item.equippedBy = g.id;
-      Armory.save();
-      this.data.giftDay[g.id] = today;
-      const add = this.GIFT_FRIEND[item.rarity];
-      this.addF(g.id, add); this.save();
-      AudioSystem.sfx.select();
-      toast(`🎁 赠 ${g.name}【${item.name}】，友谊 +${add}（${this.rarityLabel(item.rarity)}宝物）`);
-      return true;
-    },
     rarityLabel(k) { const r = Armory.rarityDef(k); return r ? r.n : k; },
+    // 若该宝物是第一次装到这位武将身上，发放对应友谊并返回增量；否则返回 0（静默换装，不重复计）
+    maybeGiftFriend(generalId, item) {
+      if (!this.data.gifted) this.data.gifted = {};
+      const list = this.data.gifted[generalId] || (this.data.gifted[generalId] = []);
+      if (list.includes(item.uid)) return 0;
+      list.push(item.uid);
+      const add = this.GIFT_FRIEND[item.rarity] || 0;
+      this.addF(generalId, add); this.save();
+      return add;
+    },
     // 拜访：无需宝物，每名武将每天限一次，友谊小额增长
     VISIT_ADD: 3,
     visit(g) {
@@ -3009,11 +3005,15 @@
       this.itemsOf(owner).forEach(i => { out[i.stat] = (out[i.stat] || 0) + i.bonus; });
       return out;
     },
+    // __geared 标记该对象已叠加过装备加成，避免战斗中生成的战斗单位(其 g 已是叠加结果)
+    // 在详情弹窗里被 showDetail 二次叠加而显示虚高数值。
     geared(g, owner) {
+      if (g.__geared) return g;
       const b = this.statBonus(owner);
       if (!Object.keys(b).length) return g;
       const g2 = clone(g);
       Object.keys(b).forEach(k => { g2[k] = (g2[k] || 0) + b[k]; });
+      g2.__geared = true;
       return g2;
     },
 
@@ -3663,10 +3663,19 @@
       ${!item.equippedBy ? `<button class="ic-dismantle" data-uid="${item.uid}">拆解取材</button>` : ""}
     </div>`;
   }
-  // 装备槽位（供角色扮演主页/主角 与 武将详情/队友 共用）；未鉴定的宝物不会出现在此
-  function eqSlotsHtml(owner) {
+  // 装备槽位（供角色扮演主页/主角 与 武将详情/史实武将 共用）；未鉴定的宝物不会出现在此。
+  // compact=true 时用于武将详情页：五槽紧凑排成一行，仅显示图标与加成数值，长按/点击后在
+  // 弹窗中看到全名；owner 为 "hero" 时永远走普通装备逻辑，owner 为具体武将id时选择宝物即视为赠送。
+  function eqSlotsHtml(owner, compact) {
     return Armory.TYPES.map(type => {
       const item = Armory.itemsOf(owner).find(i => i.type === type.k && i.identified !== false);
+      if (compact) {
+        const title = item ? `${item.name} +${item.bonus}${statUnit(item.stat)} ${statLabel(item.stat)}` : `${type.n}（空）`;
+        return `<div class="eq-slot compact" data-type="${type.k}" data-owner="${owner}" title="${title}">
+          <span class="eq-icon">${type.icon}</span>
+          ${item ? `<span class="eq-mini" style="color:${Armory.rarityDef(item.rarity).color}">+${item.bonus}${statUnit(item.stat)}</span>` : `<span class="eq-mini dim">空</span>`}
+        </div>`;
+      }
       return `<div class="eq-slot" data-type="${type.k}" data-owner="${owner}">
         <span class="eq-icon">${type.icon}</span>
         <span class="eq-body">${item ? `<b style="color:${Armory.rarityDef(item.rarity).color}">${item.name}</b><small>+${item.bonus}${statUnit(item.stat)} ${statLabel(item.stat)}</small>` : `<small>空</small>`}</span>
@@ -3681,31 +3690,28 @@
     const type = Armory.typeDef(typeK);
     const cur = Armory.itemsOf(owner).find(i => i.type === typeK);
     const options = Armory.availableFor(owner, typeK);
+    const isGift = owner !== "hero";   // 为任意史实武将选择宝物即视为赠送
     openOverlay(`<div class="result-card">
       <h1>${type.icon} 选择${type.n}</h1>
+      ${isGift ? `<div class="wdesc">为其佩戴的宝物首次赠出时计入友谊；日后换回同一件不会重复计。</div>` : ""}
       <div class="buff-list">
         ${options.map(it => `<button class="buff-btn eq-opt ${cur && cur.uid === it.uid ? 'active' : ''}" data-uid="${it.uid}">
-          <span class="bi">${it.icon}</span><span class="bt"><b style="color:${Armory.rarityDef(it.rarity).color}">${it.name}</b><small>${Armory.rarityDef(it.rarity).n} · +${it.bonus}${statUnit(it.stat)} ${statLabel(it.stat)}${it.equippedBy && it.equippedBy !== owner ? `（原佩戴于 ${ownerName(it.equippedBy)}）` : ''}</small></span></button>`).join("") || '<div class="empty">尚无该类可用宝物（未鉴定的宝物请先到「宝物库」鉴宝）</div>'}
+          <span class="bi">${it.icon}</span><span class="bt"><b style="color:${Armory.rarityDef(it.rarity).color}">${it.name}</b><small>${Armory.rarityDef(it.rarity).n} · +${it.bonus}${statUnit(it.stat)} ${statLabel(it.stat)}${it.equippedBy && it.equippedBy !== owner ? `（原佩戴于 ${ownerName(it.equippedBy)}）` : ''}${isGift ? ` · 友谊 +${Bond.GIFT_FRIEND[it.rarity]}${(Bond.data.gifted[owner] || []).includes(it.uid) ? '（已赠过，不重复计）' : ''}` : ''}</small></span></button>`).join("") || '<div class="empty">尚无该类可用宝物（未鉴定的宝物请先到「宝物库」鉴宝）</div>'}
         ${cur ? `<button class="buff-btn" id="eq-unequip"><span class="bi">✕</span><span class="bt"><b>卸下</b></span></button>` : ""}
       </div>
       <div class="btns"><button class="btn-ghost" id="eq-cancel">取消</button></div></div>`);
-    $$(".eq-opt").forEach(b => b.onclick = () => { Armory.equip(+b.dataset.uid, owner); closeOverlay(); if (onDone) onDone(); });
+    $$(".eq-opt").forEach(b => b.onclick = () => {
+      const uid = +b.dataset.uid;
+      const item = Armory.data.items.find(i => i.uid === uid);
+      Armory.equip(uid, owner);
+      if (isGift && item) {
+        const add = Bond.maybeGiftFriend(owner, item);
+        if (add > 0) toast(`🎁 赠 ${ownerName(owner)}【${item.name}】，友谊 +${add}`);
+      }
+      closeOverlay(); if (onDone) onDone();
+    });
     const un = $("#eq-unequip"); if (un) un.onclick = () => { Armory.unequip(cur.uid); closeOverlay(); if (onDone) onDone(); };
     $("#eq-cancel").onclick = closeOverlay;
-  }
-  // 赠送宝物：只能赠送自己仓库中「未装备」且「已鉴定」的宝物，避免误赠正被佩戴的装备
-  function openGiftPicker(g, onDone) {
-    const options = Armory.data.items.filter(i => i.identified !== false && i.equippedBy === null);
-    openOverlay(`<div class="result-card">
-      <h1>🎁 赠 ${g.name} 宝物</h1>
-      <div class="wdesc">选一件仓库中的宝物相赠，友谊增幅按其稀有度而定：</div>
-      <div class="buff-list">
-        ${options.map(it => `<button class="buff-btn gift-opt" data-uid="${it.uid}">
-          <span class="bi">${it.icon}</span><span class="bt"><b style="color:${Armory.rarityDef(it.rarity).color}">${it.name}</b><small>${Armory.rarityDef(it.rarity).n} · +${it.bonus}${statUnit(it.stat)} ${statLabel(it.stat)} · 友谊 +${Bond.GIFT_FRIEND[it.rarity]}</small></span></button>`).join("") || '<div class="empty">仓库中暂无可赠之物——去战场获取、商店购买或锻造宝物，鉴宝后即可赠送</div>'}
-      </div>
-      <div class="btns"><button class="btn-ghost" id="gift-cancel">取消</button></div></div>`);
-    $$(".gift-opt").forEach(b => b.onclick = () => { if (Bond.giftItem(g, +b.dataset.uid)) { closeOverlay(); if (onDone) onDone(); } else closeOverlay(); });
-    $("#gift-cancel").onclick = closeOverlay;
   }
 
   const ArmoryUI = {

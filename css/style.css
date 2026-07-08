@@ -393,7 +393,8 @@ html, body {
 .stat-row .lbl { width: 46px; font-size: 16px; color: #5a4a30; }
 .stat-row .track { flex: 1; height: 14px; background: rgba(0,0,0,.12); border-radius: 6px; overflow: hidden; }
 .stat-row .bar { display: block; height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--cn-red), var(--accent)); }
-.stat-row .val { width: 38px; text-align: right; font-weight: 700; font-size: 16px; }
+.stat-row .val { min-width: 38px; text-align: right; font-weight: 700; font-size: 16px; white-space: nowrap; }
+.stat-row .rd-gear { font-style: normal; font-size: 11px; color: var(--cn-red); margin-left: 2px; }
 
 /* ---------- 车轮战/阵营战 ---------- */
 .gauntlet-info, .war-info { padding: 14px; text-align: center; }
@@ -603,8 +604,8 @@ html, body {
 .rr-bar { display: block; height: 100%; border-radius: 6px; }
 .rr-dim { display: flex; align-items: center; gap: 4px; }
 
-/* 百人斩 · 机缘三选一 */
-.buff-list { display: flex; flex-direction: column; gap: 10px; margin: 14px 0 4px; }
+/* 百人斩 · 机缘三选一（同时复用于装备/赠送选择弹窗，列表过长时可滚动，标题与按钮区保持常驻可见） */
+.buff-list { display: flex; flex-direction: column; gap: 10px; margin: 14px 0 4px; max-height: 48vh; overflow-y: auto; }
 .buff-btn {
   display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 10px; text-align: left;
   background: linear-gradient(135deg, #fff8ea, #f0debb); border: 2px solid var(--accent);
@@ -831,9 +832,18 @@ html, body {
 .eq-body { font-size: 11px; color: #d8c79c; line-height: 1.3; }
 .eq-body b { display: block; font-size: 12px; }
 .eq-body small { color: #9a8c66; }
-.bond-box .eq-slot { background: rgba(0,0,0,.06); border-color: rgba(0,0,0,.2); }
-.bond-box .eq-body { color: #5a4a30; }
-.bond-box .eq-body small { color: #8a7d5e; }
+/* 紧凑一行版（武将详情页）：五槽同宽挤在一行，仅图标+数值，全名靠 title 提示 */
+.eq-slots.compact { display: flex; flex-wrap: nowrap; gap: 4px; margin-top: 4px; }
+.eq-slot.compact { flex: 1 1 0; min-width: 0; padding: 6px 2px; gap: 1px; }
+.eq-slot.compact .eq-icon { font-size: 17px; }
+.eq-mini { font-size: 10px; font-weight: 700; line-height: 1; }
+.eq-mini.dim { color: #8a7d5e; font-weight: 400; }
+.eq-slots-wrap { margin: 10px 0 4px; }
+.eq-slots-wrap .bt-head { color: #5a4a30; }
+.eq-slots-wrap .bt-head small { color: #8a7d5e; }
+.eq-slots-wrap .eq-slot { background: rgba(0,0,0,.06); border-color: rgba(0,0,0,.2); }
+.eq-slots-wrap .eq-body { color: #5a4a30; }
+.eq-slots-wrap .eq-body small { color: #8a7d5e; }
 
 /* ---------- 宝物库：仓库 / 图鉴 / 商店 / 锻造 ---------- */
 .armory-tabs .armory-tab { font-size: 15px; padding: 11px 6px; }
