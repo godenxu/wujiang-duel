@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607082336";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607082357";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -135,8 +135,14 @@
     // 友谊面板：有自选武将(角色扮演)且对象是库中武将时显示
     let bondHtml = "", eqHtml = "";
     const bondable = RPG.char && g.id !== -1 && DB.get(g.id);
-    // 装备加成：六维数值、雷达图、总评均按「若此武将佩戴其当前装备」实时展示
+    // 装备加成：六维数值、雷达图、总评均按「若此武将佩戴其当前装备」实时展示。
+    // hg 是叠加装备后的最终值（若传入的 g 本就来自战斗单位、已叠加过，则原样沿用，避免二次叠加）；
+    // raw 专门用于计算装备增量标注——重新查一份「不含装备」的原始六维做对比基准，
+    // 这样即便 g 是战斗中已叠加过装备的单位，也能正确算出装备带来的增量而不是显示 0。
     const hg = Armory.geared(g, g.id);
+    const raw = g.id === -1
+      ? (RPG.char ? Object.assign({}, g, Object.fromEntries(DIMS.map(([k]) => [k, RPG.eff(RPG.char, k)]))) : g)
+      : (DB.get(g.id) || g);
     if (bondable) {
       const p = Bond.pts(g.id), lv = Bond.levelName(p), next = Bond.nextThreshold(p);
       const inTeam = Bond.inTeam(g.id);
@@ -151,7 +157,7 @@
         <div class="bond-line">友谊 <b>${p}</b> · ${lv}${next ? `（还差 ${next - p} 至下一级）` : "（已至最高）"} · 💰 ${Bond.gold()} 金</div>
         <div class="bond-track"><span class="bond-fill" style="width:${pct}%"></span></div>
         <div class="bond-gifts">
-          <button class="gift-btn ${visitedToday ? "dim" : ""}" id="bond-visit">🚶 拜访（+${Bond.VISIT_ADD}）${visitedToday ? "（今日已访）" : ""}</button>
+          <button class="gift-btn ${visitedToday ? "dim" : ""}" id="bond-visit">🚶 拜访（+1~2）${visitedToday ? "（今日已访）" : ""}</button>
           <button class="gift-btn recruit ${inTeam || p < 150 ? "dim" : ""}" id="bond-recruit">${recruitLbl}</button>
         </div>
       </div>`;
@@ -163,7 +169,7 @@
       <div class="wdesc">${g.intro || ''}</div>
       <div class="radar-wrap">${radarSVG(hg)}</div>
       <div class="overall-line">武将评分 <b class="ov-sum">${ratingScore(hg)}</b> <span class="ov-num">(六维 ${sumStats(hg)} + 突出加成 ${Math.round(ratingScore(hg) - sumStats(hg))})</span> · 武将评级 ${ratingChip(hg)}</div>
-      <div class="stat-rows">${statRow('体力', hg.ti, hg.ti - g.ti)}${statRow('武力', hg.wu, hg.wu - g.wu)}${statRow('统帅', hg.tong, hg.tong - g.tong)}${statRow('智力', hg.zhi, hg.zhi - g.zhi)}${statRow('政治', hg.zheng, hg.zheng - g.zheng)}${statRow('魅力', hg.mei, hg.mei - g.mei)}</div>
+      <div class="stat-rows">${statRow('体力', hg.ti, hg.ti - raw.ti)}${statRow('武力', hg.wu, hg.wu - raw.wu)}${statRow('统帅', hg.tong, hg.tong - raw.tong)}${statRow('智力', hg.zhi, hg.zhi - raw.zhi)}${statRow('政治', hg.zheng, hg.zheng - raw.zheng)}${statRow('魅力', hg.mei, hg.mei - raw.mei)}</div>
       ${eqHtml}
       ${bondHtml}
       <div class="btns">
@@ -2722,7 +2728,7 @@
     // 友谊按「(武将, 宝物) 是否首次相赠」发放而非按天限次：同一件宝物只在第一次装到某位
     // 武将身上时给一次友谊，日后无论怎么卸下/换回都不会重复计——避免拿两件宝物来回横跳刷友谊；
     // 想再赚友谊就得去战场/商店/锻造真正获得新的宝物，从根源上把友谊和宝物消耗绑定。
-    GIFT_FRIEND: { normal: 8, fine: 15, rare: 25, legend: 40 },
+    GIFT_FRIEND: { normal: 10, fine: 30, rare: 60, legend: 100 },
     rarityLabel(k) { const r = Armory.rarityDef(k); return r ? r.n : k; },
     // 若该宝物是第一次装到这位武将身上，发放对应友谊并返回增量；否则返回 0（静默换装，不重复计）
     maybeGiftFriend(generalId, item) {
@@ -2734,16 +2740,16 @@
       this.addF(generalId, add); this.save();
       return add;
     },
-    // 拜访：无需宝物，每名武将每天限一次，友谊小额增长
-    VISIT_ADD: 3,
+    // 拜访：无需宝物，每名武将每天限一次，友谊随机小额增长
     visit(g) {
       const today = new Date().toISOString().slice(0, 10);
       if (!this.data.visitDay) this.data.visitDay = {};
       if (this.data.visitDay[g.id] === today) { toast(`今天已拜访过 ${g.name}，明日再来`); return false; }
       this.data.visitDay[g.id] = today;
-      this.addF(g.id, this.VISIT_ADD); this.save();
+      const add = randInt(1, 2);
+      this.addF(g.id, add); this.save();
       AudioSystem.sfx.select();
-      toast(`🚶 拜访 ${g.name}，畅谈甚欢，友谊 +${this.VISIT_ADD}`);
+      toast(`🚶 拜访 ${g.name}，畅谈甚欢，友谊 +${add}`);
       return true;
     },
   };
@@ -3697,7 +3703,7 @@
       <div class="buff-list">
         ${options.map(it => `<button class="buff-btn eq-opt ${cur && cur.uid === it.uid ? 'active' : ''}" data-uid="${it.uid}">
           <span class="bi">${it.icon}</span><span class="bt"><b style="color:${Armory.rarityDef(it.rarity).color}">${it.name}</b><small>${Armory.rarityDef(it.rarity).n} · +${it.bonus}${statUnit(it.stat)} ${statLabel(it.stat)}${it.equippedBy && it.equippedBy !== owner ? `（原佩戴于 ${ownerName(it.equippedBy)}）` : ''}${isGift ? ` · 友谊 +${Bond.GIFT_FRIEND[it.rarity]}${(Bond.data.gifted[owner] || []).includes(it.uid) ? '（已赠过，不重复计）' : ''}` : ''}</small></span></button>`).join("") || '<div class="empty">尚无该类可用宝物（未鉴定的宝物请先到「宝物库」鉴宝）</div>'}
-        ${cur ? `<button class="buff-btn" id="eq-unequip"><span class="bi">✕</span><span class="bt"><b>卸下</b></span></button>` : ""}
+        ${cur && !isGift ? `<button class="buff-btn" id="eq-unequip"><span class="bi">✕</span><span class="bt"><b>卸下</b></span></button>` : ""}
       </div>
       <div class="btns"><button class="btn-ghost" id="eq-cancel">取消</button></div></div>`);
     $$(".eq-opt").forEach(b => b.onclick = () => {
@@ -3711,7 +3717,8 @@
       closeOverlay(); if (onDone) onDone();
     });
     const un = $("#eq-unequip"); if (un) un.onclick = () => { Armory.unequip(cur.uid); closeOverlay(); if (onDone) onDone(); };
-    $("#eq-cancel").onclick = closeOverlay;
+    // 取消：不改变任何装备，回到刚才的武将信息，而非直接关闭整个弹窗
+    $("#eq-cancel").onclick = () => { closeOverlay(); if (onDone) onDone(); };
   }
 
   const ArmoryUI = {
