@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607072331";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607082138";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -143,6 +143,7 @@
           ${Bond.GIFTS.map(x => `<button class="gift-btn" data-g="${x.k}">${x.icon} ${x.n} <small>${x.cost}金 +${x.add}</small></button>`).join("")}
           <button class="gift-btn recruit ${inTeam || p < 150 ? "dim" : ""}" id="bond-recruit">${recruitLbl}</button>
         </div>
+        ${inTeam ? `<div class="eq-slots-wrap"><div class="bt-head" style="margin:10px 0 4px">🎒 携带宝物<small>（点击槽位可装备/更换）</small></div><div class="eq-slots">${eqSlotsHtml(g.id)}</div></div>` : ""}
       </div>`;
     }
     const html = `<div class="result-card detail-card">
@@ -165,6 +166,7 @@
     if (bondable) {
       $$(".gift-btn[data-g]").forEach(b => b.onclick = () => { if (Bond.gift(g, b.dataset.g)) showDetail(g, opts); });
       $("#bond-recruit").onclick = () => { if (Bond.recruit(g)) showDetail(g, opts); };
+      bindEqSlots(() => showDetail(g, opts));
     }
   }
   function statRow(lbl, val) {
@@ -2687,7 +2689,7 @@
     nextThreshold(p) { const up = this.LEVELS.slice().reverse().find(([t]) => t > p); return up ? up[0] : null; },
     teamLimit() { return 5 + Math.floor(((RPG.char && RPG.char.level) || 1) / 10); },
     inTeam(id) { return this.data.team.includes(id); },
-    teamGenerals() { return this.data.team.map(id => DB.get(id)).filter(Boolean); },
+    teamGenerals() { return this.data.team.map(id => DB.get(id)).filter(Boolean).map(g => Armory.geared(g, g.id)); },
     recruitCost(g) { return ratingScore(g) * 2; },
     // 招募：挚友(150)可花金，生死之交(250)免费
     recruit(g) {
@@ -2723,6 +2725,237 @@
   };
 
   /* ============================================================
+   *  宝物系统：五类宝物（兵器/坐骑/书籍/服饰/奇珍）+ 稀有度 + 掉落/商店/锻造
+   * ============================================================ */
+  const ARMORY_KEY = "wujiang_armory_v1";
+  const Armory = {
+    data: { items: [], materials: { weapon: 0, mount: 0, book: 0, attire: 0, curio: 0 }, discovered: [], pity: { weapon: 0, mount: 0, book: 0, attire: 0, curio: 0 }, shop: [], shopDay: "", nextUid: 1 },
+    load() {
+      try {
+        const d = JSON.parse(localStorage.getItem(ARMORY_KEY));
+        if (d) this.data = Object.assign({ items: [], materials: { weapon: 0, mount: 0, book: 0, attire: 0, curio: 0 }, discovered: [], pity: { weapon: 0, mount: 0, book: 0, attire: 0, curio: 0 }, shop: [], shopDay: "", nextUid: 1 }, d);
+      } catch { }
+      this.ensureShop();
+    },
+    save() { localStorage.setItem(ARMORY_KEY, JSON.stringify(this.data)); },
+
+    TYPES: [
+      { k: "weapon", n: "兵器", icon: "⚔️", stat: "wu" },
+      { k: "mount", n: "坐骑", icon: "🐎", stat: "tong" },
+      { k: "book", n: "书籍", icon: "📖", stat: null },
+      { k: "attire", n: "服饰", icon: "👘", stat: "mei" },
+      { k: "curio", n: "奇珍", icon: "🔮", stat: "ti" },
+    ],
+    RARITIES: [
+      { k: "normal", n: "普通", color: "#9a9a9a", weight: 55, bonus: 5 },
+      { k: "fine", n: "精良", color: "#3b9aff", weight: 28, bonus: 10 },
+      { k: "rare", n: "稀有", color: "#a24df0", weight: 13, bonus: 16 },
+      { k: "legend", n: "传说", color: "#f4c430", weight: 4, bonus: 25 },
+    ],
+    TEMPLATES: {
+      weapon: [
+        { n: "青釭剑", intro: "曹操收缴自袁绍，削铁如泥的百炼神兵。" },
+        { n: "方天画戟", intro: "吕布纵横沙场的成名利刃。" },
+        { n: "丈八蛇矛", intro: "张飞怒目圆睁，一矛可开山裂石。" },
+        { n: "青龙偃月刀", intro: "关羽夜读春秋，刀锋凛冽如霜。" },
+        { n: "倚天剑", intro: "曹操随身佩剑，锋芒不外露。" },
+        { n: "雌雄双股剑", intro: "刘备起兵时所用双剑，刚柔并济。" },
+        { n: "村正", intro: "妖刀之名震慑东瀛，锋锐诡谲。" },
+        { n: "正宗", intro: "相州锻刀宗师之作，刃纹如流水。" },
+      ],
+      mount: [
+        { n: "赤兔马", intro: "日行千里，三易其主终随关羽。" },
+        { n: "的卢", intro: "传说妨主之马，却驮刘备跃过檀溪。" },
+        { n: "绝影", intro: "曹操爱驹，宛城一役舍命相救。" },
+        { n: "爪黄飞电", intro: "曹操坐骑，通体金黄，疾如闪电。" },
+        { n: "照夜玉狮子", intro: "白马如雪，夜行如昼。" },
+        { n: "川中岛骏马", intro: "越后武士驰骋雪原的良驹。" },
+        { n: "大黑", intro: "织田家家臣钟爱的骏马，性烈难驯。" },
+        { n: "磨墨", intro: "毛色如墨，静如处子动如脱兔。" },
+      ],
+      book: [
+        { n: "孙子兵法", intro: "兵者诡道，通读可悟攻守之要。" },
+        { n: "六韬", intro: "太公兵法，谋略与治国并重。" },
+        { n: "三略", intro: "黄石公授张良之书，权谋深藏。" },
+        { n: "太公兵法", intro: "兴周灭商的不传之秘。" },
+        { n: "五轮书", intro: "宫本武藏毕生剑理所著。" },
+        { n: "甲阳军鉴", intro: "武田家兵法秘传，攻守皆宜。" },
+        { n: "贞观政要", intro: "治世箴言，修身齐家之道。" },
+        { n: "武经总要", intro: "宋代官修兵书，集历代阵法大成。" },
+      ],
+      attire: [
+        { n: "蜀锦战袍", intro: "蜀地织锦所制战袍，华美不失威仪。" },
+        { n: "云纹披风", intro: "绣工精湛，行走间云影翻涌。" },
+        { n: "麒麟战甲罩衫", intro: "甲上绣麒麟纹，威而不猛。" },
+        { n: "南蛮锦裘", intro: "异域进贡的锦裘，色泽夺目。" },
+        { n: "羽织家纹", intro: "绣有家纹的阵羽织，彰显门第。" },
+        { n: "阵羽织", intro: "战场上御寒亦壮声势的外罩。" },
+        { n: "唐纹锦缎", intro: "唐风纹样织成，雍容华贵。" },
+        { n: "凤纹腰带", intro: "腰间凤纹暗藏，气度自生。" },
+      ],
+      curio: [
+        { n: "传国玉玺", intro: "得之者得天命加身，气运绵长。" },
+        { n: "随侯珠", intro: "灵蛇衔珠相报，光华养神固本。" },
+        { n: "和氏璧", intro: "稀世美玉，握之心神安定。" },
+        { n: "勾玉", intro: "沟通神灵的古老玉饰，护身延寿。" },
+        { n: "八尺琼曲玉", intro: "三神器之一，佩之如有神佑。" },
+        { n: "南蛮令", intro: "孟获信物，持之如猛虎添翼。" },
+        { n: "不老丹方", intro: "方士所炼丹方，强身固体。" },
+        { n: "定军神符", intro: "军中祈福神符，佑主将屹立不倒。" },
+      ],
+    },
+    typeDef(k) { return this.TYPES.find(t => t.k === k); },
+    rarityDef(k) { return this.RARITIES.find(r => r.k === k); },
+
+    rollRarity(pity) {
+      if (pity) {
+        const pool = this.RARITIES.filter(r => r.k === "rare" || r.k === "legend");
+        return pool[randInt(0, pool.length - 1)].k;
+      }
+      const total = this.RARITIES.reduce((s, r) => s + r.weight, 0);
+      let x = Math.random() * total;
+      for (const r of this.RARITIES) { if (x < r.weight) return r.k; x -= r.weight; }
+      return "normal";
+    },
+    makeItem(typeK, rarityK, tmpl) {
+      const type = this.typeDef(typeK), rar = this.rarityDef(rarityK);
+      const pool = this.TEMPLATES[typeK];
+      const t = tmpl || pool[randInt(0, pool.length - 1)];
+      const stat = type.stat || (Math.random() < 0.5 ? "zhi" : "zheng");
+      const item = { uid: this.data.nextUid++, type: typeK, tid: t.n, name: t.n, icon: type.icon, intro: t.intro, rarity: rarityK, stat, bonus: rar.bonus, equippedBy: null };
+      if (!this.data.discovered.includes(t.n)) this.data.discovered.push(t.n);
+      return item;
+    },
+
+    /* ---- 掉落 ---- */
+    dropItem(typeK) {
+      const k = typeK || this.TYPES[randInt(0, this.TYPES.length - 1)].k;
+      const item = this.makeItem(k, this.rollRarity(false));
+      this.data.items.push(item); this.save();
+      return item;
+    },
+    dropMaterial(typeK, n) {
+      const k = typeK || this.TYPES[randInt(0, this.TYPES.length - 1)].k;
+      n = n || 1;
+      this.data.materials[k] = (this.data.materials[k] || 0) + n;
+      this.save();
+      return { type: k, n };
+    },
+    // 统一战利品判定：item/material 各自独立按几率判定，都可能命中或落空；仅角色扮演生效
+    roll(chance, matChance, matN) {
+      const drops = [];
+      if (!RPG.char) return drops;
+      if (Math.random() < chance) drops.push({ kind: "item", item: this.dropItem() });
+      if (Math.random() < matChance) { const d = this.dropMaterial(null, matN || 1); drops.push({ kind: "mat", type: d.type, n: d.n }); }
+      return drops;
+    },
+    guaranteedItem(rarityK, typeK) {
+      const k = typeK || this.TYPES[randInt(0, this.TYPES.length - 1)].k;
+      const item = this.makeItem(k, rarityK);
+      this.data.items.push(item); this.save();
+      return item;
+    },
+    dropLine(drops) {
+      if (!drops || !drops.length) return "";
+      const parts = drops.map(d => d.kind === "item"
+        ? `${d.item.icon}<b style="color:${this.rarityDef(d.item.rarity).color}">${d.item.name}</b>（${this.rarityDef(d.item.rarity).n}）`
+        : `${this.typeDef(d.type).icon}${this.typeDef(d.type).n}材料 +${d.n}`);
+      return `<br>🎁 拾获：${parts.join("、")}`;
+    },
+
+    /* ---- 装备 ---- */
+    itemsOf(owner) { return this.data.items.filter(i => i.equippedBy === owner); },
+    availableFor(owner, typeK) { return this.data.items.filter(i => i.type === typeK && (i.equippedBy === null || i.equippedBy === owner)); },
+    equip(uid, owner) {
+      const item = this.data.items.find(i => i.uid === uid); if (!item) return false;
+      this.data.items.filter(i => i.equippedBy === owner && i.type === item.type).forEach(i => i.equippedBy = null);
+      item.equippedBy = owner; this.save();
+      AudioSystem.sfx.select();
+      return true;
+    },
+    unequip(uid) {
+      const item = this.data.items.find(i => i.uid === uid); if (!item) return false;
+      item.equippedBy = null; this.save(); return true;
+    },
+    statBonus(owner) {
+      const out = {};
+      this.itemsOf(owner).forEach(i => { out[i.stat] = (out[i.stat] || 0) + i.bonus; });
+      return out;
+    },
+    geared(g, owner) {
+      const b = this.statBonus(owner);
+      if (!Object.keys(b).length) return g;
+      const g2 = clone(g);
+      Object.keys(b).forEach(k => { g2[k] = (g2[k] || 0) + b[k]; });
+      return g2;
+    },
+
+    /* ---- 分解 ---- */
+    DISMANTLE_RETURN: { normal: 1, fine: 2, rare: 3, legend: 5 },
+    dismantle(uid) {
+      const idx = this.data.items.findIndex(i => i.uid === uid); if (idx < 0) return false;
+      const item = this.data.items[idx];
+      if (item.equippedBy) { toast("请先卸下装备再分解"); return false; }
+      const n = this.DISMANTLE_RETURN[item.rarity];
+      this.data.materials[item.type] = (this.data.materials[item.type] || 0) + n;
+      this.data.items.splice(idx, 1); this.save();
+      toast(`分解「${item.name}」，获得 ${this.typeDef(item.type).n}材料 +${n}`);
+      return true;
+    },
+
+    /* ---- 锻造（保底：连续12次未出稀有以上，下一次必出稀有以上） ---- */
+    FORGE_COST: 6,
+    FORGE_GOLD: 40,
+    FORGE_PITY: 12,
+    forge(typeK) {
+      if ((this.data.materials[typeK] || 0) < this.FORGE_COST) { toast(`材料不足（需 ${this.typeDef(typeK).n}材料 ${this.FORGE_COST}）`); return null; }
+      if (!Bond.spend(this.FORGE_GOLD)) { toast(`金币不足（需 ${this.FORGE_GOLD} 金）`); return null; }
+      this.data.materials[typeK] -= this.FORGE_COST;
+      this.data.pity[typeK] = (this.data.pity[typeK] || 0) + 1;
+      const forcePity = this.data.pity[typeK] >= this.FORGE_PITY;
+      const r = this.rollRarity(forcePity);
+      if (forcePity || r === "rare" || r === "legend") this.data.pity[typeK] = 0;
+      const item = this.makeItem(typeK, r);
+      this.data.items.push(item); this.save();
+      AudioSystem.sfx.victory();
+      toast(`⚒ 锻造出 ${item.icon}「${item.name}」（${this.rarityDef(r).n}）！`);
+      return item;
+    },
+
+    /* ---- 商店：每日刷新，可花金币主动重刷 ---- */
+    SHOP_SIZE: 6,
+    REFRESH_COST: 20,
+    ensureShop() {
+      const today = new Date().toISOString().slice(0, 10);
+      if (this.data.shopDay !== today || !this.data.shop.length) this.refreshShop(false);
+    },
+    refreshShop(paid) {
+      if (paid && !Bond.spend(this.REFRESH_COST)) { toast(`金币不足（重刷需 ${this.REFRESH_COST} 金）`); return false; }
+      this.data.shop = Array.from({ length: this.SHOP_SIZE }, () => {
+        const type = this.TYPES[randInt(0, this.TYPES.length - 1)];
+        const r = this.rollRarity(false);
+        return { type: type.k, rarity: r, tmpl: this.TEMPLATES[type.k][randInt(0, this.TEMPLATES[type.k].length - 1)] };
+      });
+      this.data.shopDay = new Date().toISOString().slice(0, 10);
+      this.save();
+      return true;
+    },
+    shopPrice(rarityK) { return { normal: 40, fine: 90, rare: 180, legend: 400 }[rarityK]; },
+    buyShop(idx) {
+      const s = this.data.shop[idx]; if (!s) return null;
+      const price = this.shopPrice(s.rarity);
+      if (!Bond.spend(price)) { toast(`金币不足（需 ${price} 金）`); return null; }
+      const item = this.makeItem(s.type, s.rarity, s.tmpl);
+      this.data.items.push(item);
+      this.data.shop.splice(idx, 1);
+      this.save();
+      AudioSystem.sfx.select();
+      toast(`已购得 ${item.icon}「${item.name}」（${this.rarityDef(s.rarity).n}）-${price}金`);
+      return item;
+    },
+  };
+
+  /* ============================================================
    *  角色扮演：自创/选用武将，随机六维(基线+加点)，历练获经验成长
    * ============================================================ */
   const RPG_KEY = "wujiang_rpg_v1";
@@ -2737,7 +2970,7 @@
       const c = this.char;
       const g = { id: -1, name: c.name, side: c.side, title: `Lv.${c.level} 历练者`, intro: c.intro || "你亲手培养的武将。" };
       DIMS.forEach(([k]) => g[k] = this.eff(c, k));
-      return g;
+      return Armory.geared(g, "hero");
     },
     // 随机生成基线六维(最大不超过80) + 一笔由玩家自行分配的加点(最多30)
     rollStats() {
@@ -2866,6 +3099,10 @@
           <div class="bt-head">💰 金币 <b>${Bond.gold()}</b> ｜ 👥 我的团队 ${Bond.data.team.length}/${Bond.teamLimit()}<small>（挚友可招募；队友任 2v2 副将，同阵营队友在组队/国战/阵营大战必上阵）</small></div>
           <div class="bt-list">${Bond.teamGenerals().map(t => `<span class="bt-chip" data-id="${t.id}">${t.name}<i data-x="${t.id}">✕</i></span>`).join("") || '<span class="bt-empty">尚无队友——先去结交武将吧</span>'}</div>
         </div>
+        <div class="bond-team">
+          <div class="bt-head">🎒 我的装备<small>（点击槽位可装备/更换宝物库中的宝物）</small></div>
+          <div class="eq-slots">${eqSlotsHtml("hero")}</div>
+        </div>
         <div class="rpg-actions">
           <button class="cup-go primary" id="rpg-train">⚔ 历练单挑</button>
           <button class="cup-go primary" id="rpg-gauntlet">🔥 车轮大战</button>
@@ -2893,6 +3130,7 @@
         if (xid != null) { if (confirm("将其请出团队？")) { Bond.dismiss(+xid); this.renderHub(); } return; }
         const tg = DB.get(+el.dataset.id); if (tg) showDetail(tg);
       });
+      bindEqSlots(() => this.renderHub());
       $("#rpg-duo").onclick = () => this.duo();
       $("#rpg-war").onclick = () => this.war();
       $("#rpg-teamwar").onclick = () => this.teamBattle();
@@ -2935,12 +3173,13 @@
         gain = 10 + Math.round(Math.max(0, diff) / 30);
       }
       if (heroWon) c.wins++; else c.losses++;
-      let goldGain = 0;
+      let goldGain = 0, drops = [];
       if (heroWon) {
         goldGain = Bond.addGold(15);
         Bond.addF(opp.id, 5);                        // 不打不相识
         if (BATTLE && BATTLE.duo) Bond.addF(BATTLE.duo.d1.id, 15);   // 与副将并肩获胜
         Bond.save();
+        drops = Armory.roll(0.2, 0.3, 1);
       }
       c.exp += gain;
       let lvUp = 0;
@@ -2951,7 +3190,7 @@
         <h1>${heroWon ? '历练胜利' : '虽败犹荣'}</h1>
         <div class="winner-av" style="background:${bg}">${avatarChar(c.name)}</div>
         <div class="wname">${c.name}</div>
-        <div class="wdesc">${heroWon ? '击败' : '不敌'} ${opp.name}（武将评分 ${oppSum} / 你 ${heroSum}）${tag}<br>获得经验 <b style="color:var(--cn-red)">+${gain}</b>${Bond.goldLine(goldGain)}
+        <div class="wdesc">${heroWon ? '击败' : '不敌'} ${opp.name}（武将评分 ${oppSum} / 你 ${heroSum}）${tag}<br>获得经验 <b style="color:var(--cn-red)">+${gain}</b>${Bond.goldLine(goldGain)}${Armory.dropLine(drops)}
           ${lvUp ? `<br>🎉 升级 ${lvUp} 级！获得加点 <b style="color:var(--cn-red)">+${lvUp * 1}</b>` : ''}</div>
         <div class="btns">
           <button class="btn-primary" id="rpg-again">再历练</button>
@@ -2976,10 +3215,11 @@
     gauntlet() { Gauntlet.start(this.heroGeneral(), true); },
     onGauntletResult(streak, allCleared, killer) {
       const gold = Bond.addGold(streak * 8);
+      const drops = Armory.roll(Math.min(0.6, streak * 0.05), Math.min(0.9, streak * 0.08), Math.min(5, Math.ceil(streak / 3)) || 1);
       const exp = streak * 25 + (allCleared ? 200 : 0);
       this.grantExp(exp, "车轮大战 · 连胜 " + streak,
         `连斩 <b style="color:var(--cn-red)">${streak}</b> 员${allCleared ? '，横扫群雄！' : (killer ? '，终被 ' + killer.name + ' 所阻。' : '。')}`,
-        () => this.gauntlet(), gold);
+        () => this.gauntlet(), gold, Armory.dropLine(drops));
     },
 
     /* ---- 百人斩 · 爬塔 ---- */
@@ -2987,10 +3227,11 @@
     onTowerResult(cleared, killer, gains) {
       const gold = Bond.addGold(cleared * 8);
       Bond.addMany(Tower.slain, 4);   // 被斩守将：不打不相识
+      const drops = Armory.roll(Math.min(0.65, cleared * 0.05), Math.min(0.9, cleared * 0.07), Math.min(6, Math.ceil(cleared / 2)) || 1);
       const exp = cleared * 20 + (cleared >= 10 ? 100 : 0);
       this.grantExp(exp, "百人斩 · 斩 " + cleared + " 将",
         `攀塔连斩 <b style="color:var(--cn-red)">${cleared}</b> 员守将${killer ? `，止步于 ${killer.name} 之手。` : '，全身而退。'}${gains && gains.length ? `<br>此行机缘：${gains.join('、')}` : ''}`,
-        () => this.tower(), gold);
+        () => this.tower(), gold, Armory.dropLine(drops));
     },
 
     /* ---- 2v2 主副将单挑：有队友则从团队挑副将，否则随机配 ---- */
@@ -3022,10 +3263,11 @@
     onWarResult(kills, sideWon, cnWin, comrades) {
       const gold = sideWon ? Bond.addGold(40) : 0;
       Bond.addMany(comrades, 2);   // 并肩存活的同袍
+      const drops = Armory.roll(Math.min(0.5, kills * 0.02 + (sideWon ? 0.25 : 0.05)), Math.min(0.85, kills * 0.03 + 0.1), Math.min(6, Math.ceil(kills / 4)) || 1);
       const exp = kills * 22 + (sideWon ? 120 : 0);
       this.grantExp(exp, "阵营大战 " + (sideWon ? "· 获胜" : "· 落败"),
         `你麾下斩敌 <b style="color:var(--cn-red)">${kills}</b> 员，本方阵营${sideWon ? '获胜！' : '惜败。'}`,
-        () => this.war(), gold);
+        () => this.war(), gold, Armory.dropLine(drops));
     },
 
     /* ---- 组队大战：同阵营队友必上阵，余位随机补满 ---- */
@@ -3042,10 +3284,11 @@
       const gold = won ? Bond.addGold(30 + kills * 3) : 0;
       const mates = TeamBattle.playerArr().map(u => u.g).filter(g => g.id !== -1);
       Bond.addMany(mates, won ? 6 : 3);   // 同队并肩 +3，获胜再 +3
+      const drops = Armory.roll(Math.min(0.55, kills * 0.03 + (won ? 0.25 : 0.05)), Math.min(0.85, kills * 0.04 + 0.1), Math.min(6, Math.ceil(kills / 3)) || 1);
       const exp = kills * 20 + (won ? 150 : 0);
       this.grantExp(exp, "组队大战 " + (won ? "· 获胜" : "· 落败"),
         `本场麾下击杀敌将 <b style="color:var(--cn-red)">${kills}</b> 员，全军${won ? '大捷！' : '溃败。'}`,
-        () => this.teamBattle(), gold);
+        () => this.teamBattle(), gold, Armory.dropLine(drops));
     },
 
     /* ---- 国战 · 攻城略地：主角与同阵营队友编入己方军团 ---- */
@@ -3062,14 +3305,16 @@
       const allies = Conquest.cities.filter(c => c.side === hero.side)
         .flatMap(c => c.units).filter(g => g.id !== -1);
       Bond.addMany(allies, won ? 6 : 3);
+      const drops = Armory.roll(Math.min(0.7, captures * 0.08 + (won ? 0.2 : 0)), Math.min(0.95, captures * 0.1 + 0.1), Math.min(8, captures) || 1);
+      if (won) drops.push({ kind: "item", item: Armory.guaranteedItem("legend") });   // 一统天下必得传说宝物
       const exp = captures * 40 + kills * 15 + (won ? 250 : 0);
       this.grantExp(exp, "国战 " + (won ? "· 一统天下" : "· 大势已去"),
         `攻克 <b style="color:var(--cn-red)">${captures}</b> 城，斩敌将 <b style="color:var(--cn-red)">${kills}</b> 员，${won ? '天下归一！' : '霸业未成。'}`,
-        () => this.conquest(), gold);
+        () => this.conquest(), gold, Armory.dropLine(drops));
     },
 
-    // 统一发放经验/升级并弹窗（goldGain：本次一并入账的金币，与经验同屏展示）
-    grantExp(gain, title, descHtml, againFn, goldGain = 0) {
+    // 统一发放经验/升级并弹窗（goldGain：本次一并入账的金币；dropsHtml：宝物/材料掉落，与经验同屏展示）
+    grantExp(gain, title, descHtml, againFn, goldGain = 0, dropsHtml = "") {
       const c = this.char;
       c.exp += gain;
       let lvUp = 0;
@@ -3081,7 +3326,7 @@
           <h1>${title}</h1>
           <div class="winner-av" style="background:${bg}">${avatarChar(c.name)}</div>
           <div class="wname">${c.name}</div>
-          <div class="wdesc">${descHtml}<br>获得经验 <b style="color:var(--cn-red)">+${gain}</b>${Bond.goldLine(goldGain)}
+          <div class="wdesc">${descHtml}<br>获得经验 <b style="color:var(--cn-red)">+${gain}</b>${Bond.goldLine(goldGain)}${dropsHtml}
             ${lvUp ? `<br>🎉 升级 ${lvUp} 级！获得加点 <b style="color:var(--cn-red)">+${lvUp * 1}</b>` : ''}</div>
           <div class="btns">
             <button class="btn-primary" id="rpg-r-again">再来一次</button>
@@ -3100,6 +3345,10 @@
       else if (/半决赛|决赛/.test(placement.label)) cupGold = Bond.addGold(50);
       const myGroup = Tournament.groups.find(g => g.teams.some(t => t.id === -1));
       if (myGroup) Bond.addMany(myGroup.teams.filter(t => t.id !== -1), 3);
+      const drops = [];
+      if (placement.label === "夺冠") drops.push({ kind: "item", item: Armory.guaranteedItem("legend") });
+      else if (/四强|半决赛|决赛/.test(placement.label)) drops.push({ kind: "item", item: Armory.guaranteedItem("rare") });
+      else drops.push(...Armory.roll(0.3, 0.4, 1));
       const winGain = Math.round(cupWinExp || 0);   // 各场单挑获胜累计经验
       const bonus = placement.exp;                   // 按最终轮次的晋级奖励
       const gain = winGain + bonus;
@@ -3115,7 +3364,7 @@
           <div class="wname">${c.name}</div>
           <div class="wdesc">本届世界杯成绩：<b>${placement.label}</b><br>
             单挑获胜经验 <b style="color:var(--cn-red)">+${winGain}</b> · 晋级奖励 <b style="color:var(--cn-red)">+${bonus}</b><br>
-            合计获得经验 <b style="color:var(--cn-red)">+${gain}</b>${Bond.goldLine(cupGold)}
+            合计获得经验 <b style="color:var(--cn-red)">+${gain}</b>${Bond.goldLine(cupGold)}${Armory.dropLine(drops)}
             ${lvUp ? `<br>🎉 升级 ${lvUp} 级！获得加点 <b style="color:var(--cn-red)">+${lvUp * 1}</b>` : ''}</div>
           <div class="btns">
             <button class="btn-primary" id="rpg-cup-again">再战世界杯</button>
@@ -3166,7 +3415,7 @@
           ${cells}
           <td class="dt-total">${ratingScore(g)}</td>
           <td class="dt-grade">${ratingChip(g)}</td>
-          ${hasBond ? `<td class="dt-bond">${Bond.inTeam(g.id) ? "👥" : ""}${Bond.pts(g.id)}</td>` : ""}
+          ${hasBond ? `<td class="dt-bond">${Bond.inTeam(g.id) ? "👥" : ""}${Bond.pts(g.id)}${Bond.inTeam(g.id) && Armory.itemsOf(g.id).length ? `<span class="dt-gear">${Armory.itemsOf(g.id).map(i => i.icon).join("")}</span>` : ""}</td>` : ""}
           <td class="dt-act">
             <button class="db-view" data-act="view">详</button>
             <button class="db-edit" data-act="edit">改</button>
@@ -3250,6 +3499,136 @@
   function clampStat(v) { return Math.max(1, Math.min(120, Math.round(+v || 0))); }
 
   /* ============================================================
+   *  宝物库界面：仓库 / 图鉴 / 商店 / 锻造
+   * ============================================================ */
+  function ownerName(owner) {
+    if (owner === "hero") return (RPG.char && RPG.char.name) || "主角";
+    const g = DB.get(owner); return g ? g.name : "？";
+  }
+  function itemCard(item) {
+    const rar = Armory.rarityDef(item.rarity);
+    const dim = DIMS.find(([k]) => k === item.stat);
+    const ownerTag = item.equippedBy != null ? `<div class="ic-owner">佩戴中：${ownerName(item.equippedBy)}</div>` : "";
+    return `<div class="item-card" style="--rar-color:${rar.color}">
+      <div class="ic-top"><span class="ic-icon">${item.icon}</span><span class="ic-name">${item.name}</span><span class="ic-rar" style="color:${rar.color}">${rar.n}</span></div>
+      <div class="ic-stat">${dim ? dim[1] : ''} +${item.bonus}</div>
+      <div class="ic-intro">${item.intro}</div>
+      ${ownerTag}
+      ${!item.equippedBy ? `<button class="ic-dismantle" data-uid="${item.uid}">拆解取材</button>` : ""}
+    </div>`;
+  }
+  // 装备槽位（供角色扮演主页/主角 与 武将详情/队友 共用）
+  function eqSlotsHtml(owner) {
+    return Armory.TYPES.map(type => {
+      const item = Armory.itemsOf(owner).find(i => i.type === type.k);
+      const dim = item && DIMS.find(([k]) => k === item.stat);
+      return `<div class="eq-slot" data-type="${type.k}" data-owner="${owner}">
+        <span class="eq-icon">${type.icon}</span>
+        <span class="eq-body">${item ? `<b style="color:${Armory.rarityDef(item.rarity).color}">${item.name}</b><small>+${item.bonus} ${dim ? dim[1] : ''}</small>` : `<small>空</small>`}</span>
+      </div>`;
+    }).join("");
+  }
+  function bindEqSlots(onDone) {
+    // data-owner 属性经 HTML 序列化后恒为字符串，队友的 owner 需还原为数字才能与 g.id 等武将id正确比对
+    $$(".eq-slot").forEach(el => el.onclick = () => openEquipPicker(el.dataset.owner === "hero" ? "hero" : +el.dataset.owner, el.dataset.type, onDone));
+  }
+  function openEquipPicker(owner, typeK, onDone) {
+    const type = Armory.typeDef(typeK);
+    const cur = Armory.itemsOf(owner).find(i => i.type === typeK);
+    const options = Armory.availableFor(owner, typeK);
+    openOverlay(`<div class="result-card">
+      <h1>${type.icon} 选择${type.n}</h1>
+      <div class="buff-list">
+        ${options.map(it => `<button class="buff-btn eq-opt ${cur && cur.uid === it.uid ? 'active' : ''}" data-uid="${it.uid}">
+          <span class="bi">${it.icon}</span><span class="bt"><b style="color:${Armory.rarityDef(it.rarity).color}">${it.name}</b><small>${Armory.rarityDef(it.rarity).n} · +${it.bonus} ${DIMS.find(([k]) => k === it.stat)[1]}${it.equippedBy && it.equippedBy !== owner ? `（原佩戴于 ${ownerName(it.equippedBy)}）` : ''}</small></span></button>`).join("") || '<div class="empty">尚无该类宝物，先去征战、商店或锻造中获取吧</div>'}
+        ${cur ? `<button class="buff-btn" id="eq-unequip"><span class="bi">✕</span><span class="bt"><b>卸下</b></span></button>` : ""}
+      </div>
+      <div class="btns"><button class="btn-ghost" id="eq-cancel">取消</button></div></div>`);
+    $$(".eq-opt").forEach(b => b.onclick = () => { Armory.equip(+b.dataset.uid, owner); closeOverlay(); if (onDone) onDone(); });
+    const un = $("#eq-unequip"); if (un) un.onclick = () => { Armory.unequip(cur.uid); closeOverlay(); if (onDone) onDone(); };
+    $("#eq-cancel").onclick = closeOverlay;
+  }
+
+  const ArmoryUI = {
+    tab: "stock",
+    open() { this.render(); showScreen("armory"); },
+    setTab(t) {
+      this.tab = t;
+      $$(".armory-tab").forEach(el => el.classList.toggle("active", el.dataset.atab === t));
+      this.render();
+    },
+    render() {
+      $$(".armory-tab").forEach(el => el.classList.toggle("active", el.dataset.atab === this.tab));
+      const C = $("#armory-content");
+      C.innerHTML = this.tab === "stock" ? this.renderStock()
+        : this.tab === "dex" ? this.renderDex()
+        : this.tab === "shop" ? this.renderShop()
+        : this.renderForge();
+      this.bind();
+    },
+    renderStock() {
+      const items = Armory.data.items.slice();
+      const rarIdx = k => Armory.RARITIES.findIndex(r => r.k === k);
+      items.sort((a, b) => rarIdx(b.rarity) - rarIdx(a.rarity));
+      if (!items.length) return `<div class="empty">尚未获得任何宝物——去战场上搏一件吧</div>`;
+      return `<div class="section-hint">各玩法获胜后有机会掉落；已装备的宝物请先在「角色扮演」或武将详情中卸下，才能在此拆解。</div>
+        <div class="item-grid">${items.map(itemCard).join("")}</div>`;
+    },
+    renderDex() {
+      const total = Object.values(Armory.TEMPLATES).reduce((s, arr) => s + arr.length, 0);
+      let html = `<div class="section-hint">已发现 <b>${Armory.data.discovered.length}</b> / ${total} 件</div>`;
+      Armory.TYPES.forEach(type => {
+        html += `<div class="dex-group"><div class="dex-group-title">${type.icon} ${type.n}</div><div class="dex-grid">`;
+        html += Armory.TEMPLATES[type.k].map(t => {
+          const found = Armory.data.discovered.includes(t.n);
+          return found
+            ? `<div class="dex-card found"><div class="ic-icon">${type.icon}</div><div class="ic-name">${t.n}</div><div class="ic-intro">${t.intro}</div></div>`
+            : `<div class="dex-card locked"><div class="ic-icon">？</div><div class="ic-name">未发现</div></div>`;
+        }).join("");
+        html += `</div></div>`;
+      });
+      return html;
+    },
+    renderShop() {
+      const shop = Armory.data.shop;
+      let html = `<div class="section-hint">💰 金币 <b>${Bond.gold()}</b> ｜ 每日自动刷新一次，也可主动花金重刷</div>
+        <div class="shop-actions"><button class="cup-go" id="shop-refresh">🔄 花 ${Armory.REFRESH_COST} 金重刷</button></div>
+        <div class="item-grid">`;
+      html += (shop.length ? shop.map((s, idx) => {
+        const type = Armory.typeDef(s.type), rar = Armory.rarityDef(s.rarity), price = Armory.shopPrice(s.rarity);
+        return `<div class="item-card" style="--rar-color:${rar.color}">
+          <div class="ic-top"><span class="ic-icon">${type.icon}</span><span class="ic-name">${s.tmpl.n}</span><span class="ic-rar" style="color:${rar.color}">${rar.n}</span></div>
+          <div class="ic-intro">${s.tmpl.intro}</div>
+          <button class="ic-buy" data-idx="${idx}">💰 ${price} 金购买</button>
+        </div>`;
+      }).join("") : `<div class="empty">今日货架已空，明日再来</div>`);
+      html += `</div>`;
+      return html;
+    },
+    renderForge() {
+      let html = `<div class="section-hint">💰 金币 <b>${Bond.gold()}</b>｜消耗对应材料 + 金币锻造一件随机宝物；连续 ${Armory.FORGE_PITY} 次未出稀有以上，下一次必出稀有以上</div>
+        <div class="forge-grid">`;
+      html += Armory.TYPES.map(type => {
+        const mat = Armory.data.materials[type.k] || 0, pity = Armory.data.pity[type.k] || 0;
+        return `<div class="forge-card">
+          <div class="ic-top"><span class="ic-icon">${type.icon}</span><span class="ic-name">${type.n}</span></div>
+          <div class="forge-mat">材料 <b>${mat}</b> / ${Armory.FORGE_COST}</div>
+          <div class="forge-pity">保底进度 ${pity} / ${Armory.FORGE_PITY}</div>
+          <button class="forge-btn" data-type="${type.k}" ${mat < Armory.FORGE_COST ? "disabled" : ""}>⚒ 锻造（${Armory.FORGE_GOLD}金）</button>
+        </div>`;
+      }).join("");
+      html += `</div><div class="section-hint">分解未装备的宝物可获得对应类型材料（普通1／精良2／稀有3／传说5），请到「仓库」页签操作。</div>`;
+      return html;
+    },
+    bind() {
+      $$(".ic-dismantle").forEach(b => b.onclick = () => { Armory.dismantle(+b.dataset.uid); this.render(); });
+      const rf = $("#shop-refresh"); if (rf) rf.onclick = () => { if (Armory.refreshShop(true)) this.render(); };
+      $$(".ic-buy").forEach(b => b.onclick = () => { if (Armory.buyShop(+b.dataset.idx)) this.render(); });
+      $$(".forge-btn").forEach(b => b.onclick = () => { if (Armory.forge(b.dataset.type)) this.render(); });
+    },
+  };
+
+  /* ============================================================
    *  音频按钮绑定
    * ============================================================ */
   function syncAudioBtns() {
@@ -3268,6 +3647,7 @@
   function init() {
     DB.load();
     Bond.load();
+    Armory.load();
     $("#app-ver").textContent = APP_VERSION;
     RPG.load();   // 提前载入角色：友谊/金币的累计以其存在为前提
 
@@ -3285,8 +3665,10 @@
       else if (go === "conquest") Conquest.open();
       else if (go === "cup") Tournament.open();
       else if (go === "rpg") RPG.open();
+      else if (go === "armory") ArmoryUI.open();
       else if (go === "db") DBUI.open();
     });
+    $$(".armory-tab").forEach(t => t.onclick = () => ArmoryUI.setTab(t.dataset.atab));
 
     // 世界杯
     $$(".cup-size").forEach(b => b.onclick = () => Tournament.setSize(+b.dataset.size));

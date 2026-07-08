@@ -386,7 +386,7 @@ html, body {
 .btn-ghost { background: rgba(0,0,0,.1); color: var(--ink); border: 1px solid rgba(0,0,0,.2)!important; }
 
 /* ---------- 详情弹窗 ---------- */
-.detail-card { width: min(420px, 92vw); }
+.detail-card { width: min(420px, 92vw); max-height: 90vh; overflow-y: auto; }
 .radar-wrap { display: flex; justify-content: center; margin: 10px 0; }
 .stat-rows { margin: 10px 0; }
 .stat-row { display: flex; align-items: center; gap: 10px; margin: 9px 0; }
@@ -820,6 +820,68 @@ html, body {
   background: rgba(0,0,0,.3); color: var(--paper); font-family: inherit; font-size: 16px;
 }
 .form-grid textarea { resize: vertical; min-height: 56px; }
+
+/* ---------- 装备槽位（角色扮演主页 / 武将详情面板 共用）---------- */
+.eq-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr)); gap: 6px; margin-top: 6px; }
+.eq-slot { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 4px; border-radius: 10px; cursor: pointer;
+  background: rgba(212,175,55,.1); border: 1px solid rgba(212,175,55,.35); text-align: center; }
+.eq-slot:active { background: rgba(212,175,55,.22); }
+.eq-icon { font-size: 20px; }
+.eq-body { font-size: 11px; color: #d8c79c; line-height: 1.3; }
+.eq-body b { display: block; font-size: 12px; }
+.eq-body small { color: #9a8c66; }
+.bond-box .eq-slot { background: rgba(0,0,0,.06); border-color: rgba(0,0,0,.2); }
+.bond-box .eq-body { color: #5a4a30; }
+.bond-box .eq-body small { color: #8a7d5e; }
+
+/* ---------- 宝物库：仓库 / 图鉴 / 商店 / 锻造 ---------- */
+.armory-tabs .armory-tab { font-size: 15px; padding: 11px 6px; }
+#armory-content { padding: 4px 14px 60px; }
+.item-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 8px; }
+.item-card {
+  --rar-color: #9a9a9a;
+  background: rgba(0,0,0,.35); border: 1.5px solid var(--rar-color); border-radius: 12px; padding: 10px;
+}
+.ic-top { display: flex; align-items: center; gap: 6px; }
+.ic-icon { font-size: 20px; }
+.ic-name { flex: 1; font-size: 15px; font-weight: 700; color: var(--paper); }
+.ic-rar { font-size: 11px; font-weight: 700; }
+.ic-stat { font-size: 13px; color: var(--cn-gold); margin-top: 4px; font-weight: 700; }
+.ic-intro { font-size: 12px; color: #b8a97f; margin-top: 4px; line-height: 1.5; }
+.ic-owner { font-size: 12px; color: #8bc34a; margin-top: 6px; }
+.ic-dismantle, .ic-buy {
+  margin-top: 8px; width: 100%; padding: 7px; border-radius: 8px; border: 1px solid rgba(212,175,55,.4);
+  background: rgba(212,175,55,.12); color: var(--paper); font-family: inherit; font-size: 13px; cursor: pointer;
+}
+.ic-buy { background: linear-gradient(135deg, #f0d678, var(--accent)); color: #1a1410; border: none; font-weight: 700; }
+
+.dex-group { margin: 10px 0 4px; }
+.dex-group-title { color: var(--cn-gold); font-size: 15px; font-weight: 700; margin: 6px 0; letter-spacing: 1px; }
+.dex-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+.dex-card { background: rgba(0,0,0,.3); border: 1px solid rgba(212,175,55,.25); border-radius: 10px; padding: 8px; text-align: center; }
+.dex-card .ic-icon { font-size: 22px; }
+.dex-card .ic-name { font-size: 13px; font-weight: 700; color: var(--paper); margin-top: 3px; }
+.dex-card .ic-intro { font-size: 11px; color: #a8987a; margin-top: 3px; }
+.dex-card.locked { opacity: .4; }
+
+.shop-actions { display: flex; margin: 6px 0 2px; }
+.shop-actions .cup-go { flex: 0 0 auto; padding: 10px 18px; }
+
+.forge-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-top: 8px; }
+.forge-card { background: rgba(0,0,0,.3); border: 1px solid rgba(212,175,55,.3); border-radius: 12px; padding: 10px; text-align: center; }
+.forge-card .ic-icon { font-size: 24px; }
+.forge-card .ic-name { font-size: 14px; font-weight: 700; color: var(--paper); margin-top: 2px; }
+.forge-mat { font-size: 13px; color: #d8c79c; margin-top: 6px; }
+.forge-mat b { color: var(--cn-gold); }
+.forge-pity { font-size: 11px; color: #9a8c66; margin-top: 2px; }
+.forge-btn {
+  margin-top: 8px; width: 100%; padding: 9px; border-radius: 8px; border: none;
+  background: linear-gradient(135deg, #f0d678, var(--accent)); color: #1a1410; font-weight: 700; font-family: inherit; cursor: pointer;
+}
+.forge-btn:disabled { opacity: .35; }
+
+/* 武将图鉴列表：队友携带宝物图标 */
+.dt-gear { display: inline-block; margin-left: 4px; font-size: 13px; }
 
 .toast {
   position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);

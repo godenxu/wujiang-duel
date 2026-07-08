@@ -55,6 +55,9 @@
       <button class="menu-btn" data-go="rpg">
         <span class="mi">🎭</span><span>角色扮演<small>培养专属武将，历练成长加点</small></span>
       </button>
+      <button class="menu-btn" data-go="armory">
+        <span class="mi">🎒</span><span>宝物库<small>收集宝物，商店锻造，装备助战</small></span>
+      </button>
       <button class="menu-btn" data-go="db">
         <span class="mi">📜</span><span>武将图鉴<small>查阅、编辑、丰富武将数据库</small></span>
       </button>
@@ -254,6 +257,25 @@
       </div>
     </div>
     <div id="rpg-content"></div>
+  </section>
+
+  <!-- ========== 宝物库 ========== -->
+  <section id="screen-armory" class="screen">
+    <div class="topbar">
+      <span class="back" data-back>‹</span>
+      <h2>宝物库</h2>
+      <div class="audio-btns">
+        <button id="btn-music9">♪</button>
+        <button id="btn-sfx9">🔊</button>
+      </div>
+    </div>
+    <div class="side-tabs armory-tabs">
+      <div class="side-tab armory-tab active" data-atab="stock">🎒 仓库</div>
+      <div class="side-tab armory-tab" data-atab="dex">📔 图鉴</div>
+      <div class="side-tab armory-tab" data-atab="shop">🏪 商店</div>
+      <div class="side-tab armory-tab" data-atab="forge">⚒ 锻造</div>
+    </div>
+    <div id="armory-content"></div>
   </section>
 
   <!-- ========== 数据库 ========== -->
