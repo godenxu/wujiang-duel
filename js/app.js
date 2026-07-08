@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607082138";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607082205";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -151,10 +151,10 @@
       <div class="wname">${g.name}</div>
       <div style="font-size:13px;color:#8a6d3b;margin-top:2px">${g.title || ''}</div>
       <div class="wdesc">${g.intro || ''}</div>
-      ${bondHtml}
       <div class="radar-wrap">${radarSVG(g)}</div>
       <div class="overall-line">武将评分 <b class="ov-sum">${ratingScore(g)}</b> <span class="ov-num">(六维 ${sumStats(g)} + 突出加成 ${Math.round(ratingScore(g) - sumStats(g))})</span> · 武将评级 ${ratingChip(g)}</div>
       <div class="stat-rows">${statRow('体力', g.ti)}${statRow('武力', g.wu)}${statRow('统帅', g.tong)}${statRow('智力', g.zhi)}${statRow('政治', g.zheng)}${statRow('魅力', g.mei)}</div>
+      ${bondHtml}
       <div class="btns">
         ${opts.pickable ? `<button class="btn-primary" id="detail-pick">选他出战</button>` : ''}
         <button class="btn-ghost" id="detail-close">关闭</button>
@@ -2747,10 +2747,10 @@
       { k: "curio", n: "奇珍", icon: "🔮", stat: "ti" },
     ],
     RARITIES: [
-      { k: "normal", n: "普通", color: "#9a9a9a", weight: 55, bonus: 5 },
-      { k: "fine", n: "精良", color: "#3b9aff", weight: 28, bonus: 10 },
-      { k: "rare", n: "稀有", color: "#a24df0", weight: 13, bonus: 16 },
-      { k: "legend", n: "传说", color: "#f4c430", weight: 4, bonus: 25 },
+      { k: "normal", n: "普通", color: "#9a9a9a", weight: 55, bonus: 2 },
+      { k: "fine", n: "精良", color: "#3b9aff", weight: 28, bonus: 6 },
+      { k: "rare", n: "稀有", color: "#a24df0", weight: 13, bonus: 12 },
+      { k: "legend", n: "传说", color: "#f4c430", weight: 4, bonus: 22 },
     ],
     TEMPLATES: {
       weapon: [
@@ -2762,6 +2762,18 @@
         { n: "雌雄双股剑", intro: "刘备起兵时所用双剑，刚柔并济。" },
         { n: "村正", intro: "妖刀之名震慑东瀛，锋锐诡谲。" },
         { n: "正宗", intro: "相州锻刀宗师之作，刃纹如流水。" },
+        { n: "湛卢剑", intro: "古代名剑，剑气如虹，专诛无道之君。" },
+        { n: "鱼肠剑", intro: "专诸刺王僚所用，锋芒暗藏杀机。" },
+        { n: "龙泉剑", intro: "欧冶子铸剑，剑鸣龙吟，削铁如泥。" },
+        { n: "七星宝刀", intro: "曹操欲行刺董卓所携，暗藏杀机。" },
+        { n: "古锭刀", intro: "江湖流传的绝世好刀，寒光凛冽。" },
+        { n: "关刀", intro: "仿造青龙偃月的重刃，力劈千军。" },
+        { n: "松倉郷", intro: "相州传世名刀，刃纹如松涛。" },
+        { n: "长曾祢虎彻", intro: "江户时代锻造的绝世名刀。" },
+        { n: "郷義弘", intro: "越中锻刀三杰之一，锋锐无双。" },
+        { n: "兼定", intro: "战国名匠所锻，刃切百炼。" },
+        { n: "蜈蚣切", intro: "立花家传世名枪，锋刃如蜈蚣獠牙。" },
+        { n: "日本号", intro: "天下三名枪之一，枪穗流光溢彩。" },
       ],
       mount: [
         { n: "赤兔马", intro: "日行千里，三易其主终随关羽。" },
@@ -2772,6 +2784,18 @@
         { n: "川中岛骏马", intro: "越后武士驰骋雪原的良驹。" },
         { n: "大黑", intro: "织田家家臣钟爱的骏马，性烈难驯。" },
         { n: "磨墨", intro: "毛色如墨，静如处子动如脱兔。" },
+        { n: "追风", intro: "神骏追风逐电，日行千里不知疲。" },
+        { n: "玉追", intro: "白玉般的骏马，性情温顺却不失锐气。" },
+        { n: "黄骠马", intro: "秦琼坐骑，忠心护主。" },
+        { n: "逍遥马", intro: "闲云野鹤般的良驹，来去无踪。" },
+        { n: "汗血宝马", intro: "西域进贡神驹，日夜兼行不倦。" },
+        { n: "乌骓马", intro: "项羽坐骑，力拔山兮气盖世的见证。" },
+        { n: "生唼", intro: "源赖朝爱驹，身姿矫健。" },
+        { n: "摺墨", intro: "静如泼墨，动若脱缰，与池月齐名。" },
+        { n: "太夫黑", intro: "名马谱所载骏驹，毛色乌黑发亮。" },
+        { n: "池月", intro: "佐佐木高纲坐骑，宇治川渡河立功。" },
+        { n: "小烏", intro: "矫健异常的名驹，主人视若珍宝。" },
+        { n: "惊帆", intro: "奔驰如乘风破浪之帆，勇冠三军。" },
       ],
       book: [
         { n: "孙子兵法", intro: "兵者诡道，通读可悟攻守之要。" },
@@ -2782,6 +2806,18 @@
         { n: "甲阳军鉴", intro: "武田家兵法秘传，攻守皆宜。" },
         { n: "贞观政要", intro: "治世箴言，修身齐家之道。" },
         { n: "武经总要", intro: "宋代官修兵书，集历代阵法大成。" },
+        { n: "吴子兵法", intro: "吴起著兵书，与孙子兵法并称。" },
+        { n: "尉缭子", intro: "论兵制与军法，治军严明之道。" },
+        { n: "司马法", intro: "上古兵制典籍，礼战并重。" },
+        { n: "三十六计", intro: "计计相生，攻守进退皆藏玄机。" },
+        { n: "战国策", intro: "纵横家谋略汇编，辩术权谋兼备。" },
+        { n: "资治通鉴", intro: "鉴古知今，治乱兴衰尽在其中。" },
+        { n: "孙臏兵法", intro: "孙膑传世兵法，围魏救赵之智。" },
+        { n: "论语", intro: "修身立世的儒家经典。" },
+        { n: "汉书", intro: "记两汉兴衰，鉴古通今。" },
+        { n: "忍秘伝", intro: "忍者秘传心得，暗藏机变之术。" },
+        { n: "兵法家伝书", intro: "柳生家传剑术兵法合一之书。" },
+        { n: "太阁记", intro: "记丰臣秀吉一代霸业的兵略札记。" },
       ],
       attire: [
         { n: "蜀锦战袍", intro: "蜀地织锦所制战袍，华美不失威仪。" },
@@ -2792,6 +2828,18 @@
         { n: "阵羽织", intro: "战场上御寒亦壮声势的外罩。" },
         { n: "唐纹锦缎", intro: "唐风纹样织成，雍容华贵。" },
         { n: "凤纹腰带", intro: "腰间凤纹暗藏，气度自生。" },
+        { n: "龙纹玄甲", intro: "玄色铁甲绣龙纹，威严肃穆。" },
+        { n: "素纱披风", intro: "轻若烟纱，行动间不失飘逸。" },
+        { n: "虎皮战裙", intro: "猛虎之皮所制战裙，彰显悍勇。" },
+        { n: "锦鲤纹袍", intro: "锦鲤纹样寓意吉祥，华贵不凡。" },
+        { n: "织金战袄", intro: "金线织就的战袄，价值连城。" },
+        { n: "缎面披甲", intro: "缎面覆甲，兼具防护与仪容。" },
+        { n: "陣笠", intro: "战场上简朴却不失威仪的斗笠。" },
+        { n: "具足", intro: "日式铠甲整套，坚固实用。" },
+        { n: "胴丸", intro: "轻便贴身的日式铠甲。" },
+        { n: "直垂", intro: "武家常服礼装，端庄大方。" },
+        { n: "千鸟纹小袖", intro: "绣有千鸟纹样的和服，典雅别致。" },
+        { n: "云龙披风", intro: "云龙纹样的锦缎披风，气势恢宏。" },
       ],
       curio: [
         { n: "传国玉玺", intro: "得之者得天命加身，气运绵长。" },
@@ -2802,6 +2850,18 @@
         { n: "南蛮令", intro: "孟获信物，持之如猛虎添翼。" },
         { n: "不老丹方", intro: "方士所炼丹方，强身固体。" },
         { n: "定军神符", intro: "军中祈福神符，佑主将屹立不倒。" },
+        { n: "九鼎", intro: "象征天下九州的重器，稳如泰山。" },
+        { n: "河图洛书", intro: "上古神秘图谶，蕴含天地至理。" },
+        { n: "麒麟令", intro: "瑞兽麒麟所化令牌，护佑军心。" },
+        { n: "太极图", intro: "阴阳调和之图，静心凝神。" },
+        { n: "长生诀", intro: "修真秘术残卷，滋养元气。" },
+        { n: "镇国鼎", intro: "传说中镇压国运的宝鼎。" },
+        { n: "天叢雲劍", intro: "三神器之一护符，斩妖除魔之气所化。" },
+        { n: "八咫镜", intro: "三神器之一，映照真心，护身避邪。" },
+        { n: "铜雀瓦砚", intro: "铜雀台遗物，文气所钟。" },
+        { n: "五行珠", intro: "集金木水火土之力于一身的宝珠。" },
+        { n: "不动明王护符", intro: "密宗至尊护法符，驱邪定心。" },
+        { n: "风林火山旗", intro: "武田家军旗，气势如虹。" },
       ],
     },
     typeDef(k) { return this.TYPES.find(t => t.k === k); },
@@ -2940,7 +3000,7 @@
       this.save();
       return true;
     },
-    shopPrice(rarityK) { return { normal: 40, fine: 90, rare: 180, legend: 400 }[rarityK]; },
+    shopPrice(rarityK) { return { normal: 220, fine: 520, rare: 1100, legend: 2600 }[rarityK]; },
     buyShop(idx) {
       const s = this.data.shop[idx]; if (!s) return null;
       const price = this.shopPrice(s.rarity);
@@ -3063,13 +3123,14 @@
     renderHub() {
       const c = this.char, C = $("#rpg-content");
       const need = this.expNeed(c.level), expPct = Math.min(100, c.exp / need * 100);
-      const sum = DIMS.reduce((s, [k]) => s + this.eff(c, k), 0);
+      const hg = this.heroGeneral();   // 含已装备宝物的加成，用于展示当前真实作战数值
+      const sum = DIMS.reduce((s, [k]) => s + hg[k], 0);
       const dims = DIMS.map(([k, l]) => {
-        const v = this.eff(c, k);
+        const raw = this.eff(c, k), v = hg[k], gear = v - raw;
         return `<div class="rpg-dim">
           <span class="rd-lbl">${l}</span>
           <span class="rd-track"><span class="rd-bar" style="width:${Math.min(100, v / 1.2)}%;background:${gradeColor(v)}"></span></span>
-          <span class="rd-val">${v}</span>${gradeChip(v)}
+          <span class="rd-val">${v}${gear ? `<i class="rd-gear">(+${gear})</i>` : ''}</span>${gradeChip(v)}
           <button class="rd-plus" data-k="${k}" ${c.points > 0 ? '' : 'disabled'}>＋</button>
         </div>`;
       }).join("");
@@ -3083,14 +3144,14 @@
           </div>
         </div>
         <div class="rpg-overview">
-          <div class="rpg-radar">${radarSVG(this.heroGeneral(), 220)}</div>
+          <div class="rpg-radar">${radarSVG(hg, 220)}</div>
           <div class="rpg-side">
             <div class="rpg-score-mini">
               <span class="rsm-lbl">武将评分</span>
-              <span class="rsm-num">${ratingScore(this.heroGeneral())}</span>
-              ${ratingChip(this.heroGeneral())}
+              <span class="rsm-num">${ratingScore(hg)}</span>
+              ${ratingChip(hg)}
               <span class="rsm-points">可分配加点：<b>${c.points}</b>${c.points > 0 ? '（点 ＋ 分配）' : ''}</span>
-              <span class="rsm-sub">六维 ${sum} + 突出 ${Math.round(ratingScore(this.heroGeneral()) - sum)}</span>
+              <span class="rsm-sub">六维 ${sum} + 突出 ${Math.round(ratingScore(hg) - sum)}</span>
             </div>
             <div class="rpg-dims">${dims}</div>
           </div>
@@ -3576,13 +3637,15 @@
     },
     renderDex() {
       const total = Object.values(Armory.TEMPLATES).reduce((s, arr) => s + arr.length, 0);
+      const lo = Armory.RARITIES[0].bonus, hi = Armory.RARITIES[Armory.RARITIES.length - 1].bonus;
       let html = `<div class="section-hint">已发现 <b>${Armory.data.discovered.length}</b> / ${total} 件</div>`;
       Armory.TYPES.forEach(type => {
-        html += `<div class="dex-group"><div class="dex-group-title">${type.icon} ${type.n}</div><div class="dex-grid">`;
+        const statLbl = type.stat ? (DIMS.find(([k]) => k === type.stat) || [, type.stat])[1] : "智力或政治";
+        html += `<div class="dex-group"><div class="dex-group-title">${type.icon} ${type.n} · ${statLbl} +${lo}~+${hi}</div><div class="dex-grid">`;
         html += Armory.TEMPLATES[type.k].map(t => {
           const found = Armory.data.discovered.includes(t.n);
           return found
-            ? `<div class="dex-card found"><div class="ic-icon">${type.icon}</div><div class="ic-name">${t.n}</div><div class="ic-intro">${t.intro}</div></div>`
+            ? `<div class="dex-card found"><div class="ic-icon">${type.icon}</div><div class="ic-name">${t.n}</div><div class="ic-stat">${statLbl} +${lo}~+${hi}</div><div class="ic-intro">${t.intro}</div></div>`
             : `<div class="dex-card locked"><div class="ic-icon">？</div><div class="ic-name">未发现</div></div>`;
         }).join("");
         html += `</div></div>`;
@@ -3621,7 +3684,10 @@
       return html;
     },
     bind() {
-      $$(".ic-dismantle").forEach(b => b.onclick = () => { Armory.dismantle(+b.dataset.uid); this.render(); });
+      $$(".ic-dismantle").forEach(b => b.onclick = () => {
+        const item = Armory.data.items.find(i => i.uid === +b.dataset.uid);
+        if (item && confirm(`确定拆解「${item.name}」？将永久失去此宝物，换取材料。`)) { Armory.dismantle(item.uid); this.render(); }
+      });
       const rf = $("#shop-refresh"); if (rf) rf.onclick = () => { if (Armory.refreshShop(true)) this.render(); };
       $$(".ic-buy").forEach(b => b.onclick = () => { if (Armory.buyShop(+b.dataset.idx)) this.render(); });
       $$(".forge-btn").forEach(b => b.onclick = () => { if (Armory.forge(b.dataset.type)) this.render(); });

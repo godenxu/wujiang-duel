@@ -781,7 +781,8 @@ html, body {
 .rpg-dim .rd-lbl { flex: 0 0 auto; width: 32px; color: #c9b890; font-size: 13px; }
 .rpg-dim .rd-track { flex: 1; min-width: 0; height: 12px; background: rgba(0,0,0,.4); border-radius: 6px; overflow: hidden; }
 .rpg-dim .rd-bar { display: block; height: 100%; border-radius: 6px; transition: width .3s; }
-.rpg-dim .rd-val { flex: 0 0 auto; width: 28px; text-align: right; font-weight: 700; font-size: 15px; color: var(--paper); }
+.rpg-dim .rd-val { flex: 0 0 auto; min-width: 28px; text-align: right; font-weight: 700; font-size: 15px; color: var(--paper); white-space: nowrap; }
+.rpg-dim .rd-gear { font-style: normal; font-size: 11px; color: var(--cn-gold); margin-left: 2px; }
 .rpg-dim .rd-plus { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 7px; border: none; cursor: pointer; font-size: 17px; font-weight: 900;
   background: linear-gradient(135deg, #f0d678, var(--accent)); color: #1a1410; }
 .rpg-dim .rd-plus:disabled { opacity: .25; }
