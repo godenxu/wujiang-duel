@@ -52,10 +52,15 @@ function computeDamage(attacker, defender, atkTactic, defTactic, charged) {
   // 招式威力：普攻显著弱于猛攻
   const power = ({ fierce: 1.0, normal: 0.5, strategy: 1.0 })[atkTactic] || 1;
 
+  // 奇珍「护体」：守方体力低于35%时，额外减伤（百分比）
+  if (d.guardBonus && defender.hp < defender.maxHp * 0.35) {
+    mitigation *= 1 - Math.min(0.6, d.guardBonus / 100);
+  }
+
   let dmg = (base * 0.32) * counter * mitigation * critMul * luck * atkMul * power;
 
-  // 暴击：由攻方「魅力」决定暴击率（猛攻/普攻/谋攻皆可触发）
-  const critChance = Math.min(0.6, a.mei / 280) + (charged ? 0.35 : 0);
+  // 暴击：由攻方「魅力」决定暴击率（猛攻/普攻/谋攻皆可触发），奇珍「暴击率」宝物额外加成
+  const critChance = Math.min(0.6, a.mei / 280) + (charged ? 0.35 : 0) + (a.critBonus || 0) / 100;
   let crit = false;
   if (Math.random() < critChance) { dmg *= 1.7; crit = true; }
 
@@ -192,9 +197,10 @@ function firstMover(p1, p2) {
   return s2 > s1 ? "p2" : "p1";
 }
 
-// 回合末：行动者恢复战意、其减益按回合消退
+// 回合末：行动者恢复战意与体力（奇珍「气血回复」）、其减益按回合消退
 function endTurn(f) {
   f.stam = Math.min(100, f.stam + staminaRegen(f.g));
+  if (f.g.regenBonus) f.hp = Math.min(f.maxHp, f.hp + f.g.regenBonus);
   if (f.atkMulT > 0) { f.atkMulT--; if (f.atkMulT === 0) f.atkMul = 1; }
 }
 
@@ -301,8 +307,8 @@ function staminaCost(tactic, g) {
   if (base <= 0) return 0;
   return Math.max(2, Math.round(base * (1 - Math.min(0.34, (g.zheng || 0) / 300))));
 }
-// 「政治」→ 每回合战意恢复
-function staminaRegen(g) { return 2 + (g.zheng || 0) / 22; }
+// 「政治」→ 每回合战意恢复，奇珍「气盛」宝物额外加成
+function staminaRegen(g) { return 2 + (g.zheng || 0) / 22 + (g.stamRegenBonus || 0); }
 // 受击换取战意：所受伤害的这个比例转化为守方战意（格挡卸下的伤害另有全额加成，见上）
 const HIT_STAM_RATE = 0.35;
 

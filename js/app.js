@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607082205";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607082248";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -2744,14 +2744,29 @@
       { k: "mount", n: "坐骑", icon: "🐎", stat: "tong" },
       { k: "book", n: "书籍", icon: "📖", stat: null },
       { k: "attire", n: "服饰", icon: "👘", stat: "mei" },
-      { k: "curio", n: "奇珍", icon: "🔮", stat: "ti" },
+      { k: "curio", n: "奇珍", icon: "🔮", stat: null },
     ],
     RARITIES: [
-      { k: "normal", n: "普通", color: "#9a9a9a", weight: 55, bonus: 2 },
-      { k: "fine", n: "精良", color: "#3b9aff", weight: 28, bonus: 6 },
-      { k: "rare", n: "稀有", color: "#a24df0", weight: 13, bonus: 12 },
-      { k: "legend", n: "传说", color: "#f4c430", weight: 4, bonus: 22 },
+      { k: "normal", n: "普通", color: "#9a9a9a", weight: 55, bonus: 1 },
+      { k: "fine", n: "精良", color: "#3b9aff", weight: 28, bonus: 3 },
+      { k: "rare", n: "稀有", color: "#a24df0", weight: 13, bonus: 6 },
+      { k: "legend", n: "传说", color: "#f4c430", weight: 4, bonus: 10 },
     ],
+    // 奇珍不再只加体力：每件奇珍模板固定绑定一种效果，效果幅度按稀有度分档（普通/精良/稀有/传说）
+    // 字段名直接对应武将对象上的加成属性，供 js/engine.js 战斗结算读取
+    CURIO_EFFECTS: {
+      ti: { label: "体魄", icon: "💪", unit: "" },
+      critBonus: { label: "暴击率", icon: "💥", unit: "%" },
+      regenBonus: { label: "气血回复", icon: "💗", unit: "" },
+      guardBonus: { label: "护体", icon: "🛡️", unit: "%" },
+      stamRegenBonus: { label: "气盛", icon: "⚡", unit: "" },
+    },
+    CURIO_VALS: {
+      critBonus: [2, 4, 7, 12],
+      regenBonus: [1, 3, 5, 8],
+      guardBonus: [3, 6, 10, 16],
+      stamRegenBonus: [2, 4, 8, 13],
+    },
     TEMPLATES: {
       weapon: [
         { n: "青釭剑", intro: "曹操收缴自袁绍，削铁如泥的百炼神兵。" },
@@ -2842,26 +2857,26 @@
         { n: "云龙披风", intro: "云龙纹样的锦缎披风，气势恢宏。" },
       ],
       curio: [
-        { n: "传国玉玺", intro: "得之者得天命加身，气运绵长。" },
-        { n: "随侯珠", intro: "灵蛇衔珠相报，光华养神固本。" },
-        { n: "和氏璧", intro: "稀世美玉，握之心神安定。" },
-        { n: "勾玉", intro: "沟通神灵的古老玉饰，护身延寿。" },
-        { n: "八尺琼曲玉", intro: "三神器之一，佩之如有神佑。" },
-        { n: "南蛮令", intro: "孟获信物，持之如猛虎添翼。" },
-        { n: "不老丹方", intro: "方士所炼丹方，强身固体。" },
-        { n: "定军神符", intro: "军中祈福神符，佑主将屹立不倒。" },
-        { n: "九鼎", intro: "象征天下九州的重器，稳如泰山。" },
-        { n: "河图洛书", intro: "上古神秘图谶，蕴含天地至理。" },
-        { n: "麒麟令", intro: "瑞兽麒麟所化令牌，护佑军心。" },
-        { n: "太极图", intro: "阴阳调和之图，静心凝神。" },
-        { n: "长生诀", intro: "修真秘术残卷，滋养元气。" },
-        { n: "镇国鼎", intro: "传说中镇压国运的宝鼎。" },
-        { n: "天叢雲劍", intro: "三神器之一护符，斩妖除魔之气所化。" },
-        { n: "八咫镜", intro: "三神器之一，映照真心，护身避邪。" },
-        { n: "铜雀瓦砚", intro: "铜雀台遗物，文气所钟。" },
-        { n: "五行珠", intro: "集金木水火土之力于一身的宝珠。" },
-        { n: "不动明王护符", intro: "密宗至尊护法符，驱邪定心。" },
-        { n: "风林火山旗", intro: "武田家军旗，气势如虹。" },
+        { n: "传国玉玺", intro: "得之者得天命加身，气势逼人。", effect: "critBonus" },
+        { n: "随侯珠", intro: "灵蛇衔珠相报，光华养神固本。", effect: "ti" },
+        { n: "和氏璧", intro: "稀世美玉，握之心神安定，气血自生。", effect: "regenBonus" },
+        { n: "勾玉", intro: "沟通神灵的古老玉饰，气息绵长。", effect: "stamRegenBonus" },
+        { n: "八尺琼曲玉", intro: "三神器之一，佩之神佑护体。", effect: "regenBonus" },
+        { n: "南蛮令", intro: "孟获信物，持之如猛虎添翼，愈战愈勇。", effect: "guardBonus" },
+        { n: "不老丹方", intro: "方士所炼丹方，强身固体。", effect: "ti" },
+        { n: "定军神符", intro: "军中祈福神符，佑主将屹立不倒。", effect: "guardBonus" },
+        { n: "九鼎", intro: "象征天下九州的重器，稳如泰山。", effect: "guardBonus" },
+        { n: "河图洛书", intro: "上古神秘图谶，蕴含天地至理，气息不绝。", effect: "stamRegenBonus" },
+        { n: "麒麟令", intro: "瑞兽麒麟所化令牌，护佑军心，士气如虹。", effect: "critBonus" },
+        { n: "太极图", intro: "阴阳调和之图，静心凝神，固本培元。", effect: "ti" },
+        { n: "长生诀", intro: "修真秘术残卷，滋养元气。", effect: "ti" },
+        { n: "镇国鼎", intro: "传说中镇压国运的宝鼎，屹立不倒。", effect: "guardBonus" },
+        { n: "天叢雲劍", intro: "三神器之一护符，斩妖除魔之气锐不可当。", effect: "critBonus" },
+        { n: "八咫镜", intro: "三神器之一，映照真心，护身避邪。", effect: "regenBonus" },
+        { n: "铜雀瓦砚", intro: "铜雀台遗物，文气所钟，绵绵不绝。", effect: "stamRegenBonus" },
+        { n: "五行珠", intro: "集金木水火土之力于一身，生生不息。", effect: "regenBonus" },
+        { n: "不动明王护符", intro: "密宗至尊护法符，驱邪定心，护体挡厄。", effect: "guardBonus" },
+        { n: "风林火山旗", intro: "武田家军旗，气势如虹，锐气逼人。", effect: "critBonus" },
       ],
     },
     typeDef(k) { return this.TYPES.find(t => t.k === k); },
@@ -2877,20 +2892,32 @@
       for (const r of this.RARITIES) { if (x < r.weight) return r.k; x -= r.weight; }
       return "normal";
     },
+    // 奇珍某效果在四档稀有度下的数值（体魄沿用通用属性加成表，其余效果各有独立幅度表）
+    curioVals(effect) { return effect === "ti" ? this.RARITIES.map(r => r.bonus) : this.CURIO_VALS[effect]; },
     makeItem(typeK, rarityK, tmpl) {
       const type = this.typeDef(typeK), rar = this.rarityDef(rarityK);
       const pool = this.TEMPLATES[typeK];
       const t = tmpl || pool[randInt(0, pool.length - 1)];
-      const stat = type.stat || (Math.random() < 0.5 ? "zhi" : "zheng");
-      const item = { uid: this.data.nextUid++, type: typeK, tid: t.n, name: t.n, icon: type.icon, intro: t.intro, rarity: rarityK, stat, bonus: rar.bonus, equippedBy: null };
+      const rIdx = this.RARITIES.findIndex(r => r.k === rarityK);
+      let stat, bonus;
+      if (typeK === "curio") {
+        stat = t.effect || "ti";
+        bonus = this.curioVals(stat)[rIdx];
+      } else {
+        stat = type.stat || (Math.random() < 0.5 ? "zhi" : "zheng");
+        bonus = rar.bonus;
+      }
+      const item = { uid: this.data.nextUid++, type: typeK, tid: t.n, name: t.n, icon: type.icon, intro: t.intro, rarity: rarityK, stat, bonus, equippedBy: null, identified: true };
       if (!this.data.discovered.includes(t.n)) this.data.discovered.push(t.n);
       return item;
     },
 
-    /* ---- 掉落 ---- */
+    /* ---- 掉落：战场拾获的宝物先以「未鉴定」状态入库，需在宝物库花金鉴宝才能查看细节/装备 ---- */
+    IDENTIFY_COST: 50,
     dropItem(typeK) {
       const k = typeK || this.TYPES[randInt(0, this.TYPES.length - 1)].k;
       const item = this.makeItem(k, this.rollRarity(false));
+      item.identified = false;
       this.data.items.push(item); this.save();
       return item;
     },
@@ -2912,20 +2939,32 @@
     guaranteedItem(rarityK, typeK) {
       const k = typeK || this.TYPES[randInt(0, this.TYPES.length - 1)].k;
       const item = this.makeItem(k, rarityK);
+      item.identified = false;
       this.data.items.push(item); this.save();
       return item;
     },
+    // 拾获提示：不揭示战场掉落宝物的具体细节，需到宝物库鉴宝
     dropLine(drops) {
       if (!drops || !drops.length) return "";
       const parts = drops.map(d => d.kind === "item"
-        ? `${d.item.icon}<b style="color:${this.rarityDef(d.item.rarity).color}">${d.item.name}</b>（${this.rarityDef(d.item.rarity).n}）`
+        ? `❔ 神秘宝物一件（详情请到宝物库鉴宝）`
         : `${this.typeDef(d.type).icon}${this.typeDef(d.type).n}材料 +${d.n}`);
       return `<br>🎁 拾获：${parts.join("、")}`;
     },
+    // 鉴宝：花金揭示未鉴定宝物的具体细节，之后方可装备/拆解
+    identify(uid) {
+      const item = this.data.items.find(i => i.uid === uid); if (!item) return false;
+      if (item.identified !== false) return true;
+      if (!Bond.spend(this.IDENTIFY_COST)) { toast(`金币不足（鉴宝需 ${this.IDENTIFY_COST} 金）`); return false; }
+      item.identified = true; this.save();
+      AudioSystem.sfx.victory();
+      toast(`🔍 鉴定出 ${item.icon}「${item.name}」（${this.rarityDef(item.rarity).n}）！`);
+      return true;
+    },
 
-    /* ---- 装备 ---- */
+    /* ---- 装备（未鉴定的宝物不可装备）---- */
     itemsOf(owner) { return this.data.items.filter(i => i.equippedBy === owner); },
-    availableFor(owner, typeK) { return this.data.items.filter(i => i.type === typeK && (i.equippedBy === null || i.equippedBy === owner)); },
+    availableFor(owner, typeK) { return this.data.items.filter(i => i.type === typeK && i.identified !== false && (i.equippedBy === null || i.equippedBy === owner)); },
     equip(uid, owner) {
       const item = this.data.items.find(i => i.uid === uid); if (!item) return false;
       this.data.items.filter(i => i.equippedBy === owner && i.type === item.type).forEach(i => i.equippedBy = null);
@@ -2955,6 +2994,7 @@
     dismantle(uid) {
       const idx = this.data.items.findIndex(i => i.uid === uid); if (idx < 0) return false;
       const item = this.data.items[idx];
+      if (item.identified === false) { toast("需先鉴宝，才能拆解"); return false; }
       if (item.equippedBy) { toast("请先卸下装备再分解"); return false; }
       const n = this.DISMANTLE_RETURN[item.rarity];
       this.data.materials[item.type] = (this.data.materials[item.type] || 0) + n;
@@ -3566,26 +3606,42 @@
     if (owner === "hero") return (RPG.char && RPG.char.name) || "主角";
     const g = DB.get(owner); return g ? g.name : "？";
   }
+  // 属性/效果的中文标签与单位：六维走 DIMS，奇珍的特殊效果走 Armory.CURIO_EFFECTS
+  function statLabel(key) {
+    const d = DIMS.find(([k]) => k === key);
+    if (d) return d[1];
+    const e = Armory.CURIO_EFFECTS[key];
+    return e ? e.label : key;
+  }
+  function statUnit(key) {
+    const e = Armory.CURIO_EFFECTS[key];
+    return e ? e.unit : "";
+  }
   function itemCard(item) {
+    if (item.identified === false) {
+      return `<div class="item-card mystery">
+        <div class="ic-top"><span class="ic-icon">❔</span><span class="ic-name">神秘宝物</span></div>
+        <div class="ic-intro">来历不明，鉴宝方能知晓其真身与效用，才可装备或拆解。</div>
+        <button class="ic-identify" data-uid="${item.uid}">🔍 鉴宝（${Armory.IDENTIFY_COST} 金）</button>
+      </div>`;
+    }
     const rar = Armory.rarityDef(item.rarity);
-    const dim = DIMS.find(([k]) => k === item.stat);
     const ownerTag = item.equippedBy != null ? `<div class="ic-owner">佩戴中：${ownerName(item.equippedBy)}</div>` : "";
     return `<div class="item-card" style="--rar-color:${rar.color}">
       <div class="ic-top"><span class="ic-icon">${item.icon}</span><span class="ic-name">${item.name}</span><span class="ic-rar" style="color:${rar.color}">${rar.n}</span></div>
-      <div class="ic-stat">${dim ? dim[1] : ''} +${item.bonus}</div>
+      <div class="ic-stat">${statLabel(item.stat)} +${item.bonus}${statUnit(item.stat)}</div>
       <div class="ic-intro">${item.intro}</div>
       ${ownerTag}
       ${!item.equippedBy ? `<button class="ic-dismantle" data-uid="${item.uid}">拆解取材</button>` : ""}
     </div>`;
   }
-  // 装备槽位（供角色扮演主页/主角 与 武将详情/队友 共用）
+  // 装备槽位（供角色扮演主页/主角 与 武将详情/队友 共用）；未鉴定的宝物不会出现在此
   function eqSlotsHtml(owner) {
     return Armory.TYPES.map(type => {
-      const item = Armory.itemsOf(owner).find(i => i.type === type.k);
-      const dim = item && DIMS.find(([k]) => k === item.stat);
+      const item = Armory.itemsOf(owner).find(i => i.type === type.k && i.identified !== false);
       return `<div class="eq-slot" data-type="${type.k}" data-owner="${owner}">
         <span class="eq-icon">${type.icon}</span>
-        <span class="eq-body">${item ? `<b style="color:${Armory.rarityDef(item.rarity).color}">${item.name}</b><small>+${item.bonus} ${dim ? dim[1] : ''}</small>` : `<small>空</small>`}</span>
+        <span class="eq-body">${item ? `<b style="color:${Armory.rarityDef(item.rarity).color}">${item.name}</b><small>+${item.bonus}${statUnit(item.stat)} ${statLabel(item.stat)}</small>` : `<small>空</small>`}</span>
       </div>`;
     }).join("");
   }
@@ -3601,7 +3657,7 @@
       <h1>${type.icon} 选择${type.n}</h1>
       <div class="buff-list">
         ${options.map(it => `<button class="buff-btn eq-opt ${cur && cur.uid === it.uid ? 'active' : ''}" data-uid="${it.uid}">
-          <span class="bi">${it.icon}</span><span class="bt"><b style="color:${Armory.rarityDef(it.rarity).color}">${it.name}</b><small>${Armory.rarityDef(it.rarity).n} · +${it.bonus} ${DIMS.find(([k]) => k === it.stat)[1]}${it.equippedBy && it.equippedBy !== owner ? `（原佩戴于 ${ownerName(it.equippedBy)}）` : ''}</small></span></button>`).join("") || '<div class="empty">尚无该类宝物，先去征战、商店或锻造中获取吧</div>'}
+          <span class="bi">${it.icon}</span><span class="bt"><b style="color:${Armory.rarityDef(it.rarity).color}">${it.name}</b><small>${Armory.rarityDef(it.rarity).n} · +${it.bonus}${statUnit(it.stat)} ${statLabel(it.stat)}${it.equippedBy && it.equippedBy !== owner ? `（原佩戴于 ${ownerName(it.equippedBy)}）` : ''}</small></span></button>`).join("") || '<div class="empty">尚无该类可用宝物（未鉴定的宝物请先到「宝物库」鉴宝）</div>'}
         ${cur ? `<button class="buff-btn" id="eq-unequip"><span class="bi">✕</span><span class="bt"><b>卸下</b></span></button>` : ""}
       </div>
       <div class="btns"><button class="btn-ghost" id="eq-cancel">取消</button></div></div>`);
@@ -3632,21 +3688,27 @@
       const rarIdx = k => Armory.RARITIES.findIndex(r => r.k === k);
       items.sort((a, b) => rarIdx(b.rarity) - rarIdx(a.rarity));
       if (!items.length) return `<div class="empty">尚未获得任何宝物——去战场上搏一件吧</div>`;
-      return `<div class="section-hint">各玩法获胜后有机会掉落；已装备的宝物请先在「角色扮演」或武将详情中卸下，才能在此拆解。</div>
+      return `<div class="section-hint">各玩法获胜后有机会掉落，但掉落的宝物为「未鉴定」状态，需花金鉴宝才能查看细节、装备与拆解；已装备的宝物请先在「角色扮演」或武将详情中卸下，才能在此拆解。</div>
         <div class="item-grid">${items.map(itemCard).join("")}</div>`;
     },
     renderDex() {
       const total = Object.values(Armory.TEMPLATES).reduce((s, arr) => s + arr.length, 0);
-      const lo = Armory.RARITIES[0].bonus, hi = Armory.RARITIES[Armory.RARITIES.length - 1].bonus;
       let html = `<div class="section-hint">已发现 <b>${Armory.data.discovered.length}</b> / ${total} 件</div>`;
       Armory.TYPES.forEach(type => {
-        const statLbl = type.stat ? (DIMS.find(([k]) => k === type.stat) || [, type.stat])[1] : "智力或政治";
-        html += `<div class="dex-group"><div class="dex-group-title">${type.icon} ${type.n} · ${statLbl} +${lo}~+${hi}</div><div class="dex-grid">`;
+        html += `<div class="dex-group"><div class="dex-group-title">${type.icon} ${type.n}</div><div class="dex-grid">`;
         html += Armory.TEMPLATES[type.k].map(t => {
           const found = Armory.data.discovered.includes(t.n);
-          return found
-            ? `<div class="dex-card found"><div class="ic-icon">${type.icon}</div><div class="ic-name">${t.n}</div><div class="ic-stat">${statLbl} +${lo}~+${hi}</div><div class="ic-intro">${t.intro}</div></div>`
-            : `<div class="dex-card locked"><div class="ic-icon">？</div><div class="ic-name">未发现</div></div>`;
+          if (!found) return `<div class="dex-card locked"><div class="ic-icon">？</div><div class="ic-name">未发现</div></div>`;
+          let statLbl, lo, hi;
+          if (type.k === "curio") {
+            const eff = t.effect || "ti"; const vals = Armory.curioVals(eff);
+            statLbl = statLabel(eff); lo = vals[0]; hi = vals[vals.length - 1];
+          } else {
+            statLbl = type.stat ? statLabel(type.stat) : "智力或政治";
+            const vals = Armory.RARITIES.map(r => r.bonus); lo = vals[0]; hi = vals[vals.length - 1];
+          }
+          const unit = type.k === "curio" ? statUnit(t.effect || "ti") : "";
+          return `<div class="dex-card found"><div class="ic-icon">${type.icon}</div><div class="ic-name">${t.n}</div><div class="ic-stat">${statLbl} +${lo}~+${hi}${unit}</div><div class="ic-intro">${t.intro}</div></div>`;
         }).join("");
         html += `</div></div>`;
       });
@@ -3688,6 +3750,7 @@
         const item = Armory.data.items.find(i => i.uid === +b.dataset.uid);
         if (item && confirm(`确定拆解「${item.name}」？将永久失去此宝物，换取材料。`)) { Armory.dismantle(item.uid); this.render(); }
       });
+      $$(".ic-identify").forEach(b => b.onclick = () => { if (Armory.identify(+b.dataset.uid)) this.render(); });
       const rf = $("#shop-refresh"); if (rf) rf.onclick = () => { if (Armory.refreshShop(true)) this.render(); };
       $$(".ic-buy").forEach(b => b.onclick = () => { if (Armory.buyShop(+b.dataset.idx)) this.render(); });
       $$(".forge-btn").forEach(b => b.onclick = () => { if (Armory.forge(b.dataset.type)) this.render(); });
