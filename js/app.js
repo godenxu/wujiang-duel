@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607082248";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607082310";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -40,6 +40,13 @@
     resetDefault() { this.list = clone(ALL_GENERALS); this._nextId = this.list.length + 1; this.save(); },
   };
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
+
+  // 任何武将（含 400 名史实武将）都可能装备宝物：所有单挑/带兵战斗单位统一在此
+  // 挂钩装备加成，按 general.id 查询——自选武将(id=-1)不会与任何真实武将id冲突，
+  // 其自身装备已在 RPG.heroGeneral() 中按 "hero" 键应用，此处对其是安全的空操作。
+  const _makeFighter = window.makeFighter, _makeTroopUnit = window.makeTroopUnit;
+  function makeFighter(g) { return _makeFighter(Armory.geared(g, g.id)); }
+  function makeTroopUnit(g, side) { return _makeTroopUnit(Armory.geared(g, g.id), side); }
 
   /* ---------------- 通用工具 ---------------- */
   function toast(msg) {
@@ -136,14 +143,17 @@
         : p >= 250 ? "🤝 招募入队（免费）"
         : p >= 150 ? `🤝 招募入队（${Bond.recruitCost(g)} 金）`
         : "🔒 挚友后可招募";
+      const giftedToday = Bond.data.giftDay[g.id] === new Date().toISOString().slice(0, 10);
+      const visitedToday = (Bond.data.visitDay || {})[g.id] === new Date().toISOString().slice(0, 10);
       bondHtml = `<div class="bond-box">
         <div class="bond-line">友谊 <b>${p}</b> · ${lv}${next ? `（还差 ${next - p} 至下一级）` : "（已至最高）"} · 💰 ${Bond.gold()} 金</div>
         <div class="bond-track"><span class="bond-fill" style="width:${pct}%"></span></div>
         <div class="bond-gifts">
-          ${Bond.GIFTS.map(x => `<button class="gift-btn" data-g="${x.k}">${x.icon} ${x.n} <small>${x.cost}金 +${x.add}</small></button>`).join("")}
+          <button class="gift-btn ${giftedToday ? "dim" : ""}" id="bond-gift">🎁 赠送宝物${giftedToday ? "（今日已赠）" : ""}</button>
+          <button class="gift-btn ${visitedToday ? "dim" : ""}" id="bond-visit">🚶 拜访（+${Bond.VISIT_ADD}）${visitedToday ? "（今日已访）" : ""}</button>
           <button class="gift-btn recruit ${inTeam || p < 150 ? "dim" : ""}" id="bond-recruit">${recruitLbl}</button>
         </div>
-        ${inTeam ? `<div class="eq-slots-wrap"><div class="bt-head" style="margin:10px 0 4px">🎒 携带宝物<small>（点击槽位可装备/更换）</small></div><div class="eq-slots">${eqSlotsHtml(g.id)}</div></div>` : ""}
+        <div class="eq-slots-wrap"><div class="bt-head" style="margin:10px 0 4px">🎒 携带宝物<small>（点击槽位可装备/更换）</small></div><div class="eq-slots">${eqSlotsHtml(g.id)}</div></div>
       </div>`;
     }
     const html = `<div class="result-card detail-card">
@@ -164,7 +174,8 @@
     $("#detail-close").onclick = closeOverlay;
     if (opts.pickable) $("#detail-pick").onclick = () => { closeOverlay(); opts.onPick(g); };
     if (bondable) {
-      $$(".gift-btn[data-g]").forEach(b => b.onclick = () => { if (Bond.gift(g, b.dataset.g)) showDetail(g, opts); });
+      $("#bond-gift").onclick = () => openGiftPicker(g, () => showDetail(g, opts));
+      $("#bond-visit").onclick = () => { if (Bond.visit(g)) showDetail(g, opts); };
       $("#bond-recruit").onclick = () => { if (Bond.recruit(g)) showDetail(g, opts); };
       bindEqSlots(() => showDetail(g, opts));
     }
@@ -2659,9 +2670,9 @@
    * ============================================================ */
   const BOND_KEY = "wujiang_bond_v1";
   const Bond = {
-    data: { gold: 0, friends: {}, team: [], giftDay: {} },
+    data: { gold: 0, friends: {}, team: [], giftDay: {}, visitDay: {} },
     load() {
-      try { const d = JSON.parse(localStorage.getItem(BOND_KEY)); if (d) this.data = Object.assign({ gold: 0, friends: {}, team: [], giftDay: {} }, d); } catch { }
+      try { const d = JSON.parse(localStorage.getItem(BOND_KEY)); if (d) this.data = Object.assign({ gold: 0, friends: {}, team: [], giftDay: {}, visitDay: {} }, d); } catch { }
     },
     save() { localStorage.setItem(BOND_KEY, JSON.stringify(this.data)); },
     gold() { return this.data.gold; },
@@ -2689,7 +2700,9 @@
     nextThreshold(p) { const up = this.LEVELS.slice().reverse().find(([t]) => t > p); return up ? up[0] : null; },
     teamLimit() { return 5 + Math.floor(((RPG.char && RPG.char.level) || 1) / 10); },
     inTeam(id) { return this.data.team.includes(id); },
-    teamGenerals() { return this.data.team.map(id => DB.get(id)).filter(Boolean).map(g => Armory.geared(g, g.id)); },
+    // 注：不在此预先叠加装备加成——如今任何武将的装备加成统一由 makeFighter/makeTroopUnit
+    // 在其真正上场结算时按 id 查询叠加，避免队友在此处理和上场结算时被重复叠加。
+    teamGenerals() { return this.data.team.map(id => DB.get(id)).filter(Boolean); },
     recruitCost(g) { return ratingScore(g) * 2; },
     // 招募：挚友(150)可花金，生死之交(250)免费
     recruit(g) {
@@ -2705,21 +2718,36 @@
       return true;
     },
     dismiss(id) { this.data.team = this.data.team.filter(x => x !== id); this.save(); },
-    GIFTS: [
-      { k: "wine", n: "浊酒", icon: "🍶", cost: 20, add: 10 },
-      { k: "horse", n: "名马", icon: "🐎", cost: 80, add: 20 },
-      { k: "sword", n: "宝刀", icon: "⚔️", cost: 200, add: 30 },
-    ],
-    // 赠礼：每名武将每天限一次
-    gift(g, kind) {
-      const def = this.GIFTS.find(x => x.k === kind);
+    // 赠礼：赠送一件自己拥有且已鉴定的宝物（每名武将每天限赠一次），友谊增幅按稀有度分档；
+    // 宝物本身不再额外花金——它的价值已体现在获取它所付出的代价上。
+    GIFT_FRIEND: { normal: 8, fine: 15, rare: 25, legend: 40 },
+    giftItem(g, uid) {
       const today = new Date().toISOString().slice(0, 10);
       if (this.data.giftDay[g.id] === today) { toast(`今天已赠过 ${g.name}，明日再来`); return false; }
-      if (!this.spend(def.cost)) { toast(`金币不足（${def.n} 需 ${def.cost} 金）`); return false; }
+      const item = Armory.data.items.find(i => i.uid === uid);
+      if (!item || item.identified === false) { toast("请选择一件已鉴定的宝物"); return false; }
+      // 若对方该槽位已佩戴其他宝物，先将其卸下退回玩家宝物库，再为其换上新赠之物
+      Armory.data.items.filter(i => i.equippedBy === g.id && i.type === item.type).forEach(i => i.equippedBy = null);
+      item.equippedBy = g.id;
+      Armory.save();
       this.data.giftDay[g.id] = today;
-      this.addF(g.id, def.add); this.save();
+      const add = this.GIFT_FRIEND[item.rarity];
+      this.addF(g.id, add); this.save();
       AudioSystem.sfx.select();
-      toast(`${def.icon} 赠 ${g.name}【${def.n}】-${def.cost}金，友谊 +${def.add}（余 ${this.gold()} 金）`);
+      toast(`🎁 赠 ${g.name}【${item.name}】，友谊 +${add}（${this.rarityLabel(item.rarity)}宝物）`);
+      return true;
+    },
+    rarityLabel(k) { const r = Armory.rarityDef(k); return r ? r.n : k; },
+    // 拜访：无需宝物，每名武将每天限一次，友谊小额增长
+    VISIT_ADD: 3,
+    visit(g) {
+      const today = new Date().toISOString().slice(0, 10);
+      if (!this.data.visitDay) this.data.visitDay = {};
+      if (this.data.visitDay[g.id] === today) { toast(`今天已拜访过 ${g.name}，明日再来`); return false; }
+      this.data.visitDay[g.id] = today;
+      this.addF(g.id, this.VISIT_ADD); this.save();
+      AudioSystem.sfx.select();
+      toast(`🚶 拜访 ${g.name}，畅谈甚欢，友谊 +${this.VISIT_ADD}`);
       return true;
     },
   };
@@ -3516,7 +3544,7 @@
           ${cells}
           <td class="dt-total">${ratingScore(g)}</td>
           <td class="dt-grade">${ratingChip(g)}</td>
-          ${hasBond ? `<td class="dt-bond">${Bond.inTeam(g.id) ? "👥" : ""}${Bond.pts(g.id)}${Bond.inTeam(g.id) && Armory.itemsOf(g.id).length ? `<span class="dt-gear">${Armory.itemsOf(g.id).map(i => i.icon).join("")}</span>` : ""}</td>` : ""}
+          ${hasBond ? `<td class="dt-bond">${Bond.inTeam(g.id) ? "👥" : ""}${Bond.pts(g.id)}${Armory.itemsOf(g.id).length ? `<span class="dt-gear">${Armory.itemsOf(g.id).map(i => i.icon).join("")}</span>` : ""}</td>` : ""}
           <td class="dt-act">
             <button class="db-view" data-act="view">详</button>
             <button class="db-edit" data-act="edit">改</button>
@@ -3664,6 +3692,20 @@
     $$(".eq-opt").forEach(b => b.onclick = () => { Armory.equip(+b.dataset.uid, owner); closeOverlay(); if (onDone) onDone(); });
     const un = $("#eq-unequip"); if (un) un.onclick = () => { Armory.unequip(cur.uid); closeOverlay(); if (onDone) onDone(); };
     $("#eq-cancel").onclick = closeOverlay;
+  }
+  // 赠送宝物：只能赠送自己仓库中「未装备」且「已鉴定」的宝物，避免误赠正被佩戴的装备
+  function openGiftPicker(g, onDone) {
+    const options = Armory.data.items.filter(i => i.identified !== false && i.equippedBy === null);
+    openOverlay(`<div class="result-card">
+      <h1>🎁 赠 ${g.name} 宝物</h1>
+      <div class="wdesc">选一件仓库中的宝物相赠，友谊增幅按其稀有度而定：</div>
+      <div class="buff-list">
+        ${options.map(it => `<button class="buff-btn gift-opt" data-uid="${it.uid}">
+          <span class="bi">${it.icon}</span><span class="bt"><b style="color:${Armory.rarityDef(it.rarity).color}">${it.name}</b><small>${Armory.rarityDef(it.rarity).n} · +${it.bonus}${statUnit(it.stat)} ${statLabel(it.stat)} · 友谊 +${Bond.GIFT_FRIEND[it.rarity]}</small></span></button>`).join("") || '<div class="empty">仓库中暂无可赠之物——去战场获取、商店购买或锻造宝物，鉴宝后即可赠送</div>'}
+      </div>
+      <div class="btns"><button class="btn-ghost" id="gift-cancel">取消</button></div></div>`);
+    $$(".gift-opt").forEach(b => b.onclick = () => { if (Bond.giftItem(g, +b.dataset.uid)) { closeOverlay(); if (onDone) onDone(); } else closeOverlay(); });
+    $("#gift-cancel").onclick = closeOverlay;
   }
 
   const ArmoryUI = {
