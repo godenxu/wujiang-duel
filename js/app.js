@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607082357";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607092055";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -147,10 +147,12 @@
       const p = Bond.pts(g.id), lv = Bond.levelName(p), next = Bond.nextThreshold(p);
       const inTeam = Bond.inTeam(g.id);
       const pct = Math.min(100, p / 250 * 100);
+      const teamFull = Bond.data.team.length >= Bond.teamLimit();
       const recruitLbl = inTeam ? "✓ 已在队中"
+        : p < 150 ? "🔒 挚友后可招募"
+        : teamFull ? "🔁 招募（满员，需替换队友）"
         : p >= 250 ? "🤝 招募入队（免费）"
-        : p >= 150 ? `🤝 招募入队（${Bond.recruitCost(g)} 金）`
-        : "🔒 挚友后可招募";
+        : `🤝 招募入队（${Bond.recruitCost(g)} 金）`;
       const visitedToday = (Bond.data.visitDay || {})[g.id] === new Date().toISOString().slice(0, 10);
       eqHtml = `<div class="eq-slots-wrap"><div class="bt-head">🎒 携带宝物<small>（点击槽位选择宝物即为赠送；宝物只在首次赠给某位武将时计入友谊）</small></div><div class="eq-slots compact">${eqSlotsHtml(g.id, true)}</div></div>`;
       bondHtml = `<div class="bond-box">
@@ -182,9 +184,31 @@
     if (opts.pickable) $("#detail-pick").onclick = () => { closeOverlay(); opts.onPick(g); };
     if (bondable) {
       $("#bond-visit").onclick = () => { if (Bond.visit(g)) showDetail(g, opts); };
-      $("#bond-recruit").onclick = () => { if (Bond.recruit(g)) showDetail(g, opts); };
+      $("#bond-recruit").onclick = () => {
+        if (Bond.inTeam(g.id) || Bond.pts(g.id) < 150) return;
+        if (Bond.data.team.length >= Bond.teamLimit()) openTeamReplacePicker(g, () => showDetail(g, opts));
+        else if (Bond.recruit(g)) showDetail(g, opts);
+      };
       bindEqSlots(() => showDetail(g, opts));
     }
+  }
+  // 团队已满时招募：须指定一名现有队友被顶替，队友不可无条件请出团队
+  function openTeamReplacePicker(g, onDone) {
+    const mates = Bond.teamGenerals();
+    openOverlay(`<div class="result-card">
+      <h1>👥 团队已满</h1>
+      <div class="wdesc">团队已达 ${Bond.teamLimit()} 人上限，选一名队友，由 ${g.name} 顶替其位置：</div>
+      <div class="buff-list">
+        ${mates.map(t => `<button class="buff-btn replace-opt" data-id="${t.id}"><span class="bi">👤</span><span class="bt"><b>${t.name}</b><small>评分 ${ratingScore(t)} · 友谊 ${Bond.pts(t.id)}</small></span></button>`).join("")}
+      </div>
+      <div class="btns"><button class="btn-ghost" id="replace-cancel">取消</button></div></div>`);
+    $$(".replace-opt").forEach(b => b.onclick = () => {
+      const rid = +b.dataset.id;
+      const ok = Bond.recruit(g, rid);
+      closeOverlay(); if (onDone) onDone();
+      if (!ok) toast("替换失败");
+    });
+    $("#replace-cancel").onclick = () => { closeOverlay(); if (onDone) onDone(); };
   }
   function statRow(lbl, val, gear) {
     return `<div class="stat-row"><span class="lbl">${lbl}</span>
@@ -349,7 +373,7 @@
     const g = fighter.g;
     $(".favatar", el).textContent = avatarChar(g.name);
     $(".fname", el).textContent = g.name;
-    $(".ftotal", el).innerHTML = `武将评分 <b>${ratingScore(g)}</b> ${ratingChip(g)}`;
+    $(".ftotal", el).innerHTML = `<span class="ft-lbl">总</span><span class="ft-row"><b>${ratingScore(g)}</b>${ratingChip(g)}</span>`;
     // 头像/姓名右侧的五维（评级 + 数值彩条 + 数值；体力另以下方血条呈现）
     $(".fstats", el).innerHTML = DIMS.filter(([k]) => k !== "ti").map(([k, label]) =>
       `<div class="fs-row"><span class="fs-lbl">${label[0]}</span>` +
@@ -2710,17 +2734,25 @@
     // 在其真正上场结算时按 id 查询叠加，避免队友在此处理和上场结算时被重复叠加。
     teamGenerals() { return this.data.team.map(id => DB.get(id)).filter(Boolean); },
     recruitCost(g) { return ratingScore(g) * 2; },
-    // 招募：挚友(150)可花金，生死之交(250)免费
-    recruit(g) {
+    // 招募：挚友(150)可花金，生死之交(250)免费；团队已满时须传入 replaceId 指定顶替的队友，
+    // 队友不可被随意请出团队——唯一的移除途径就是被新招募的武将顶替。
+    recruit(g, replaceId) {
       const p = this.pts(g.id);
       if (this.inTeam(g.id)) { toast(`${g.name} 已在队中`); return false; }
       if (p < 150) { toast("友谊未到「挚友」，还不能招募"); return false; }
-      if (this.data.team.length >= this.teamLimit()) { toast(`团队已满（${this.teamLimit()} 人上限）`); return false; }
+      if (this.data.team.length >= this.teamLimit() && !(replaceId != null && this.data.team.includes(replaceId))) {
+        toast(`团队已满（${this.teamLimit()} 人上限），需选择一名队友替换`); return false;
+      }
       const cost = p >= 250 ? 0 : this.recruitCost(g);
       if (cost > 0 && !this.spend(cost)) { toast(`金币不足（需 ${cost} 金）`); return false; }
+      let replacedName = "";
+      if (replaceId != null && this.data.team.includes(replaceId)) {
+        const rg = DB.get(replaceId); replacedName = rg ? rg.name : "";
+        this.dismiss(replaceId);
+      }
       this.data.team.push(g.id); this.save();
       AudioSystem.sfx.victory();
-      toast(`🎉 ${g.name} 加入了你的团队！${cost ? `（-${cost}金，余 ${this.gold()}）` : "（生死之交，分文不取）"}`);
+      toast(`🎉 ${g.name} 加入了你的团队！${replacedName ? `（顶替了 ${replacedName}）` : ''}${cost ? `（-${cost}金，余 ${this.gold()}）` : "（生死之交，分文不取）"}`);
       return true;
     },
     dismiss(id) { this.data.team = this.data.team.filter(x => x !== id); this.save(); },
@@ -3231,8 +3263,8 @@
           </div>
         </div>
         <div class="bond-team">
-          <div class="bt-head">💰 金币 <b>${Bond.gold()}</b> ｜ 👥 我的团队 ${Bond.data.team.length}/${Bond.teamLimit()}<small>（挚友可招募；队友任 2v2 副将，同阵营队友在组队/国战/阵营大战必上阵）</small></div>
-          <div class="bt-list">${Bond.teamGenerals().map(t => `<span class="bt-chip" data-id="${t.id}">${t.name}<i data-x="${t.id}">✕</i></span>`).join("") || '<span class="bt-empty">尚无队友——先去结交武将吧</span>'}</div>
+          <div class="bt-head">💰 金币 <b>${Bond.gold()}</b> ｜ 👥 我的团队 ${Bond.data.team.length}/${Bond.teamLimit()}<small>（挚友可招募；队友任 2v2 副将，同阵营队友在组队/国战/阵营大战必上阵；队友不可随意请出，满员时招募新武将可选择替换）</small></div>
+          <div class="bt-list">${Bond.teamGenerals().map(t => `<span class="bt-chip" data-id="${t.id}">${t.name}</span>`).join("") || '<span class="bt-empty">尚无队友——先去结交武将吧</span>'}</div>
         </div>
         <div class="bond-team">
           <div class="bt-head">🎒 我的装备<small>（点击槽位可装备/更换宝物库中的宝物）</small></div>
@@ -3260,9 +3292,7 @@
       $("#rpg-train").onclick = () => this.train();
       $("#rpg-gauntlet").onclick = () => this.gauntlet();
       $("#rpg-tower").onclick = () => this.tower();
-      $$(".bt-chip").forEach(el => el.onclick = e => {
-        const xid = e.target.dataset && e.target.dataset.x;
-        if (xid != null) { if (confirm("将其请出团队？")) { Bond.dismiss(+xid); this.renderHub(); } return; }
+      $$(".bt-chip").forEach(el => el.onclick = () => {
         const tg = DB.get(+el.dataset.id); if (tg) showDetail(tg);
       });
       bindEqSlots(() => this.renderHub());
@@ -3640,6 +3670,10 @@
     if (owner === "hero") return (RPG.char && RPG.char.name) || "主角";
     const g = DB.get(owner); return g ? g.name : "？";
   }
+  // 装备/赠送发生变化后，若武将图鉴列表当前正显示在背后，立刻重绘使其反映最新数据
+  function refreshDBIfActive() {
+    if ($("#screen-db").classList.contains("active")) DBUI.render();
+  }
   // 属性/效果的中文标签与单位：六维走 DIMS，奇珍的特殊效果走 Armory.CURIO_EFFECTS
   function statLabel(key) {
     const d = DIMS.find(([k]) => k === key);
@@ -3714,9 +3748,10 @@
         const add = Bond.maybeGiftFriend(owner, item);
         if (add > 0) toast(`🎁 赠 ${ownerName(owner)}【${item.name}】，友谊 +${add}`);
       }
+      refreshDBIfActive();
       closeOverlay(); if (onDone) onDone();
     });
-    const un = $("#eq-unequip"); if (un) un.onclick = () => { Armory.unequip(cur.uid); closeOverlay(); if (onDone) onDone(); };
+    const un = $("#eq-unequip"); if (un) un.onclick = () => { Armory.unequip(cur.uid); refreshDBIfActive(); closeOverlay(); if (onDone) onDone(); };
     // 取消：不改变任何装备，回到刚才的武将信息，而非直接关闭整个弹窗
     $("#eq-cancel").onclick = () => { closeOverlay(); if (onDone) onDone(); };
   }
@@ -3741,7 +3776,13 @@
     renderStock() {
       const items = Armory.data.items.slice();
       const rarIdx = k => Armory.RARITIES.findIndex(r => r.k === k);
-      items.sort((a, b) => rarIdx(b.rarity) - rarIdx(a.rarity));
+      // 待鉴定的神秘宝物不按其（尚未揭示的）稀有度参与排序，固定排在已鉴定宝物之后，避免用位置泄露信息
+      items.sort((a, b) => {
+        const au = a.identified === false, bu = b.identified === false;
+        if (au !== bu) return au ? 1 : -1;
+        if (au && bu) return 0;
+        return rarIdx(b.rarity) - rarIdx(a.rarity);
+      });
       if (!items.length) return `<div class="empty">尚未获得任何宝物——去战场上搏一件吧</div>`;
       return `<div class="section-hint">各玩法获胜后有机会掉落，但掉落的宝物为「未鉴定」状态，需花金鉴宝才能查看细节、装备与拆解；已装备的宝物请先在「角色扮演」或武将详情中卸下，才能在此拆解。</div>
         <div class="item-grid">${items.map(itemCard).join("")}</div>`;

@@ -211,7 +211,9 @@ html, body {
 /* 五维区整体收窄，字号加大 */
 .fstats-wrap { flex: 1; min-width: 0; }
 /* 总评：置于头像列底部（与「魅力」行齐平），即体力条上方 */
-.fighter .ftotal { font-size: 11px; color: #c9b890; text-align: center; margin-top: auto; padding-top: 4px; width: 100%; white-space: nowrap; line-height: 1.2; }
+.fighter .ftotal { display: flex; flex-direction: column; align-items: center; gap: 1px; font-size: 11px; color: #c9b890; text-align: center; margin-top: auto; padding-top: 4px; width: 100%; white-space: nowrap; line-height: 1.2; }
+.fighter .ftotal .ft-lbl { font-size: 10px; letter-spacing: 1px; opacity: .85; }
+.fighter .ftotal .ft-row { display: flex; align-items: center; justify-content: center; gap: 5px; }
 .fighter .ftotal b { color: var(--cn-gold); font-size: 14px; font-family: "DotGothic16", monospace; }
 /* 五维：评级 + 数值彩条 + 数值，逐行排列 */
 .fstats { display: flex; flex-direction: column; gap: 3px; }
