@@ -27,6 +27,37 @@
       <span class="vs">VS</span>
       <span class="flag">🏯</span>
     </div>
+    <div class="menu menu-main">
+      <button class="menu-btn" id="btn-newgame" data-go="onboard">
+        <span class="mi">🆕</span><span>新游戏<small>自创或扮演史实武将，开创全新的武将人生</small></span>
+      </button>
+      <button class="menu-btn" id="btn-continue" data-go="continue" disabled>
+        <span class="mi">▶️</span><span>继续游戏<small id="continue-sub">暂无存档</small></span>
+      </button>
+      <button class="menu-btn" data-go="db">
+        <span class="mi">📜</span><span>武将图鉴<small>查阅武将设定资料，默认数值不受进度影响</small></span>
+      </button>
+      <button class="menu-btn" data-go="vault">
+        <span class="mi">🎁</span><span>宝物阁<small>浏览全部宝物，可编辑、可自建</small></span>
+      </button>
+      <button class="menu-btn" data-go="minigames">
+        <span class="mi">🕹️</span><span>小游戏<small>单挑/车轮/爬塔/国战等自由玩法合集</small></span>
+      </button>
+    </div>
+    <div class="home-footer">天道永恒 · <span id="app-ver"></span></div>
+  </section>
+
+  <!-- ========== 小游戏合集 ========== -->
+  <section id="screen-minigames" class="screen">
+    <div class="topbar">
+      <span class="back" data-back>‹</span>
+      <h2>小游戏</h2>
+      <div class="audio-btns">
+        <button id="btn-music10">♪</button>
+        <button id="btn-sfx10">🔊</button>
+      </div>
+    </div>
+    <div class="section-hint">自由玩法：均使用武将图鉴默认数值，不消耗、不产出存档数据</div>
     <div class="menu">
       <button class="menu-btn" data-go="select" data-mode="classic">
         <span class="mi">⚔️</span><span>经典单挑<small>自选双将，亲自指挥每一招</small></span>
@@ -52,17 +83,46 @@
       <button class="menu-btn" data-go="cup">
         <span class="mi">🏆</span><span>武将世界杯<small>随机分组，小组赛+淘汰赛争霸</small></span>
       </button>
-      <button class="menu-btn" data-go="rpg">
-        <span class="mi">🎭</span><span>角色扮演<small>培养专属武将，历练成长加点</small></span>
-      </button>
-      <button class="menu-btn" data-go="armory">
-        <span class="mi">🎒</span><span>宝物库<small>收集宝物，商店锻造，装备助战</small></span>
-      </button>
-      <button class="menu-btn" data-go="db">
-        <span class="mi">📜</span><span>武将图鉴<small>查阅、编辑、丰富武将数据库</small></span>
-      </button>
     </div>
-    <div class="home-footer">天道永恒 · <span id="app-ver"></span></div>
+  </section>
+
+  <!-- ========== 新游戏 · 开局向导 ========== -->
+  <section id="screen-onboard" class="screen">
+    <div class="topbar">
+      <span class="back" data-back>‹</span>
+      <h2>新游戏 · 开局向导</h2>
+      <div class="audio-btns">
+        <button id="btn-music11">♪</button>
+        <button id="btn-sfx11">🔊</button>
+      </div>
+    </div>
+    <div id="onboard-content"></div>
+  </section>
+
+  <!-- ========== 天下地图 · 游历主界面 ========== -->
+  <section id="screen-map" class="screen">
+    <div class="topbar">
+      <span class="back" data-back>‹</span>
+      <h2>天下游历</h2>
+      <div class="audio-btns">
+        <button id="btn-music13">♪</button>
+        <button id="btn-sfx13">🔊</button>
+      </div>
+    </div>
+    <div id="map-content"></div>
+  </section>
+
+  <!-- ========== 宝物阁（全局，不受游戏进度影响） ========== -->
+  <section id="screen-vault" class="screen">
+    <div class="topbar">
+      <span class="back" data-back>‹</span>
+      <h2>宝物阁</h2>
+      <div class="audio-btns">
+        <button id="btn-music12">♪</button>
+        <button id="btn-sfx12">🔊</button>
+      </div>
+    </div>
+    <div id="vault-content"></div>
   </section>
 
   <!-- ========== 选将 ========== -->

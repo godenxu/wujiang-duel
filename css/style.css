@@ -917,3 +917,124 @@ html, body {
 @media (min-width: 600px) {
   .grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
 }
+
+/* ============================================================
+ *  武将扮演版改造 · 第一期：首页新结构 / 开局向导 / 宝物阁
+ * ============================================================ */
+.menu-main { grid-template-columns: 1fr; max-width: 420px; }
+.menu-main .menu-btn:disabled { opacity: .4; cursor: not-allowed; filter: grayscale(.6); }
+.menu-main .menu-btn:disabled:active { transform: none; }
+
+/* 本命天赋 / 成长模式提示 */
+.rd-talent { color: var(--cn-gold); font-style: normal; margin-left: 2px; font-size: 11px; }
+.rpg-side-tag.talent { color: var(--cn-gold); }
+
+/* 开局向导：步骤条 */
+.ob-steps { display: flex; justify-content: center; gap: 6px; padding: 10px 14px 4px; }
+.ob-step { flex: 1; text-align: center; padding: 8px 4px; border-radius: 8px; font-size: 12px; color: #8a7d5e; background: rgba(0,0,0,.25); border: 1px solid rgba(212,175,55,.2); }
+.ob-step.active { color: #1a1410; background: linear-gradient(135deg, #f0d678, var(--accent)); font-weight: 700; border-color: var(--cn-gold); }
+.ob-step.done { color: var(--cn-gold); border-color: rgba(212,175,55,.5); }
+.buff-btn.active { border-color: var(--cn-gold); background: linear-gradient(135deg, #fff2cf, #ecd190); }
+
+/* 宝物阁：编辑/自建 */
+.dex-group-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.vault-add {
+  font-size: 11px; padding: 4px 10px; border-radius: 20px; border: 1px solid rgba(212,175,55,.5);
+  background: rgba(212,175,55,.12); color: var(--cn-gold); cursor: pointer; font-family: inherit; letter-spacing: 0; white-space: nowrap;
+}
+.vault-card { position: relative; }
+.vault-tag { font-style: normal; font-size: 10px; color: var(--cn-gold); background: rgba(212,175,55,.15); border-radius: 6px; padding: 0 4px; margin-left: 2px; }
+.vault-actions { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; justify-content: center; }
+.vault-actions button {
+  font-size: 10px; padding: 3px 7px; border-radius: 6px; border: 1px solid rgba(212,175,55,.3);
+  background: rgba(0,0,0,.3); color: #d8c79c; cursor: pointer; font-family: inherit;
+}
+.vault-actions .vault-edit { color: var(--cn-gold); }
+.vault-actions .vault-del { color: #ff6b5e; }
+.vault-bonus-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+.vf-bonus { text-align: center; }
+.vf-bonus label { display: block; font-size: 11px; margin-bottom: 3px; font-weight: 700; }
+.vf-bonus input {
+  width: 100%; padding: 7px 2px; text-align: center; border-radius: 8px; border: 1px solid rgba(212,175,55,.35);
+  background: rgba(0,0,0,.3); color: var(--paper); font-size: 14px; font-family: inherit;
+}
+
+/* ============================================================
+ *  武将扮演版改造 · 第二期：天下地图（20 城 + 对马岛海路）
+ * ============================================================ */
+.map-wrap { display: flex; flex-direction: column; }
+.map-svg-box {
+  position: relative; flex: 0 0 auto; height: clamp(260px, 42vh, 380px); margin: 6px 10px;
+  border: 1px solid rgba(212,175,55,.25); border-radius: 12px; overflow: hidden;
+  background:
+    radial-gradient(ellipse at 22% 45%, rgba(193,39,45,.16), transparent 55%),
+    radial-gradient(ellipse at 78% 55%, rgba(58,73,138,.2), transparent 55%),
+    rgba(10,8,6,.5);
+}
+.map-lines { position: absolute; inset: 0; width: 100%; height: 100%; }
+.map-lines line.map-road { stroke: rgba(212,175,55,.3); stroke-width: 1.4px; stroke-dasharray: 3 2.4; }
+.map-city { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer; z-index: 1; padding: 3px; }
+.mcity-dot { display: block; width: 10px; height: 10px; border-radius: 50%; border: 2px solid rgba(212,175,55,.4); background: rgba(20,12,8,.9); }
+.map-city.cn .mcity-dot { border-color: rgba(255,107,107,.7); background: linear-gradient(135deg, var(--cn-red), #7a1420); }
+.map-city.jp .mcity-dot { border-color: rgba(122,144,255,.7); background: linear-gradient(135deg, var(--jp-indigo), #141e3c); }
+.map-city.sea .mcity-dot { border-color: rgba(190,190,190,.6); background: #3a3a3a; }
+.mcity-name { font-size: 9px; color: #c9b890; white-space: nowrap; line-height: 1; text-shadow: 0 1px 3px #000; }
+.map-city.cur .mcity-dot { border-color: var(--cn-gold); box-shadow: 0 0 8px rgba(232,194,90,.9); width: 13px; height: 13px; }
+.map-city.cur .mcity-name { color: var(--cn-gold); font-weight: 700; }
+.map-city.adj .mcity-dot { box-shadow: 0 0 6px rgba(90,214,106,.7); border-color: #5ad66a; }
+.map-city.far { opacity: .5; }
+
+.map-city-panel { flex: 0 0 auto; padding: 4px 14px 8px; max-height: 34vh; overflow-y: auto; }
+.mc-head { font-size: 16px; font-weight: 800; color: var(--cn-gold); margin: 4px 0 8px; }
+.mc-head small { font-size: 11px; color: #9a8c66; font-weight: 400; margin-left: 4px; }
+.mc-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.mc-btn {
+  flex: 1 1 45%; padding: 9px 4px; border-radius: 8px; border: 1px solid rgba(212,175,55,.4);
+  background: linear-gradient(135deg, rgba(43,58,103,.9), rgba(20,30,60,.92)); color: var(--paper);
+  font-size: 12px; font-family: inherit; cursor: pointer;
+}
+.mc-btn.fac { background: linear-gradient(135deg, rgba(193,39,45,.85), rgba(120,20,30,.9)); }
+.mc-btn small { display: block; font-size: 9px; color: var(--cn-gold); margin-top: 1px; }
+.mc-btn:disabled { opacity: .35; cursor: not-allowed; }
+.mc-roster-head { font-size: 13px; color: #c9b890; margin-bottom: 4px; margin-top: 10px; }
+.mc-roster-head small { color: #8a7d5e; font-size: 11px; margin-left: 4px; }
+.mc-roster { display: flex; flex-direction: column; gap: 6px; }
+.mc-gen {
+  display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px;
+  border: 1px solid rgba(212,175,55,.25); background: rgba(0,0,0,.3); color: var(--paper);
+  font-family: inherit; cursor: pointer; text-align: left; width: 100%;
+}
+.mcg-av { font-size: 18px; }
+.mcg-name { flex: 1; font-size: 13px; font-weight: 700; }
+.mcg-bond { font-size: 11px; color: var(--cn-gold); }
+
+.mc-bounty-list { display: flex; flex-direction: column; gap: 6px; }
+.mc-bounty {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid rgba(212,175,55,.25); background: rgba(0,0,0,.28);
+}
+.mc-bounty.legendary { border-color: rgba(244,196,48,.6); background: linear-gradient(135deg, rgba(80,60,10,.35), rgba(0,0,0,.28)); }
+.mcb-desc { flex: 1; font-size: 12px; color: var(--paper); font-weight: 700; }
+.mcb-reward { font-size: 11px; color: var(--cn-gold); white-space: nowrap; }
+.mcb-accept {
+  padding: 6px 10px; border-radius: 8px; border: none; background: linear-gradient(135deg, #f0d678, var(--accent));
+  color: #1a1410; font-weight: 700; font-size: 11px; font-family: inherit; cursor: pointer; white-space: nowrap;
+}
+.mcb-accept small { display: block; font-size: 8px; font-weight: 400; }
+.mcb-accept:disabled { opacity: .35; cursor: not-allowed; }
+
+.map-status-bar { flex: 0 0 auto; padding: 8px 14px 12px; border-top: 1px solid rgba(212,175,55,.25); background: rgba(0,0,0,.3); margin-top: auto; }
+.ms-row { display: flex; align-items: center; gap: 8px; }
+.ms-av { font-size: 20px; }
+.ms-info { flex: 1; font-size: 13px; color: #c9b890; }
+.ms-info b { color: var(--paper); }
+.ms-btn { padding: 5px 10px; border-radius: 14px; border: 1px solid rgba(212,175,55,.4); background: rgba(212,175,55,.12); color: var(--cn-gold); font-size: 11px; font-family: inherit; cursor: pointer; }
+.ms-row2 { display: flex; align-items: center; gap: 12px; margin-top: 6px; font-size: 12px; color: #d8c79c; }
+.ms-camp { margin-left: auto; padding: 6px 12px; border-radius: 14px; border: none; background: linear-gradient(135deg, #f0d678, var(--accent)); color: #1a1410; font-weight: 700; font-size: 12px; font-family: inherit; cursor: pointer; }
+
+@media (min-width: 600px) {
+  .map-wrap { display: grid; grid-template-columns: 55% 45%; grid-template-rows: 1fr auto; align-items: stretch; }
+  .map-svg-box { grid-row: 1 / 3; grid-column: 1; height: auto; min-height: 60vh; margin: 10px; }
+  .map-city-panel { grid-column: 2; grid-row: 1; max-height: 60vh; }
+  .map-status-bar { grid-column: 2; grid-row: 2; margin-top: 0; }
+}

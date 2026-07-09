@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607092134";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607100001";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -88,9 +88,26 @@
     cup: "assets/bgm/tactics.mp3",            // 世界杯（沿用战术曲）
     teamwar: "assets/bgm/tactics.mp3",        // 组队大战（沿用战术曲）
   };
+  // 记录"上一次停留的主页面"（角色扮演主页 或 天下地图）：战斗/宝物库等子界面结算后
+  // 借此判断该回到哪一层，而不是一律固定返回某一处
+  let homeBase = "rpg";
+  function goHome() {
+    if (homeBase === "map" && typeof Campaign !== "undefined" && Campaign.meta && Campaign.meta.active) MapUI.open();
+    else { RPG.renderHub(); showScreen("rpg"); }
+  }
+  // 重行动统一扣减 1 点行动力（历练/切磋/擂台道场等一切战斗/承接悬赏/移动）；未开局地图时不限制
+  function spendAP() {
+    const m = typeof Campaign !== "undefined" && Campaign.mapState();
+    if (!m) return true;
+    if (m.ap <= 0) { toast("今日行动力已耗尽，请先宿营恢复"); return false; }
+    m.ap--; Campaign.save();
+    return true;
+  }
   function showScreen(id) {
     $$(".screen").forEach(s => s.classList.remove("active"));
     $("#screen-" + id).classList.add("active");
+    if (id === "rpg" || id === "map") homeBase = id;
+    if (id === "home" && typeof syncHomeButtons === "function") syncHomeButtons();
     if (id !== "battle" && typeof Duel !== "undefined" && Duel.stop) Duel.stop();
     // 按界面切换背景乐：指定界面用 OST，其余回退芯片乐
     if (BGM[id]) AudioSystem.playFile(BGM[id]);
@@ -132,17 +149,17 @@
   }
 
   function showDetail(g, opts = {}) {
-    // 友谊面板：有自选武将(角色扮演)且对象是库中武将时显示
+    // 友谊面板：有自选武将(角色扮演)且对象是库中武将时显示；opts.global（武将图鉴全局视图）时完全不显示进度数据，只呈现默认六维
     let bondHtml = "", eqHtml = "";
-    const bondable = RPG.char && g.id !== -1 && DB.get(g.id);
+    const bondable = !opts.global && RPG.char && g.id !== -1 && DB.get(g.id);
     // 装备加成：六维数值、雷达图、总评均按「若此武将佩戴其当前装备」实时展示。
     // hg 是叠加装备后的最终值（若传入的 g 本就来自战斗单位、已叠加过，则原样沿用，避免二次叠加）；
     // raw 专门用于计算装备增量标注——重新查一份「不含装备」的原始六维做对比基准，
     // 这样即便 g 是战斗中已叠加过装备的单位，也能正确算出装备带来的增量而不是显示 0。
-    const hg = Armory.geared(g, g.id);
-    const raw = g.id === -1
+    const hg = opts.global ? g : Armory.geared(g, g.id);
+    const raw = opts.global ? g : (g.id === -1
       ? (RPG.char ? Object.assign({}, g, Object.fromEntries(DIMS.map(([k]) => [k, RPG.eff(RPG.char, k)]))) : g)
-      : (DB.get(g.id) || g);
+      : (DB.get(g.id) || g));
     if (bondable) {
       const p = Bond.pts(g.id), lv = Bond.levelName(p), next = Bond.nextThreshold(p);
       const inTeam = Bond.inTeam(g.id);
@@ -183,11 +200,11 @@
     $("#detail-close").onclick = closeOverlay;
     if (opts.pickable) $("#detail-pick").onclick = () => { closeOverlay(); opts.onPick(g); };
     if (bondable) {
-      $("#bond-visit").onclick = () => { if (Bond.visit(g)) showDetail(g, opts); };
+      $("#bond-visit").onclick = () => { if (Bond.visit(g)) { showDetail(g, opts); refreshDBIfActive(); } };
       $("#bond-recruit").onclick = () => {
         if (Bond.inTeam(g.id) || Bond.pts(g.id) < 150) return;
-        if (Bond.data.team.length >= Bond.teamLimit()) openTeamReplacePicker(g, () => showDetail(g, opts));
-        else if (Bond.recruit(g)) showDetail(g, opts);
+        if (Bond.data.team.length >= Bond.teamLimit()) openTeamReplacePicker(g, () => { showDetail(g, opts); refreshDBIfActive(); });
+        else if (Bond.recruit(g)) { showDetail(g, opts); refreshDBIfActive(); }
       };
       bindEqSlots(() => showDetail(g, opts));
     }
@@ -1240,7 +1257,7 @@
           ${three.map(o => `<button class="buff-btn" data-k="${o.k}"><span class="bi">${o.icon}</span><span class="bt"><b>${o.n}</b><small>${o.d}</small></span></button>`).join("")}
         </div>
         <div class="btns">
-          ${RPG.char ? `<button class="btn-ghost" id="twr-reroll">🎲 重抽（50金 · 现有${Bond.gold()}）</button>` : ""}
+          ${this.rpg ? `<button class="btn-ghost" id="twr-reroll">🎲 重抽（50金 · 现有${Bond.gold()}）</button>` : ""}
           <button class="btn-ghost" id="twr-down2">收兵下塔</button>
         </div></div>`);
       $$(".buff-btn").forEach(btn => btn.onclick = () => {
@@ -1846,7 +1863,7 @@
           <button class="btn-ghost" id="tw-home">返回菜单</button>
         </div></div>`);
       $("#tw-again").onclick = () => { closeOverlay(); this.rpg ? RPG.teamBattle() : SelectUI.open("team"); };
-      $("#tw-home").onclick = () => { closeOverlay(); showScreen(this.rpg ? "rpg" : "home"); };
+      $("#tw-home").onclick = () => { closeOverlay(); if (this.rpg) goHome(); else showScreen("home"); };
       if (this.rpg) RPG.onTeamBattleResult(this.kills.player, playerWon);
     },
   };
@@ -2790,6 +2807,7 @@
    *  宝物系统：五类宝物（兵器/坐骑/书籍/服饰/奇珍）+ 稀有度 + 掉落/商店/锻造
    * ============================================================ */
   const ARMORY_KEY = "wujiang_armory_v1";
+  const ARMORY_GLOBAL_KEY = "wujiang_armory_global_v1";
   const Armory = {
     data: { items: [], materials: { weapon: 0, mount: 0, book: 0, attire: 0, curio: 0 }, discovered: [], pity: { weapon: 0, mount: 0, book: 0, attire: 0, curio: 0 }, shop: [], shopDay: "", nextUid: 1 },
     load() {
@@ -2800,6 +2818,33 @@
       this.ensureShop();
     },
     save() { localStorage.setItem(ARMORY_KEY, JSON.stringify(this.data)); },
+
+    // ---- 全局宝物模板层（宝物阁编辑/自建，不随"新游戏"重置）----
+    overrides: {}, custom: [], _nextCustomUid: 1,
+    loadGlobal() {
+      try {
+        const d = JSON.parse(localStorage.getItem(ARMORY_GLOBAL_KEY));
+        if (d) { this.overrides = d.overrides || {}; this.custom = d.custom || []; this._nextCustomUid = d.nextCustomUid || 1; }
+      } catch { }
+    },
+    saveGlobal() { localStorage.setItem(ARMORY_GLOBAL_KEY, JSON.stringify({ overrides: this.overrides, custom: this.custom, nextCustomUid: this._nextCustomUid })); },
+    // 数值限幅：宝物阁自建/编辑的加成值一律 ≤15，避免破坏平衡
+    clampBonusArr(arr) { return arr.map(v => Math.max(1, Math.min(15, Math.round(+v || 1)))); },
+    // 该类型的全部模板：内置模板(应用覆盖) + 自建模板；_key 用于编辑/删除时定位
+    pool(typeK) {
+      const base = this.TEMPLATES[typeK].map((t, idx) => {
+        const key = typeK + "|b" + idx;
+        const ov = this.overrides[key];
+        return Object.assign({}, t, ov, { _key: key, _custom: false });
+      });
+      const customs = this.custom.filter(c => c.type === typeK).map(c => Object.assign({}, c, { _key: typeK + "|c" + c.uid, _custom: true }));
+      return base.concat(customs);
+    },
+    templateByKey(key) { const typeK = key.split("|")[0]; return this.pool(typeK).find(t => t._key === key); },
+    setOverride(key, patch) { this.overrides[key] = Object.assign({}, this.overrides[key], patch); this.saveGlobal(); },
+    clearOverride(key) { delete this.overrides[key]; this.saveGlobal(); },
+    addCustomTemplate(entry) { entry.uid = this._nextCustomUid++; this.custom.push(entry); this.saveGlobal(); return entry; },
+    removeCustomTemplate(uid) { this.custom = this.custom.filter(c => c.uid !== uid); this.saveGlobal(); },
 
     TYPES: [
       { k: "weapon", n: "兵器", icon: "⚔️", stat: "wu" },
@@ -2958,21 +3003,38 @@
     curioVals(effect) { return effect === "ti" ? this.RARITIES.map(r => r.bonus) : this.CURIO_VALS[effect]; },
     makeItem(typeK, rarityK, tmpl) {
       const type = this.typeDef(typeK), rar = this.rarityDef(rarityK);
-      const pool = this.TEMPLATES[typeK];
+      const pool = this.pool(typeK);
       const t = tmpl || pool[randInt(0, pool.length - 1)];
       const rIdx = this.RARITIES.findIndex(r => r.k === rarityK);
       let stat, bonus;
       if (typeK === "curio") {
         stat = t.effect || "ti";
-        bonus = this.curioVals(stat)[rIdx];
+        bonus = t.bonusOverride ? t.bonusOverride[rIdx] : this.curioVals(stat)[rIdx];
       } else if (typeK === "book") {
         stat = t.stat || "zhi";   // 每部典籍按其性质固定加智力或政治，不再随机
-        bonus = rar.bonus;
+        bonus = t.bonusOverride ? t.bonusOverride[rIdx] : rar.bonus;
       } else {
         stat = type.stat;
-        bonus = rar.bonus;
+        bonus = t.bonusOverride ? t.bonusOverride[rIdx] : rar.bonus;
       }
       const item = { uid: this.data.nextUid++, type: typeK, tid: t.n, name: t.n, icon: type.icon, intro: t.intro, rarity: rarityK, stat, bonus, equippedBy: null, identified: true };
+      if (!this.data.discovered.includes(t.n)) this.data.discovered.push(t.n);
+      return item;
+    },
+
+    // 唯一奇珍：全地图各仅一件，装备后额外 +1 行动力上限（由 Campaign.recalcApMax 读取 apBonus 字段）
+    UNIQUE_TREASURES: {
+      chitu: { n: "赤兔·千里神驹", type: "mount", stat: "tong", intro: "人中吕布马中赤兔，日行千里，唯此一骑——佩之统帅超群，行动力上限 +1。" },
+      senriGeta: { n: "千里靴", type: "attire", stat: "mei", intro: "踏遍天下路不知疲，唯此一双——佩之魅力超群，行动力上限 +1。" },
+    },
+    makeUniqueTreasure(key) {
+      const t = this.UNIQUE_TREASURES[key];
+      const type = this.typeDef(t.type);
+      const item = {
+        uid: this.data.nextUid++, type: t.type, tid: t.n, name: t.n, icon: type.icon, intro: t.intro,
+        rarity: "legend", stat: t.stat, bonus: this.RARITIES[this.RARITIES.length - 1].bonus,
+        apBonus: 1, equippedBy: null, identified: true,
+      };
       if (!this.data.discovered.includes(t.n)) this.data.discovered.push(t.n);
       return item;
     },
@@ -3103,16 +3165,21 @@
       this.data.shop = Array.from({ length: this.SHOP_SIZE }, () => {
         const type = this.TYPES[randInt(0, this.TYPES.length - 1)];
         const r = this.rollRarity(false);
-        return { type: type.k, rarity: r, tmpl: this.TEMPLATES[type.k][randInt(0, this.TEMPLATES[type.k].length - 1)] };
+        const p = this.pool(type.k);
+        return { type: type.k, rarity: r, tmpl: p[randInt(0, p.length - 1)] };
       });
       this.data.shopDay = new Date().toISOString().slice(0, 10);
       this.save();
       return true;
     },
-    shopPrice(rarityK) { return { normal: 220, fine: 520, rare: 1100, legend: 2600 }[rarityK]; },
+    // discount 为真时（对马黑市常驻 / 行脚商队奇遇临时触发）全场八折
+    shopPrice(rarityK, discount) {
+      const base = { normal: 220, fine: 520, rare: 1100, legend: 2600 }[rarityK];
+      return discount ? Math.round(base * 0.8) : base;
+    },
     buyShop(idx) {
       const s = this.data.shop[idx]; if (!s) return null;
-      const price = this.shopPrice(s.rarity);
+      const price = this.shopPrice(s.rarity, shopDiscountActive());
       if (!Bond.spend(price)) { toast(`金币不足（需 ${price} 金）`); return null; }
       const item = this.makeItem(s.type, s.rarity, s.tmpl);
       this.data.items.push(item);
@@ -3134,7 +3201,7 @@
     load() { try { this.char = JSON.parse(localStorage.getItem(RPG_KEY)); } catch { this.char = null; } },
     save() { localStorage.setItem(RPG_KEY, JSON.stringify(this.char)); },
     expNeed(lv) { return 80 + lv * 70; },
-    eff(c, k) { return c.base[k] + (c.alloc[k] || 0); },
+    eff(c, k) { return c.base[k] + Math.round(c.alloc[k] || 0); },
     heroGeneral() {
       const c = this.char;
       const g = { id: -1, name: c.name, side: c.side, title: `Lv.${c.level} 历练者`, intro: c.intro || "你亲手培养的武将。" };
@@ -3223,7 +3290,23 @@
     },
     create(name, side, base, points, title) {
       const alloc = {}; DIMS.forEach(([k]) => alloc[k] = 0);
-      this.char = { name, side, title: title || "", base: clone(base), alloc, level: 1, exp: 0, points: points || 0, wins: 0, losses: 0 };
+      this.char = { name, side, title: title || "", base: clone(base), alloc, level: 1, exp: 0, points: points || 0, wins: 0, losses: 0, growthMul: 1, talents: [] };
+      this._roll = null; this._name = "";
+      this.save(); AudioSystem.sfx.victory(); this.renderHub();
+    },
+    // 扮演史实武将开局：少年模式(young)按默认值60%起步、最高两项属性定为本命天赋(成长+50%、可破默认上限)；
+    // 巅峰模式(peak)默认原值开局，但历练加点成长减半
+    createFromGeneral(g, difficulty) {
+      const alloc = {}; DIMS.forEach(([k]) => alloc[k] = 0);
+      const base = {};
+      const sortedKeys = DIMS.map(([k]) => k).slice().sort((a, b) => g[b] - g[a]);
+      const talents = difficulty === "young" ? sortedKeys.slice(0, 2) : [];
+      DIMS.forEach(([k]) => { base[k] = difficulty === "young" ? Math.max(1, Math.round(g[k] * 0.6)) : g[k]; });
+      this.char = {
+        name: g.name, side: g.side, title: g.title || "", intro: g.intro || "", base, alloc,
+        level: 1, exp: 0, points: 15, wins: 0, losses: 0,
+        growthMul: difficulty === "peak" ? 0.5 : 1, talents, originGeneralId: g.id,
+      };
       this._roll = null; this._name = "";
       this.save(); AudioSystem.sfx.victory(); this.renderHub();
     },
@@ -3236,8 +3319,9 @@
       const sum = DIMS.reduce((s, [k]) => s + hg[k], 0);
       const dims = DIMS.map(([k, l]) => {
         const raw = this.eff(c, k), v = hg[k], gear = v - raw;
+        const isTalent = c.talents && c.talents.includes(k);
         return `<div class="rpg-dim">
-          <span class="rd-lbl">${l}</span>
+          <span class="rd-lbl">${l}${isTalent ? '<i class="rd-talent" title="本命天赋：加点成长 +50%，可突破默认上限">★</i>' : ''}</span>
           <span class="rd-track"><span class="rd-bar" style="width:${Math.min(100, v / 1.2)}%;background:${gradeColor(v)}"></span></span>
           <span class="rd-val">${v}${gear ? `<i class="rd-gear">(+${gear})</i>` : ''}</span>${gradeChip(v)}
           <button class="rd-plus" data-k="${k}" ${c.points > 0 ? '' : 'disabled'}>＋</button>
@@ -3249,6 +3333,8 @@
           <div class="rpg-meta">
             <div class="rpg-name">${c.name} <button class="rpg-edit" id="rpg-rename" title="改名">✎</button> <span class="rpg-lv">Lv.${c.level}</span></div>
             <div class="rpg-side-tag">${c.side === 'cn' ? '三国风' : '战国风'} · 战绩 ${c.wins}胜${c.losses}负</div>
+            ${c.talents && c.talents.length ? `<div class="rpg-side-tag talent">✨ 少年成长 · 本命天赋：${c.talents.map(k => DIMS.find(d => d[0] === k)[1]).join('、')}（加点成长 +50%）</div>` : ''}
+            ${c.growthMul === 0.5 ? `<div class="rpg-side-tag talent">⚔ 巅峰模式 · 历练加点成长减半</div>` : ''}
             <div class="rpg-exp"><span class="rpg-exp-fill" style="width:${expPct}%"></span><span class="rpg-exp-txt">EXP ${c.exp}/${need}</span></div>
           </div>
         </div>
@@ -3272,6 +3358,7 @@
         <div class="bond-team">
           <div class="bt-head">🎒 我的装备<small>（点击槽位可装备/更换宝物库中的宝物）</small></div>
           <div class="eq-slots">${eqSlotsHtml("hero")}</div>
+          <button class="cup-go" id="rpg-armory" style="margin-top:8px;width:100%">🏪 宝物库（仓库 · 商店 · 锻造）</button>
         </div>
         <div class="rpg-actions">
           <button class="cup-go primary" id="rpg-train">⚔ 历练单挑</button>
@@ -3292,6 +3379,7 @@
         if (h > 0) radarEl.style.height = h + "px";
       }
       $$(".rd-plus").forEach(b => b.onclick = () => this.allocate(b.dataset.k));
+      $("#rpg-armory").onclick = () => ArmoryUI.open();
       $("#rpg-train").onclick = () => this.train();
       $("#rpg-gauntlet").onclick = () => this.gauntlet();
       $("#rpg-tower").onclick = () => this.tower();
@@ -3309,16 +3397,20 @@
       };
     },
     allocate(k) {
-      if (this.char.points <= 0) return;
-      if (this.eff(this.char, k) >= 120) { toast("该维度已达上限 120"); return; }
-      this.char.alloc[k] = (this.char.alloc[k] || 0) + 1;
-      this.char.points--;
+      const c = this.char;
+      if (c.points <= 0) return;
+      if (this.eff(c, k) >= 120) { toast("该维度已达上限 120"); return; }
+      // 本命天赋（少年模式最高两项）加点成长 +50%；巅峰模式整体成长减半
+      const mul = (c.growthMul || 1) * (c.talents && c.talents.includes(k) ? 1.5 : 1);
+      c.alloc[k] = (c.alloc[k] || 0) + mul;
+      c.points--;
       AudioSystem.sfx.select();
       this.save(); this.renderHub();
     },
 
-    /* ---- 历练 ---- */
+    /* ---- 历练（天下地图开启后消耗 1 点行动力；地图未开启/尚在过渡期时不限制） ---- */
     train() {
+      if (!spendAP()) return;
       const pool = DB.list;
       const opp = clone(pool[randInt(0, pool.length - 1)]);
       startClassicBattle(this.heroGeneral(), opp, false, true);
@@ -3348,28 +3440,47 @@
         if (BATTLE && BATTLE.duo) Bond.addF(BATTLE.duo.d1.id, 15);   // 与副将并肩获胜
         Bond.save();
         drops = Armory.roll(0.2, 0.3, 1);
+        Campaign.addFame(3);                          // 赢一场切磋，薄名声渐积
       }
       c.exp += gain;
       let lvUp = 0;
       while (c.exp >= this.expNeed(c.level)) { c.exp -= this.expNeed(c.level); c.level++; c.points += 1; lvUp++; }
       this.save();
+      // 悬赏「讨伐令」判定：命中目标即完成，未命中或落败则该次出征作废（悬赏仍保留在榜上可再次接取）
+      let extraHtml = "";
+      const m = Campaign.mapState();
+      if (m && m.activeBounty && m.activeBounty.kind === "duel") {
+        const ab = m.activeBounty;
+        extraHtml += (heroWon && opp.id === ab.targetId) ? "<br>" + completeBountyReward(ab) : `<br>📋 悬赏未达成：${ab.desc}（仍保留在城池悬赏榜）`;
+        m.activeBounty = null; Campaign.save();
+      }
+      // 天下擂台/双人比武等设施挑战：胜利额外记一笔名声（duo 也经此结算通道）
+      if (m && (m.activeFacility === "duel" || m.activeFacility === "duo")) {
+        if (heroWon) { Campaign.addFame(8); extraHtml += `<br>🏯 设施挑战获胜，名声 <b style="color:var(--cn-red)">+8</b>`; }
+        m.activeFacility = null; Campaign.save();
+      }
+      // 威名榜：击败八大高手记录战绩，凑齐后与武道会夺冠一并达成"天下无双"终局
+      if (heroWon) extraHtml += checkRivalDefeat(opp);
       const bg = c.side === 'cn' ? 'linear-gradient(135deg,var(--cn-red),#7a1420)' : 'linear-gradient(135deg,var(--jp-indigo),#141e3c)';
       openOverlay(`<div class="result-card">
         <h1>${heroWon ? '历练胜利' : '虽败犹荣'}</h1>
         <div class="winner-av" style="background:${bg}">${avatarChar(c.name)}</div>
         <div class="wname">${c.name}</div>
         <div class="wdesc">${heroWon ? '击败' : '不敌'} ${opp.name}（武将评分 ${oppSum} / 你 ${heroSum}）${tag}<br>获得经验 <b style="color:var(--cn-red)">+${gain}</b>${Bond.goldLine(goldGain)}${Armory.dropLine(drops)}
-          ${lvUp ? `<br>🎉 升级 ${lvUp} 级！获得加点 <b style="color:var(--cn-red)">+${lvUp * 1}</b>` : ''}</div>
+          ${lvUp ? `<br>🎉 升级 ${lvUp} 级！获得加点 <b style="color:var(--cn-red)">+${lvUp * 1}</b>` : ''}${extraHtml}</div>
         <div class="btns">
           <button class="btn-primary" id="rpg-again">再历练</button>
           <button class="btn-ghost" id="rpg-hub">返回养成</button>
         </div></div>`);
       $("#rpg-again").onclick = () => { closeOverlay(); this.train(); };
-      $("#rpg-hub").onclick = () => { closeOverlay(); this.renderHub(); showScreen("rpg"); };
+      $("#rpg-hub").onclick = () => { closeOverlay(); goHome(); };
     },
 
     /* ---- 报名世界杯（16 / 32 强） ---- */
     joinCup(size) {
+      const mChk = Campaign.mapState();
+      if (mChk && Campaign.fameTierIndex(mChk.fame || 0) < 2) { toast("声望不足，需达到「威震一方」名声阶梯才能报名天下第一武道会"); return; }
+      if (!spendAP()) return;
       Tournament.size = size || 16;
       const hero = this.heroGeneral();
       const pool = DB.list.slice(); shuffle(pool);
@@ -3380,25 +3491,42 @@
     },
 
     /* ---- 车轮大战 ---- */
-    gauntlet() { Gauntlet.start(this.heroGeneral(), true); },
+    gauntlet() { if (!spendAP()) return; Gauntlet.start(this.heroGeneral(), true); },
     onGauntletResult(streak, allCleared, killer) {
       const gold = Bond.addGold(streak * 8);
       const drops = Armory.roll(Math.min(0.6, streak * 0.05), Math.min(0.9, streak * 0.08), Math.min(5, Math.ceil(streak / 3)) || 1);
       const exp = streak * 25 + (allCleared ? 200 : 0);
+      let bountyHtml = "";
+      const m = Campaign.mapState();
+      if (m && m.activeBounty && m.activeBounty.kind === "gauntlet") {
+        const ab = m.activeBounty;
+        bountyHtml = "<br>" + (streak >= ab.need ? completeBountyReward(ab) : `📋 悬赏未达成：${ab.desc}（本次连胜 ${streak}，仍保留在城池悬赏榜）`);
+        m.activeBounty = null; Campaign.save();
+      }
+      if (m && m.activeFacility === "gauntlet" && allCleared) { Campaign.addFame(10); bountyHtml += `<br>🏯 设施挑战全清，名声 <b style="color:var(--cn-red)">+10</b>`; }
+      if (m && m.activeFacility === "gauntlet") { m.activeFacility = null; Campaign.save(); }
       this.grantExp(exp, "车轮大战 · 连胜 " + streak,
-        `连斩 <b style="color:var(--cn-red)">${streak}</b> 员${allCleared ? '，横扫群雄！' : (killer ? '，终被 ' + killer.name + ' 所阻。' : '。')}`,
+        `连斩 <b style="color:var(--cn-red)">${streak}</b> 员${allCleared ? '，横扫群雄！' : (killer ? '，终被 ' + killer.name + ' 所阻。' : '。')}${bountyHtml}`,
         () => this.gauntlet(), gold, Armory.dropLine(drops));
     },
 
     /* ---- 百人斩 · 爬塔 ---- */
-    tower() { Tower.start(this.heroGeneral(), true); },
+    tower() { if (!spendAP()) return; Tower.start(this.heroGeneral(), true); },
     onTowerResult(cleared, killer, gains) {
       const gold = Bond.addGold(cleared * 8);
       Bond.addMany(Tower.slain, 4);   // 被斩守将：不打不相识
       const drops = Armory.roll(Math.min(0.65, cleared * 0.05), Math.min(0.9, cleared * 0.07), Math.min(6, Math.ceil(cleared / 2)) || 1);
       const exp = cleared * 20 + (cleared >= 10 ? 100 : 0);
+      let uniqueHtml = "";
+      const m = Campaign.mapState();
+      if (m && cleared >= 15 && !m.uniqueOwned.chitu) {
+        const item = Armory.makeUniqueTreasure("chitu");
+        Armory.data.items.push(item); Armory.save();
+        m.uniqueOwned.chitu = true; Campaign.recalcApMax(); Campaign.save();
+        uniqueHtml = `<br>🐎 深塔藏珍：寻得唯一奇珍【${item.name}】！`;
+      }
       this.grantExp(exp, "百人斩 · 斩 " + cleared + " 将",
-        `攀塔连斩 <b style="color:var(--cn-red)">${cleared}</b> 员守将${killer ? `，止步于 ${killer.name} 之手。` : '，全身而退。'}${gains && gains.length ? `<br>此行机缘：${gains.join('、')}` : ''}`,
+        `攀塔连斩 <b style="color:var(--cn-red)">${cleared}</b> 员守将${killer ? `，止步于 ${killer.name} 之手。` : '，全身而退。'}${gains && gains.length ? `<br>此行机缘：${gains.join('、')}` : ''}${uniqueHtml}`,
         () => this.tower(), gold, Armory.dropLine(drops));
     },
 
@@ -3409,7 +3537,7 @@
       shuffle(pool);
       const m2 = clone(pool[0]), d2 = clone(pool[1]);
       const mates = Bond.teamGenerals();
-      if (!mates.length) { startDuoBattle(hero, clone(pool[2]), m2, d2, true); return; }
+      if (!mates.length) { if (!spendAP()) return; startDuoBattle(hero, clone(pool[2]), m2, d2, true); return; }
       openOverlay(`<div class="result-card">
         <h1>选择副将</h1>
         <div class="wdesc">从团队中挑一名副将与你并肩（其六维15%并入你，并可驰援一次）：</div>
@@ -3419,6 +3547,7 @@
         </div>
         <div class="btns"><button class="btn-ghost" id="duo-cancel">取消</button></div></div>`);
       $$(".buff-btn[data-id]").forEach(b => b.onclick = () => {
+        if (!spendAP()) return;
         closeOverlay();
         const dep = b.dataset.id === "rand" ? clone(pool[2]) : clone(DB.get(+b.dataset.id));
         startDuoBattle(hero, dep, m2, d2, true);
@@ -3433,13 +3562,22 @@
       Bond.addMany(comrades, 2);   // 并肩存活的同袍
       const drops = Armory.roll(Math.min(0.5, kills * 0.02 + (sideWon ? 0.25 : 0.05)), Math.min(0.85, kills * 0.03 + 0.1), Math.min(6, Math.ceil(kills / 4)) || 1);
       const exp = kills * 22 + (sideWon ? 120 : 0);
+      const m = Campaign.mapState();
+      let fameHtml = "";
+      if (sideWon) {
+        const facilityBonus = (m && m.activeFacility === "war") ? 15 : 0;
+        Campaign.addFame(15 + facilityBonus);
+        fameHtml = `<br>名声 <b style="color:var(--cn-red)">+${15 + facilityBonus}</b>`;
+      }
+      if (m && m.activeFacility === "war") { m.activeFacility = null; Campaign.save(); }
       this.grantExp(exp, "阵营大战 " + (sideWon ? "· 获胜" : "· 落败"),
-        `你麾下斩敌 <b style="color:var(--cn-red)">${kills}</b> 员，本方阵营${sideWon ? '获胜！' : '惜败。'}`,
+        `你麾下斩敌 <b style="color:var(--cn-red)">${kills}</b> 员，本方阵营${sideWon ? '获胜！' : '惜败。'}${fameHtml}`,
         () => this.war(), gold, Armory.dropLine(drops));
     },
 
     /* ---- 组队大战：同阵营队友必上阵，余位随机补满 ---- */
     teamBattle() {
+      if (!spendAP()) return;
       const hero = this.heroGeneral();
       const mates = Bond.teamGenerals().filter(g => g.side === hero.side).slice(0, 9).map(clone);
       const ids = new Set(mates.map(g => g.id));
@@ -3454,13 +3592,22 @@
       Bond.addMany(mates, won ? 6 : 3);   // 同队并肩 +3，获胜再 +3
       const drops = Armory.roll(Math.min(0.55, kills * 0.03 + (won ? 0.25 : 0.05)), Math.min(0.85, kills * 0.04 + 0.1), Math.min(6, Math.ceil(kills / 3)) || 1);
       const exp = kills * 20 + (won ? 150 : 0);
+      const m = Campaign.mapState();
+      let fameHtml = "";
+      if (won) {
+        const facilityBonus = (m && m.activeFacility === "teamBattle") ? 15 : 0;
+        Campaign.addFame(15 + facilityBonus);
+        fameHtml = `<br>名声 <b style="color:var(--cn-red)">+${15 + facilityBonus}</b>`;
+      }
+      if (m && m.activeFacility === "teamBattle") { m.activeFacility = null; Campaign.save(); }
       this.grantExp(exp, "组队大战 " + (won ? "· 获胜" : "· 落败"),
-        `本场麾下击杀敌将 <b style="color:var(--cn-red)">${kills}</b> 员，全军${won ? '大捷！' : '溃败。'}`,
+        `本场麾下击杀敌将 <b style="color:var(--cn-red)">${kills}</b> 员，全军${won ? '大捷！' : '溃败。'}${fameHtml}`,
         () => this.teamBattle(), gold, Armory.dropLine(drops));
     },
 
     /* ---- 国战 · 攻城略地：主角与同阵营队友编入己方军团 ---- */
     conquest() {
+      if (!spendAP()) return;
       const hero = this.heroGeneral();
       const mates = Bond.teamGenerals().filter(g => g.side === hero.side);
       showScreen("conquest");
@@ -3476,8 +3623,16 @@
       const drops = Armory.roll(Math.min(0.7, captures * 0.08 + (won ? 0.2 : 0)), Math.min(0.95, captures * 0.1 + 0.1), Math.min(8, captures) || 1);
       if (won) drops.push({ kind: "item", item: Armory.guaranteedItem("legend") });   // 一统天下必得传说宝物
       const exp = captures * 40 + kills * 15 + (won ? 250 : 0);
+      const m = Campaign.mapState();
+      let fameHtml = "";
+      if (won) {
+        const facilityBonus = (m && m.activeFacility === "conquest") ? 25 : 0;
+        Campaign.addFame(50 + facilityBonus);
+        fameHtml = `<br>名声 <b style="color:var(--cn-red)">+${50 + facilityBonus}</b>`;
+      }
+      if (m && m.activeFacility === "conquest") { m.activeFacility = null; Campaign.save(); }
       this.grantExp(exp, "国战 " + (won ? "· 一统天下" : "· 大势已去"),
-        `攻克 <b style="color:var(--cn-red)">${captures}</b> 城，斩敌将 <b style="color:var(--cn-red)">${kills}</b> 员，${won ? '天下归一！' : '霸业未成。'}`,
+        `攻克 <b style="color:var(--cn-red)">${captures}</b> 城，斩敌将 <b style="color:var(--cn-red)">${kills}</b> 员，${won ? '天下归一！' : '霸业未成。'}${fameHtml}`,
         () => this.conquest(), gold, Armory.dropLine(drops));
     },
 
@@ -3501,12 +3656,14 @@
             <button class="btn-ghost" id="rpg-r-hub">返回养成</button>
           </div></div>`);
         $("#rpg-r-again").onclick = () => { closeOverlay(); againFn(); };
-        $("#rpg-r-hub").onclick = () => { closeOverlay(); showScreen("rpg"); this.renderHub(); };
+        $("#rpg-r-hub").onclick = () => { closeOverlay(); goHome(); };
       }, 600);
     },
     onCupResult(placement, cupWinExp) {
       const c = this.char;
-      if (!placement) { showScreen("rpg"); this.renderHub(); return; }
+      const mFac = Campaign.mapState();
+      if (mFac && mFac.activeFacility === "cup") { mFac.activeFacility = null; Campaign.save(); }
+      if (!placement) { goHome(); return; }
       // 名次奖金 + 同组交手友谊
       let cupGold = 0;
       if (placement.label === "夺冠") cupGold = Bond.addGold(100);
@@ -3524,6 +3681,17 @@
       let lvUp = 0;
       while (c.exp >= this.expNeed(c.level)) { c.exp -= this.expNeed(c.level); c.level++; c.points += 1; lvUp++; }
       this.save();
+      // 名声：按名次浮动；首次夺冠额外永久 +1 行动力上限（武道会终极奖励），并计入"天下无双"终局条件
+      const isChamp = placement.label === "夺冠";
+      const fameGain = isChamp ? 60 : /半决赛|决赛|四强/.test(placement.label) ? 30 : 12;
+      Campaign.addFame(fameGain);
+      let champHtml = "";
+      const m = Campaign.mapState();
+      if (isChamp && m && !m.cupWon) {
+        m.cupWon = true; Campaign.recalcApMax(); Campaign.save();
+        champHtml = `<br>🏆 天下第一武道会首冠！行动力上限永久 <b style="color:var(--cn-red)">+1</b>`;
+        champHtml += checkEnding();
+      }
       const bg = c.side === 'cn' ? 'linear-gradient(135deg,var(--cn-red),#7a1420)' : 'linear-gradient(135deg,var(--jp-indigo),#141e3c)';
       setTimeout(() => {
         openOverlay(`<div class="result-card">
@@ -3533,14 +3701,724 @@
           <div class="wdesc">本届世界杯成绩：<b>${placement.label}</b><br>
             单挑获胜经验 <b style="color:var(--cn-red)">+${winGain}</b> · 晋级奖励 <b style="color:var(--cn-red)">+${bonus}</b><br>
             合计获得经验 <b style="color:var(--cn-red)">+${gain}</b>${Bond.goldLine(cupGold)}${Armory.dropLine(drops)}
-            ${lvUp ? `<br>🎉 升级 ${lvUp} 级！获得加点 <b style="color:var(--cn-red)">+${lvUp * 1}</b>` : ''}</div>
+            ${lvUp ? `<br>🎉 升级 ${lvUp} 级！获得加点 <b style="color:var(--cn-red)">+${lvUp * 1}</b>` : ''}
+            <br>名声 <b style="color:var(--cn-red)">+${fameGain}</b>${champHtml}</div>
           <div class="btns">
             <button class="btn-primary" id="rpg-cup-again">再战世界杯</button>
             <button class="btn-ghost" id="rpg-cup-hub">返回养成</button>
           </div></div>`);
         $("#rpg-cup-again").onclick = () => { closeOverlay(); this.joinCup(Tournament.size); };
-        $("#rpg-cup-hub").onclick = () => { closeOverlay(); showScreen("rpg"); this.renderHub(); };
+        $("#rpg-cup-hub").onclick = () => { closeOverlay(); goHome(); };
       }, 1200);
+    },
+  };
+
+  /* ============================================================
+   *  天下地图：20 城（中原十城 + 战国十城）+ 对马岛海路中转
+   *  坐标为风格化的相对位置（%），道路为邻接关系，非精确测绘
+   * ============================================================ */
+  const CITIES = [
+    { id: "chengdu", n: "成都", side: "cn", x: 10, y: 55 },
+    { id: "hanzhong", n: "汉中", side: "cn", x: 16, y: 45 },
+    { id: "chang_an", n: "长安", side: "cn", x: 20, y: 35 },
+    { id: "luoyang", n: "洛阳", side: "cn", x: 26, y: 38 },
+    { id: "xuchang", n: "许昌", side: "cn", x: 30, y: 42 },
+    { id: "ye", n: "邺城", side: "cn", x: 28, y: 28 },
+    { id: "xuzhou", n: "徐州", side: "cn", x: 38, y: 40 },
+    { id: "jingzhou", n: "荆州", side: "cn", x: 24, y: 58 },
+    { id: "chaisang", n: "柴桑", side: "cn", x: 32, y: 60 },
+    { id: "jianye", n: "建业", side: "cn", x: 40, y: 55 },
+    { id: "tsushima", n: "对马岛", side: "sea", x: 50, y: 66 },
+    { id: "satsuma", n: "萨摩", side: "jp", x: 60, y: 82 },
+    { id: "aki", n: "安艺", side: "jp", x: 66, y: 66 },
+    { id: "kyoto", n: "京都", side: "jp", x: 72, y: 58 },
+    { id: "osaka", n: "大坂", side: "jp", x: 74, y: 62 },
+    { id: "owari", n: "尾张", side: "jp", x: 78, y: 52 },
+    { id: "kai", n: "甲斐", side: "jp", x: 80, y: 44 },
+    { id: "sunpu", n: "骏府", side: "jp", x: 82, y: 50 },
+    { id: "odawara", n: "小田原", side: "jp", x: 86, y: 42 },
+    { id: "echigo", n: "越后", side: "jp", x: 76, y: 32 },
+    { id: "oushu", n: "奥州", side: "jp", x: 82, y: 20 },
+  ];
+  const ROADS = [
+    ["chengdu", "hanzhong"], ["hanzhong", "chang_an"], ["chang_an", "luoyang"], ["luoyang", "xuchang"],
+    ["luoyang", "ye"], ["xuchang", "xuzhou"], ["xuchang", "jingzhou"], ["jingzhou", "chaisang"],
+    ["chaisang", "jianye"], ["jianye", "xuzhou"], ["chengdu", "jingzhou"],
+    ["satsuma", "aki"], ["aki", "kyoto"], ["kyoto", "osaka"], ["kyoto", "owari"], ["osaka", "owari"],
+    ["owari", "kai"], ["owari", "sunpu"], ["kai", "sunpu"], ["sunpu", "odawara"], ["kai", "echigo"],
+    ["echigo", "oushu"], ["odawara", "oushu"],
+    ["jianye", "tsushima"], ["xuzhou", "tsushima"], ["tsushima", "satsuma"],
+  ];
+  function cityDef(id) { return CITIES.find(c => c.id === id); }
+  function cityName(id) { const c = cityDef(id); return c ? c.n : "？"; }
+  function adjCities(id) {
+    return ROADS.filter(r => r[0] === id || r[1] === id).map(r => r[0] === id ? r[1] : r[0]);
+  }
+  // 特色设施：每城一个，穿插既有玩法，扮演角色亲自上阵；除 duel 外均直接调用对应 RPG.xxx() 入口（已含行动力扣减）
+  const CITY_FACILITY = {
+    luoyang: { n: "天下擂台", icon: "🏯", mode: "duel" },
+    hanzhong: { n: "论剑台", icon: "🗡️", mode: "duel" },
+    jianye: { n: "建业演武场", icon: "⚔️", mode: "duel" },
+    chengdu: { n: "车轮战武场", icon: "🔥", mode: "gauntlet" },
+    chang_an: { n: "长安校场", icon: "🔥", mode: "gauntlet" },
+    satsuma: { n: "示现流道场", icon: "🔥", mode: "gauntlet" },
+    kyoto: { n: "百人斩道场", icon: "🗼", mode: "tower" },
+    xuchang: { n: "许都点将台", icon: "🗼", mode: "tower" },
+    aki: { n: "毛利水军演武", icon: "🗼", mode: "tower" },
+    osaka: { n: "双人比武场", icon: "🤝", mode: "duo" },
+    ye: { n: "邺城双雄会", icon: "🤝", mode: "duo" },
+    owari: { n: "桶狭间演武", icon: "🤝", mode: "duo" },
+    odawara: { n: "军团攻城演", icon: "🛡", mode: "teamBattle" },
+    xuzhou: { n: "联军演武营", icon: "🛡", mode: "teamBattle" },
+    kai: { n: "风林火山阵", icon: "🛡", mode: "teamBattle" },
+    oushu: { n: "远征校场", icon: "🗺", mode: "conquest" },
+    jingzhou: { n: "荆襄争锋", icon: "🗺", mode: "conquest" },
+    sunpu: { n: "东海道远征", icon: "🗺", mode: "conquest" },
+    chaisang: { n: "江东水军演武", icon: "🏆", mode: "cup" },
+    echigo: { n: "越后军神殿", icon: "🏆", mode: "cup" },
+  };
+  // 集市折扣：对马岛黑市常驻八折；行脚商队奇遇触发后临时持续至 discountUntilDay
+  function shopDiscountActive() {
+    const m = typeof Campaign !== "undefined" && Campaign.mapState();
+    if (!m) return false;
+    return m.curCity === "tsushima" || (m.discountUntilDay && m.day <= m.discountUntilDay);
+  }
+  // 史实分布：按势力/家臣归属给主要武将预设城池归属，其余（多为次要武将）按姓名哈希兜底分配，
+  // 保证仍落在同阵营的城池范围内；仅为风味设计，非严谨考据。
+  const CITY_HINTS_RAW = {
+    chengdu: ["刘备", "诸葛亮", "赵云", "庞统", "法正", "关平", "关兴", "张苞", "简雍", "孙乾", "糜竺", "糜芳", "黄权", "李严", "蒋琬", "费祎", "董允", "邓芝", "刘璋", "张任", "严颜", "邢道荣", "孟获", "祝融", "兀突骨", "沙摩柯", "诸葛瞻", "宗预", "杨仪", "罗宪"],
+    hanzhong: ["张飞", "马超", "黄忠", "魏延", "姜维", "王平", "廖化", "马岱", "张翼", "张嶷", "马忠", "吴懿", "孟达", "郝昭", "张鲁", "文鸯", "陈到", "傅佥", "霍峻", "霍弋"],
+    chang_an: ["夏侯渊", "夏侯霸", "马腾", "韩遂", "阎行", "张郃", "郭淮", "陈泰", "王双", "徐荣", "董卓", "李傕", "郭汜", "皇甫嵩", "朱儁", "卢植", "貂蝉", "李儒", "张济"],
+    luoyang: ["曹丕", "司马懿", "司马师", "司马昭", "钟繇", "陈群", "华歆", "王朗", "董昭", "蒋济", "曹爽", "王基", "王昶", "王凌", "邓艾", "钟会", "毌丘俭", "诸葛诞", "王濬", "羊祜", "杜预", "何进", "王允"],
+    xuchang: ["曹操", "郭嘉", "荀彧", "荀攸", "程昱", "刘晔", "满宠", "典韦", "许褚", "于禁", "乐进", "李典", "曹仁", "曹洪", "曹纯", "徐晃", "张绣"],
+    ye: ["张辽", "袁绍", "审配", "田丰", "沮授", "许攸", "郭图", "高览", "麴义", "淳于琼", "颜良", "文丑", "公孙瓒", "张角"],
+    xuzhou: ["吕布", "高顺", "魏续", "侯成", "陈登", "陶谦", "孔融", "袁术", "臧霸", "李通", "文聘", "朱灵", "夏侯惇", "曹彰"],
+    jingzhou: ["关羽", "刘表", "蔡瑁", "黄祖", "鲍信"],
+    chaisang: ["孙策", "孙坚", "周瑜", "鲁肃", "程普", "韩当", "黄盖", "太史慈", "凌统", "凌操", "董袭", "蒋钦", "徐盛", "丁奉", "甘宁", "周泰", "贺齐"],
+    jianye: ["孙权", "陆逊", "吕蒙", "张昭", "张纮", "顾雍", "诸葛恪", "孙桓", "孙尚香", "全琮", "朱然", "朱桓", "步骘", "吕岱", "潘濬", "陆凯", "虞翻", "阚泽"],
+    owari: ["织田信长", "织田信忠", "柴田胜家", "丹羽长秀", "森兰丸", "森长可", "森可成", "佐佐成政", "池田恒兴", "佐久间信盛", "佐久间盛政", "泷川一益", "前田利家", "可儿才藏"],
+    kyoto: ["明智光秀", "明智秀满", "斋藤利三", "细川藤孝", "细川忠兴", "筒井顺庆", "足利义辉", "足利义昭", "北畠具教", "六角义贤", "三好长庆", "十河一存", "三好实休", "松永久秀", "荒木村重", "安国寺惠琼", "宫本武藏", "佐佐木小次郎", "冢原卜传", "上泉信纲", "柳生石舟斋", "宝藏院胤荣", "朝仓义景", "朝仓宗滴", "斋藤义龙", "斋藤龙兴", "斋藤道三"],
+    osaka: ["丰臣秀吉", "丰臣秀长", "石田三成", "加藤清正", "福岛正则", "黑田官兵卫", "竹中半兵卫", "竹中重门", "片桐且元", "胁坂安治", "蒲生氏乡", "藤堂高虎", "大谷吉继", "小早川秀秋", "增田长盛", "小西行长", "浅野长政", "石川数正", "本多正信", "山内一丰", "仙石秀久", "堀秀政", "蜂须贺正胜", "前田庆次", "雑賀孫市", "鈴木重秀", "下间赖廉"],
+    kai: ["武田信玄", "武田胜赖", "山本勘助", "山县昌景", "马场信春", "高坂昌信", "内藤昌丰", "真田幸村", "真田昌幸", "真田信之", "真田信纲", "真田幸隆", "真田昌辉", "秋山虎繁", "原虎胤", "板垣信方", "甘利虎泰", "饭富虎昌", "小山田信茂", "穴山梅雪"],
+    sunpu: ["德川家康", "本多忠胜", "榊原康政", "酒井忠次", "井伊直政", "井伊直虎", "鸟居元忠", "大久保忠世", "服部半藏", "结城秀康", "今川义元", "今川氏真", "太原雪斋", "水野胜成", "松平清康", "堀尾吉晴"],
+    odawara: ["北条氏康", "北条氏政", "北条氏直", "北条早云", "北条纲成", "北条氏照", "北条氏邦", "太田道灌", "大道寺政繁", "风魔小太郎"],
+    echigo: ["上杉谦信", "上杉景胜", "直江兼续", "甘粕景持", "斎藤朝信", "柿崎景家", "宇佐美定满", "本庄繁长", "村上义清", "长尾政景"],
+    oushu: ["伊达政宗", "伊达成实", "片仓小十郎", "鬼庭左月斋", "最上义光", "芦名盛氏", "佐竹义重", "佐竹义宣", "南部晴政", "津轻为信", "安东爱季", "户泽盛安", "里见义尧", "太田资正", "成田长亲", "奥平信昌", "鸟居强右卫门"],
+    aki: ["毛利元就", "毛利辉元", "毛利胜永", "吉川元春", "吉川广家", "小早川隆景", "宇喜多直家", "宇喜多秀家", "陶晴贤", "大内义隆", "尼子经久", "山中鹿介", "清水宗治", "安宅冬康"],
+    satsuma: ["岛津义弘", "岛津家久", "岛津义久", "岛津岁久", "岛津丰久", "立花宗茂", "立花道雪", "立花誾千代", "高桥绍运", "大友宗麟", "龙造寺隆信", "锅岛直茂", "秋月种实", "有马晴信", "大村纯忠", "相良义阳", "甲斐宗运", "岛左近"],
+  };
+  const CITY_HINTS = {};
+  Object.entries(CITY_HINTS_RAW).forEach(([cid, names]) => names.forEach(n => { CITY_HINTS[n] = cid; }));
+  function hashStr(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
+  // distribution: "historical" 优先用 CITY_HINTS，未命中按姓名哈希稳定兜底；"random" 每局按姓名+本局随机种子重新洗牌
+  function buildCityAssignment(distribution, seed) {
+    const cnCities = CITIES.filter(c => c.side === "cn").map(c => c.id);
+    const jpCities = CITIES.filter(c => c.side === "jp").map(c => c.id);
+    const assign = {};
+    DB.list.forEach(g => {
+      const pool = g.side === "cn" ? cnCities : jpCities;
+      let cid;
+      if (distribution === "random") {
+        cid = pool[hashStr(g.name + "|" + seed) % pool.length];
+      } else {
+        cid = CITY_HINTS[g.name];
+        if (!cid || !pool.includes(cid)) cid = pool[hashStr(g.name) % pool.length];
+      }
+      assign[g.id] = cid;
+    });
+    return assign;
+  }
+
+  /* ============================================================
+   *  悬赏榜：每城 2~3 条任务，「讨伐」按同城已现身武将优先出题，
+   *  「车轮令」考验连胜；约 15% 概率生成「高级悬赏」（奖励更丰厚，且有机会带出唯一奇珍）
+   * ============================================================ */
+  function genBounty(cityId, assign, appeared) {
+    const legendary = Math.random() < 0.15;
+    const kind = Math.random() < 0.55 ? "duel" : "gauntlet";
+    const uid = cityId + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    if (kind === "duel") {
+      const localIds = Object.keys(assign).filter(gid => assign[gid] === cityId).map(Number);
+      const appearedLocal = localIds.filter(id => appeared.includes(id));
+      const pool = (appearedLocal.length && Math.random() < 0.6) ? appearedLocal : DB.list.map(g => g.id);
+      const targetId = pool[randInt(0, pool.length - 1)];
+      const target = DB.get(targetId) || DB.list[0];
+      return {
+        uid, kind: "duel", targetId: target.id, legendary,
+        desc: `讨伐令：击败【${target.name}】`,
+        rewardGold: 60 + Math.round(ratingScore(target) * (legendary ? 0.6 : 0.3)),
+        rewardFame: legendary ? 35 : 12,
+      };
+    }
+    const need = legendary ? 10 : [3, 5, 8][randInt(0, 2)];
+    return {
+      uid, kind: "gauntlet", need, legendary,
+      desc: `车轮令：车轮大战连胜 ${need} 场`,
+      rewardGold: 50 + need * 12,
+      rewardFame: legendary ? 35 : 8 + need,
+    };
+  }
+  // 完成悬赏：发金+名声，高级悬赏首次达成额外掉「千里靴」唯一奇珍；完成的槽位立即刷新一条新悬赏
+  function completeBountyReward(ab) {
+    const goldGain = Bond.addGold(ab.rewardGold);
+    Campaign.addFame(ab.rewardFame);
+    const m = Campaign.mapState();
+    let uniqueHtml = "";
+    if (ab.legendary && m && !m.uniqueOwned.senriGeta) {
+      const item = Armory.makeUniqueTreasure("senriGeta");
+      Armory.data.items.push(item); Armory.save();
+      m.uniqueOwned.senriGeta = true; Campaign.recalcApMax();
+      uniqueHtml = `、获得唯一奇珍【${item.name}】！`;
+    }
+    if (m && m.bounties[ab.cityId]) {
+      const list = m.bounties[ab.cityId];
+      const idx = list.findIndex(b => b.uid === ab.uid);
+      if (idx >= 0) list[idx] = genBounty(ab.cityId, m.assign, m.appeared);
+    }
+    Campaign.save();
+    return `📋 悬赏完成：${ab.desc}！名声 <b style="color:var(--cn-red)">+${ab.rewardFame}</b>${uniqueHtml}${Bond.goldLine(goldGain)}`;
+  }
+
+  /* ============================================================
+   *  威名榜八大高手 与「天下无双」终局：全部击败 + 至少一次武道会夺冠
+   * ============================================================ */
+  const RIVAL_NAMES = ["吕布", "关羽", "张飞", "赵云", "织田信长", "武田信玄", "上杉谦信", "本多忠胜"];
+  function checkRivalDefeat(opp) {
+    const m = Campaign.mapState();
+    if (!m || !RIVAL_NAMES.includes(opp.name) || m.rivalsDefeated.includes(opp.id)) return "";
+    m.rivalsDefeated.push(opp.id);
+    Campaign.addFame(25);
+    Campaign.save();
+    let html = `<br>⚔️ 威名榜：击败【${opp.name}】！（${m.rivalsDefeated.length}/${RIVAL_NAMES.length}）名声 <b style="color:var(--cn-red)">+25</b>`;
+    html += checkEnding();
+    return html;
+  }
+  function checkEnding() {
+    const m = Campaign.mapState();
+    if (!m || m.ending) return "";
+    if (m.rivalsDefeated.length >= RIVAL_NAMES.length && m.cupWon) {
+      m.ending = true; Campaign.save();
+      setTimeout(() => showEndingOverlay(), 1500);
+      return `<br>🏆 威名与武道会双双圆满……`;
+    }
+    return "";
+  }
+  function showEndingOverlay() {
+    const c = RPG.char; if (!c) return;
+    const bg = c.side === 'cn' ? 'linear-gradient(135deg,#f4c430,#b8860b)' : 'linear-gradient(135deg,#f4c430,#8a6d3b)';
+    openOverlay(`<div class="result-card">
+      <h1>🏆 天下无双</h1>
+      <div class="winner-av" style="background:${bg}">${avatarChar(c.name)}</div>
+      <div class="wname">${c.name}</div>
+      <div class="wdesc">威名榜八大高手尽数折服，武道会亦已称雄——${c.name} 技压天下群雄，获封「<b style="color:var(--cn-gold)">天下无双</b>」！<br>你的传奇仍将继续，天下之大，尽可去得。</div>
+      <div class="btns"><button class="btn-primary" id="ending-continue">继续游历</button></div>
+    </div>`);
+    $("#ending-continue").onclick = () => { closeOverlay(); goHome(); };
+  }
+
+  /* ============================================================
+   *  存档架构：全局层（武将图鉴自定义数据、宝物模板编辑）永不重置；
+   *  战役层（角色/金币/友谊/队伍/宝物背包）随"新游戏"清空重来
+   * ============================================================ */
+  const CAMPAIGN_KEY = "wujiang_campaign_v1";
+  const Campaign = {
+    meta: null,
+    load() { try { this.meta = JSON.parse(localStorage.getItem(CAMPAIGN_KEY)); } catch { this.meta = null; } },
+    save() { localStorage.setItem(CAMPAIGN_KEY, JSON.stringify(this.meta)); },
+    // 开启一局新战役：清空角色/金币/友谊/队伍/宝物背包；武将图鉴与宝物模板编辑（全局层）不受影响
+    reset(mode) {
+      localStorage.removeItem(RPG_KEY); RPG.char = null;
+      Bond.data = { gold: 0, friends: {}, team: [], giftDay: {}, visitDay: {}, gifted: {} }; Bond.save();
+      Armory.data = { items: [], materials: { weapon: 0, mount: 0, book: 0, attire: 0, curio: 0 }, discovered: [], pity: { weapon: 0, mount: 0, book: 0, attire: 0, curio: 0 }, shop: [], shopDay: "", nextUid: 1 };
+      Armory.save(); Armory.ensureShop();
+      const distribution = (mode && mode.distribution) || "historical";
+      const assign = buildCityAssignment(distribution, Date.now());
+      // 按城池归组，开局每城先现身 2~3 名武将，其余「未登场」，随游历推进逐批揭示
+      const byCity = {};
+      Object.entries(assign).forEach(([gid, cid]) => { (byCity[cid] || (byCity[cid] = [])).push(+gid); });
+      const appeared = [];
+      Object.values(byCity).forEach(ids => { shuffle(ids); appeared.push(...ids.slice(0, randInt(2, 3))); });
+      // 每城预生成 2~3 条悬赏，作为游历动力之一
+      const bounties = {};
+      CITIES.filter(c => c.side !== "sea").forEach(c => { bounties[c.id] = Array.from({ length: randInt(2, 3) }, () => genBounty(c.id, assign, appeared)); });
+      this.meta = {
+        active: true, createdAt: Date.now(), mode: mode || {},
+        map: {
+          day: 1, ap: 1, apMax: 1, curCity: null, assign, appeared, nextAppearDay: 6,
+          fame: 0, bounties, activeBounty: null,
+          uniqueOwned: { chitu: false, senriGeta: false }, rivalsDefeated: [], cupWon: false, ending: false,
+        },
+      };
+      this.save();
+    },
+    mapState() { return this.meta && this.meta.map; },
+    // 名声四阶：无名之辈 → 小有名气 → 威震一方 → 名满天下
+    FAME_TIERS: [
+      { n: "无名之辈", min: 0 },
+      { n: "小有名气", min: 60 },
+      { n: "威震一方", min: 200 },
+      { n: "名满天下", min: 500 },
+    ],
+    fameTierIndex(fame) {
+      let idx = 0;
+      this.FAME_TIERS.forEach((t, i) => { if (fame >= t.min) idx = i; });
+      return idx;
+    },
+    fameTierName(fame) { return this.FAME_TIERS[this.fameTierIndex(fame)].n; },
+    // 增加名声；跨阶时提示，并重算行动力上限
+    addFame(n) {
+      const m = this.mapState(); if (!m || !n) return;
+      const before = this.fameTierIndex(m.fame || 0);
+      m.fame = (m.fame || 0) + n;
+      const after = this.fameTierIndex(m.fame);
+      this.recalcApMax();
+      this.save();
+      if (after > before) {
+        toast(`🎉 名声跨入「${this.FAME_TIERS[after].n}」！行动力上限提升，天下事更多了`);
+      }
+    },
+    // 行动力上限 = 1 + 名声阶梯 + 武道会首冠(+1) + 已装备的唯一奇珍(each +1)，封顶 6
+    recalcApMax() {
+      const m = this.mapState(); if (!m) return;
+      let cap = 1 + this.fameTierIndex(m.fame || 0);
+      if (m.cupWon) cap++;
+      cap += Armory.itemsOf("hero").filter(i => i.apBonus).length;
+      cap = Math.min(6, cap);
+      const delta = cap - m.apMax;
+      m.apMax = cap;
+      if (delta > 0) m.ap = Math.min(m.apMax, m.ap + delta);   // 上限提升时同步补给当天行动力，即时可用
+      m.ap = Math.min(m.ap, m.apMax);
+    },
+    // 宿营跨天后检查是否触及登场节点：每 5 天揭示一批 3~5 名新武将（不按名声分层，高手也可能随时现身），返回本次新登场名单供「天下快报」展示
+    checkAppearances() {
+      const m = this.mapState(); if (!m) return [];
+      const revealed = [];
+      while (m.day >= m.nextAppearDay) {
+        const hidden = DB.list.map(g => g.id).filter(id => !m.appeared.includes(id));
+        if (!hidden.length) { m.nextAppearDay += 5; continue; }
+        shuffle(hidden);
+        const batch = hidden.slice(0, randInt(3, 5));
+        m.appeared.push(...batch);
+        revealed.push(...batch);
+        m.nextAppearDay += 5;
+      }
+      if (revealed.length) this.save();
+      return revealed;
+    },
+  };
+  // 返回首页时刷新"继续游戏"按钮的可用状态与摘要（显示当前角色名/等级/战绩，无存档则置灰）
+  function syncHomeButtons() {
+    const btn = $("#btn-continue"), sub = $("#continue-sub");
+    if (!btn || !sub) return;
+    if (RPG.char) {
+      btn.disabled = false;
+      sub.textContent = `${RPG.char.name} · Lv.${RPG.char.level} · ${RPG.char.wins}胜${RPG.char.losses}负`;
+    } else {
+      btn.disabled = true;
+      sub.textContent = "暂无存档";
+    }
+  }
+
+  /* ============================================================
+   *  新游戏 · 开局向导：① 选角色(自创 / 史实武将+少年·巅峰) → ② 选天下格局 → ③ 确认开局
+   * ============================================================ */
+  const Onboard = {
+    step: 1,
+    state: {},
+    open() {
+      this.step = 1;
+      this.state = { charType: null, generalId: null, difficulty: null, custom: null, distribution: "historical" };
+      this._roll = null; this._name = ""; this._genSearch = "";
+      this.render();
+      showScreen("onboard");
+    },
+    render() {
+      const C = $("#onboard-content");
+      C.innerHTML = `<div class="ob-steps">
+        <span class="ob-step ${this.step === 1 ? 'active' : this.step > 1 ? 'done' : ''}">① 选角色</span>
+        <span class="ob-step ${this.step === 2 ? 'active' : this.step > 2 ? 'done' : ''}">② 选格局</span>
+        <span class="ob-step ${this.step === 3 ? 'active' : ''}">③ 确认开局</span>
+      </div>` + (this.step === 1 ? this.stepChar() : this.step === 2 ? this.stepWorld() : this.stepConfirm());
+      this.bind();
+    },
+
+    /* ---- 第 1 步：选角色 ---- */
+    stepChar() {
+      const s = this.state;
+      if (!s.charType) return this.chooseTypeHtml();
+      if (s.charType === "custom") return s.custom ? this.charSummaryHtml() : this.customFormHtml();
+      if (!s.generalId) return this.genPickHtml();
+      if (!s.difficulty) return this.diffChoiceHtml();
+      return this.charSummaryHtml();
+    },
+    chooseTypeHtml() {
+      return `<div class="section-hint">第 1 步 · 选择你的武将</div>
+        <div class="buff-list">
+          <button class="buff-btn ob-chartype" data-v="custom"><span class="bi">✦</span><span class="bt"><b>自创武将</b><small>白手起家，随机基线六维，历练自由加点成长</small></span></button>
+          <button class="buff-btn ob-chartype" data-v="historical"><span class="bi">📜</span><span class="bt"><b>扮演史实武将</b><small>选一位名将，体验其从崭露头角到巅峰的成长</small></span></button>
+        </div>`;
+    },
+    customFormHtml() {
+      if (!this._roll) this._roll = RPG.rollStats();
+      const r = this._roll;
+      return `<div class="section-hint">第 1 步 · 自创武将</div>
+        <div class="rpg-form">
+          <div class="rf-row"><label>姓名</label><input id="ob-name" maxlength="6" placeholder="输入名字" value="${this._name || ''}"></div>
+          <div class="rf-row"><label>阵营</label>
+            <select id="ob-side"><option value="cn" ${this._side !== 'jp' ? 'selected' : ''}>三国 风</option><option value="jp" ${this._side === 'jp' ? 'selected' : ''}>战国 风</option></select></div>
+          <div class="rpg-roll-box">${DIMS.map(([k, l]) => {
+            const v = r.base[k];
+            return `<div class="rr-dim"><span>${l}</span>
+              <span class="rr-track"><span class="rr-bar" style="width:${Math.min(100, v / 1.2)}%;background:${gradeColor(v)}"></span></span>
+              <b>${v}</b>${gradeChip(v)}</div>`;
+          }).join("")}
+            <div class="rr-sum">基线评分 <b>${ratingScore(r.base)}</b> ${ratingChip(r.base)} · 可分配加点 <b style="color:var(--cn-gold)">${r.points}</b></div>
+          </div>
+          <div class="rpg-create-btns">
+            <button class="cup-go" id="ob-reroll">🎲 重新随机</button>
+          </div>
+        </div>
+        <div class="btns">
+          <button class="btn-ghost" id="ob-type-back">‹ 换个方式</button>
+          <button class="btn-primary" id="ob-custom-next">下一步 ›</button>
+        </div>`;
+    },
+    genPickHtml() {
+      return `<div class="section-hint">第 1 步 · 选一位史实武将扮演</div>
+        <div class="search-box"><input id="ob-gen-search" placeholder="搜索…" value="${this._genSearch || ''}"></div>
+        <div class="grid" id="ob-gen-grid">${this.genGridHtml()}</div>
+        <div class="btns"><button class="btn-ghost" id="ob-type-back">‹ 换个方式</button></div>`;
+    },
+    genGridHtml() {
+      const kw = (this._genSearch || "").trim();
+      let arr = DB.list.slice().sort((a, b) => ratingScore(b) - ratingScore(a));
+      if (kw) arr = arr.filter(g => g.name.includes(kw));
+      return arr.slice(0, 80).map(g =>
+        `<div class="card ${g.side}" data-id="${g.id}"><div class="avatar">${avatarChar(g.name)}</div>
+          <div class="cname">${g.name}</div><div class="cwu">评分 ${ratingScore(g)} ${ratingChip(g)}</div></div>`).join("");
+    },
+    bindGenCards() {
+      $$("#ob-gen-grid .card").forEach(c => c.onclick = () => { this.state.generalId = +c.dataset.id; this.render(); });
+    },
+    diffChoiceHtml() {
+      const g = DB.get(this.state.generalId);
+      return `<div class="section-hint">第 1 步 · ${g.name} —— 选择成长模式</div>
+        <div class="buff-list">
+          <button class="buff-btn ob-diff" data-v="young"><span class="bi">🌱</span><span class="bt"><b>少年模式</b><small>初始六维为默认值 60%；其中最高两项定为「本命天赋」，加点成长 +50%，可突破默认上限</small></span></button>
+          <button class="buff-btn ob-diff" data-v="peak"><span class="bi">👑</span><span class="bt"><b>巅峰模式</b><small>默认原值开局，立即可用；但历练加点成长减半</small></span></button>
+        </div>
+        <div class="btns"><button class="btn-ghost" id="ob-gen-back">‹ 重新选将</button></div>`;
+    },
+    charSummaryHtml() {
+      const s = this.state;
+      let av, name, desc, bg;
+      if (s.charType === "custom") {
+        av = avatarChar(s.custom.name); name = s.custom.name;
+        bg = s.custom.side === 'cn' ? 'linear-gradient(135deg,var(--cn-red),#7a1420)' : 'linear-gradient(135deg,var(--jp-indigo),#141e3c)';
+        desc = `自创武将 · ${s.custom.side === 'cn' ? '三国风' : '战国风'} · 基线评分 ${ratingScore(s.custom.base)}`;
+      } else {
+        const g = DB.get(s.generalId);
+        av = avatarChar(g.name); name = g.name;
+        bg = g.side === 'cn' ? 'linear-gradient(135deg,var(--cn-red),#7a1420)' : 'linear-gradient(135deg,var(--jp-indigo),#141e3c)';
+        desc = s.difficulty === 'young' ? '少年模式 · 初始六维 60%，本命天赋成长 +50%' : '巅峰模式 · 默认原值开局，历练成长减半';
+      }
+      return `<div class="section-hint">第 1 步 · 已选定</div>
+        <div class="result-card" style="padding:20px 16px">
+          <div class="winner-av" style="background:${bg}">${av}</div>
+          <div class="wname">${name}</div>
+          <div class="wdesc">${desc}</div>
+        </div>
+        <div class="btns">
+          <button class="btn-ghost" id="ob-redo1">重新选择</button>
+          <button class="btn-primary" id="ob-next1">下一步 ›</button>
+        </div>`;
+    },
+
+    /* ---- 第 2 步：选天下格局 ---- */
+    stepWorld() {
+      const s = this.state;
+      return `<div class="section-hint">第 2 步 · 选择天下格局</div>
+        <div class="buff-list">
+          <button class="buff-btn ob-dist ${s.distribution === 'historical' ? 'active' : ''}" data-v="historical"><span class="bi">🏯</span><span class="bt"><b>史实分布</b><small>武将按真实势力落位（蜀将在成都、武田家在甲斐…）</small></span></button>
+          <button class="buff-btn ob-dist ${s.distribution === 'random' ? 'active' : ''}" data-v="random"><span class="bi">🎲</span><span class="bt"><b>群雄乱入</b><small>全部武将随机洗牌分配到各城，每局天下大不同</small></span></button>
+        </div>
+        <div class="section-hint">（天下地图将于下个阶段开放，本次选择会在地图上线后生效）</div>
+        <div class="btns">
+          <button class="btn-ghost" id="ob-back1">‹ 上一步</button>
+          <button class="btn-primary" id="ob-next2">下一步 ›</button>
+        </div>`;
+    },
+
+    /* ---- 第 3 步：确认开局 ---- */
+    stepConfirm() {
+      const s = this.state;
+      const hasExisting = !!RPG.char;
+      let name, desc;
+      if (s.charType === "custom") { name = s.custom.name; desc = `自创武将 · ${s.custom.side === 'cn' ? '三国风' : '战国风'}`; }
+      else { const g = DB.get(s.generalId); name = g.name; desc = s.difficulty === 'young' ? '少年模式' : '巅峰模式'; }
+      return `<div class="section-hint">第 3 步 · 确认开局</div>
+        <div class="result-card" style="padding:20px 16px">
+          <div class="wname">${name}</div>
+          <div class="wdesc">${desc} · 天下格局：${s.distribution === 'historical' ? '史实分布' : '群雄乱入'}</div>
+          ${hasExisting ? `<div class="wdesc" style="color:var(--cn-red)">⚠️ 当前已有存档（${RPG.char.name}），开始新游戏将覆盖角色、金币、友谊、队伍与宝物背包，且无法恢复！</div>` : ''}
+        </div>
+        <div class="btns">
+          <button class="btn-ghost" id="ob-back2">‹ 上一步</button>
+          <button class="btn-primary" id="ob-confirm">⚔ ${hasExisting ? '覆盖存档，开始新的武将人生' : '开始新的武将人生'}</button>
+        </div>`;
+    },
+
+    bind() {
+      // 第 1 步
+      $$(".ob-chartype").forEach(b => b.onclick = () => { this.state.charType = b.dataset.v; this.render(); });
+      const typeBack = $("#ob-type-back"); if (typeBack) typeBack.onclick = () => { this.state.charType = null; this.state.generalId = null; this.state.difficulty = null; this.state.custom = null; this.render(); };
+      const nameInput = $("#ob-name"); if (nameInput) nameInput.oninput = () => { this._name = nameInput.value; };
+      const sideSel = $("#ob-side"); if (sideSel) sideSel.onchange = () => { this._side = sideSel.value; };
+      const reroll = $("#ob-reroll"); if (reroll) reroll.onclick = () => { this._name = $("#ob-name").value; this._side = $("#ob-side").value; this._roll = RPG.rollStats(); this.render(); };
+      const customNext = $("#ob-custom-next"); if (customNext) customNext.onclick = () => {
+        const name = ($("#ob-name").value || "").trim() || "无名客";
+        const side = $("#ob-side").value;
+        this.state.custom = { name, side, base: this._roll.base, points: this._roll.points };
+        this._roll = null; this._name = ""; this.render();
+      };
+      const genSearch = $("#ob-gen-search");
+      if (genSearch) { genSearch.oninput = () => { this._genSearch = genSearch.value; $("#ob-gen-grid").innerHTML = this.genGridHtml(); this.bindGenCards(); }; this.bindGenCards(); }
+      const genBack = $("#ob-gen-back"); if (genBack) genBack.onclick = () => { this.state.generalId = null; this.render(); };
+      $$(".ob-diff").forEach(b => b.onclick = () => { this.state.difficulty = b.dataset.v; this.render(); });
+      const redo1 = $("#ob-redo1"); if (redo1) redo1.onclick = () => { this.state.charType = null; this.state.generalId = null; this.state.difficulty = null; this.state.custom = null; this.render(); };
+      const next1 = $("#ob-next1"); if (next1) next1.onclick = () => { this.step = 2; this.render(); };
+      // 第 2 步
+      $$(".ob-dist").forEach(b => b.onclick = () => { this.state.distribution = b.dataset.v; this.render(); });
+      const back1 = $("#ob-back1"); if (back1) back1.onclick = () => { this.step = 1; this.render(); };
+      const next2 = $("#ob-next2"); if (next2) next2.onclick = () => { this.step = 3; this.render(); };
+      // 第 3 步
+      const back2 = $("#ob-back2"); if (back2) back2.onclick = () => { this.step = 2; this.render(); };
+      const confirm = $("#ob-confirm"); if (confirm) confirm.onclick = () => this.finish();
+    },
+
+    finish() {
+      const s = this.state;
+      Campaign.reset({ charType: s.charType, difficulty: s.difficulty || null, distribution: s.distribution });
+      if (s.charType === "custom") RPG.create(s.custom.name, s.custom.side, s.custom.base, s.custom.points);
+      else RPG.createFromGeneral(DB.get(s.generalId), s.difficulty);
+      toast(`🎉 ${RPG.char.name}，你的武将人生开始了！`);
+      MapUI.open();
+    },
+  };
+
+  /* ============================================================
+   *  天下游历：地图主界面——移动/天数/行动力/宿营、当前城池行动、本地武将名录
+   * ============================================================ */
+  const MapUI = {
+    open() {
+      const m = Campaign.mapState();
+      if (!m || !RPG.char) { showScreen("home"); return; }
+      if (!m.curCity) { m.curCity = RPG.char.side === "jp" ? "kyoto" : "luoyang"; Campaign.save(); }
+      this.render();
+      showScreen("map");
+    },
+    render() {
+      const m = Campaign.mapState();
+      if (!m || !RPG.char) { showScreen("home"); return; }
+      const C = $("#map-content");
+      C.innerHTML = `<div class="map-wrap">
+        <div class="map-svg-box">${this.svgHtml(m)}</div>
+        <div class="map-city-panel">${this.cityPanelHtml(m)}</div>
+        <div class="map-status-bar">${this.statusHtml(m)}</div>
+      </div>`;
+      this.bind(m);
+    },
+    svgHtml(m) {
+      const lines = ROADS.map(([a, b]) => {
+        const A = cityDef(a), B = cityDef(b);
+        return `<line x1="${A.x}" y1="${A.y}" x2="${B.x}" y2="${B.y}" class="map-road" vector-effect="non-scaling-stroke"/>`;
+      }).join("");
+      const adj = adjCities(m.curCity);
+      const dots = CITIES.map(c => {
+        const cls = c.id === m.curCity ? "cur" : adj.includes(c.id) ? "adj" : "far";
+        return `<div class="map-city ${c.side} ${cls}" data-id="${c.id}" style="left:${c.x}%;top:${c.y}%">
+          <span class="mcity-dot"></span><span class="mcity-name">${c.n}</span>
+        </div>`;
+      }).join("");
+      return `<svg class="map-lines" viewBox="0 0 100 100" preserveAspectRatio="none">${lines}</svg>${dots}`;
+    },
+    cityPanelHtml(m) {
+      const c = cityDef(m.curCity);
+      const isSea = c.side === "sea";
+      const localGenerals = DB.list.filter(g => m.assign[g.id] === m.curCity);
+      const appearedHere = localGenerals.filter(g => m.appeared.includes(g.id));
+      const hiddenCount = localGenerals.length - appearedHere.length;
+      const fac = CITY_FACILITY[m.curCity];
+      const bounties = (!isSea && m.bounties[m.curCity]) || [];
+      return `<div class="mc-head">📍 ${c.n}${isSea ? '<small>（海路中转站 · 黑市折扣常驻）</small>' : ''}</div>
+        <div class="mc-actions">
+          <button class="mc-btn" id="map-train" ${m.ap <= 0 ? "disabled" : ""}>🏋️ 历练<small>-1⚡</small></button>
+          <button class="mc-btn" id="map-shop">🏪 集市${isSea ? '<small>黑市</small>' : ''}</button>
+          <button class="mc-btn" id="map-forge">⚒️ 铁匠铺</button>
+          ${fac ? `<button class="mc-btn fac" id="map-facility" ${m.ap <= 0 ? "disabled" : ""}>${fac.icon} ${fac.n}<small>-1⚡</small></button>` : ""}
+        </div>
+        ${bounties.length ? `<div class="mc-roster-head">📋 悬赏榜</div>
+        <div class="mc-bounty-list">${bounties.map(b => `<div class="mc-bounty ${b.legendary ? 'legendary' : ''}">
+          <div class="mcb-desc">${b.legendary ? '⭐ ' : ''}${b.desc}</div>
+          <div class="mcb-reward">赏 ${b.rewardGold}金 · 名声+${b.rewardFame}</div>
+          <button class="mcb-accept" data-uid="${b.uid}" ${m.ap <= 0 ? "disabled" : ""}>接取<small>-1⚡</small></button>
+        </div>`).join("")}</div>` : ""}
+        <div class="mc-roster-head">🚶 本地武将<small>${appearedHere.length} 位已现身${hiddenCount ? ` · 另有 ${hiddenCount} 位未现身` : ''}</small></div>
+        <div class="mc-roster">${appearedHere.map(g => `<button class="mc-gen" data-id="${g.id}">
+          <span class="mcg-av">${avatarChar(g.name)}</span><span class="mcg-name">${g.name}</span><span class="mcg-bond">${Bond.inTeam(g.id) ? "👥" : ""}${Bond.pts(g.id)}</span>
+        </button>`).join("") || '<div class="empty" style="padding:14px 4px">这座城暂无已现身的武将，游历天下终会遇见他们。</div>'}</div>`;
+    },
+    statusHtml(m) {
+      const c = RPG.char, hg = RPG.heroGeneral();
+      return `<div class="ms-row">
+          <span class="ms-av">${avatarChar(c.name)}</span>
+          <span class="ms-info"><b>${c.name}</b> Lv.${c.level} · 评分 ${ratingScore(hg)} · ⭐${Campaign.fameTierName(m.fame || 0)}</span>
+          <button class="ms-btn" id="map-char">🎭 详情</button>
+        </div>
+        <div class="ms-row2">
+          <span>📅 第 ${m.day} 天</span>
+          <span>⚡ ${m.ap}/${m.apMax}</span>
+          <span>💰 ${Bond.gold()}</span>
+          <button class="ms-camp" id="map-camp">🏕️ 宿营${m.ap <= 0 ? "（今日已尽）" : ""}</button>
+        </div>`;
+    },
+    bind(m) {
+      $$(".map-city").forEach(el => el.onclick = () => this.moveTo(el.dataset.id));
+      $$(".mc-gen").forEach(el => el.onclick = () => { const g = DB.get(+el.dataset.id); if (g) showDetail(g); });
+      $$(".mcb-accept").forEach(el => el.onclick = () => this.acceptBounty(m.curCity, el.dataset.uid));
+      const trainBtn = $("#map-train"); if (trainBtn) trainBtn.onclick = () => RPG.train();
+      const shopBtn = $("#map-shop"); if (shopBtn) shopBtn.onclick = () => ArmoryUI.open("shop");
+      const forgeBtn = $("#map-forge"); if (forgeBtn) forgeBtn.onclick = () => ArmoryUI.open("forge");
+      const facBtn = $("#map-facility"); if (facBtn) facBtn.onclick = () => this.openFacility();
+      const campBtn = $("#map-camp"); if (campBtn) campBtn.onclick = () => this.camp();
+      const charBtn = $("#map-char"); if (charBtn) charBtn.onclick = () => RPG.open();
+    },
+    acceptBounty(cityId, uid) {
+      const m = Campaign.mapState();
+      const list = m.bounties[cityId] || [];
+      const b = list.find(x => x.uid === uid);
+      if (!b) return;
+      if (m.ap <= 0) { toast("今日行动力已耗尽，请先宿营恢复"); return; }
+      m.ap--; m.activeBounty = { cityId, uid: b.uid, kind: b.kind, targetId: b.targetId, need: b.need, legendary: b.legendary, desc: b.desc, rewardGold: b.rewardGold, rewardFame: b.rewardFame };
+      Campaign.save();
+      if (b.kind === "duel") startClassicBattle(RPG.heroGeneral(), DB.get(b.targetId), false, true);
+      else Gauntlet.start(RPG.heroGeneral(), true);
+    },
+    // 特色设施：duel 类先挑选对手（本地已现身武将优先），其余直接调用对应 RPG 入口（已含行动力扣减）
+    openFacility() {
+      const m = Campaign.mapState();
+      const fac = CITY_FACILITY[m.curCity];
+      if (!fac) return;
+      if (fac.mode === "duel") {
+        const local = DB.list.filter(g => m.assign[g.id] === m.curCity && m.appeared.includes(g.id));
+        const pool = (local.length ? local : DB.list.filter(g => m.appeared.includes(g.id))).slice(0, 20);
+        if (!pool.length) { toast("暂无可挑战的已现身武将"); return; }
+        openOverlay(`<div class="result-card">
+          <h1>${fac.icon} ${fac.n}</h1>
+          <div class="wdesc">挑一位好手切磋，胜之可扬名声：</div>
+          <div class="buff-list">${pool.map(g => `<button class="buff-btn fac-target" data-id="${g.id}"><span class="bi">⚔️</span><span class="bt"><b>${g.name}</b><small>评分 ${ratingScore(g)}</small></span></button>`).join("")}</div>
+          <div class="btns"><button class="btn-ghost" id="fac-cancel">取消</button></div></div>`);
+        $$(".fac-target").forEach(b => b.onclick = () => {
+          if (m.ap <= 0) { toast("今日行动力已耗尽，请先宿营恢复"); return; }
+          m.ap--; m.activeFacility = "duel"; Campaign.save();
+          closeOverlay();
+          startClassicBattle(RPG.heroGeneral(), DB.get(+b.dataset.id), false, true);
+        });
+        $("#fac-cancel").onclick = closeOverlay;
+        return;
+      }
+      if (fac.mode === "cup" && Campaign.fameTierIndex(m.fame || 0) < 2) { toast("声望不足，需达到「威震一方」名声阶梯才能报名天下第一武道会"); return; }
+      if (m.ap <= 0) { toast("今日行动力已耗尽，请先宿营恢复"); return; }
+      m.activeFacility = fac.mode; Campaign.save();
+      const fn = { gauntlet: () => RPG.gauntlet(), tower: () => RPG.tower(), duo: () => RPG.duo(), teamBattle: () => RPG.teamBattle(), conquest: () => RPG.conquest(), cup: () => RPG.joinCup(32) }[fac.mode];
+      if (fn) fn();
+    },
+    moveTo(id) {
+      const m = Campaign.mapState();
+      if (id === m.curCity) return;
+      if (!adjCities(m.curCity).includes(id)) { toast(`距离太远，需先移动到相邻城池`); return; }
+      if (m.ap <= 0) { toast(`今日行动力已耗尽，请先宿营`); return; }
+      m.ap--;
+      const isSea = m.curCity === "tsushima" || id === "tsushima";
+      if (isSea && Math.random() < 0.2) { this.seaStorm(m); return; }
+      m.curCity = id; Campaign.save();
+      toast(`🚩 抵达${cityName(id)}`);
+      this.triggerEncounter(m);
+      this.render();
+    },
+    // 渡海风暴：延误(耗尽当日行动力，滞留原地) 或 漂流(随机漂到另一港口，仍消耗本次移动)
+    seaStorm(m) {
+      if (Math.random() < 0.5) {
+        m.ap = 0; Campaign.save();
+        toast(`🌊 风暴突至！海路延误，只得原地等候风浪平息（今日行动力已耗尽）`);
+      } else {
+        const others = CITIES.filter(c => c.id !== m.curCity && c.id !== "tsushima").map(c => c.id);
+        const drift = others[randInt(0, others.length - 1)];
+        m.curCity = drift; Campaign.save();
+        toast(`🌊 风暴突至！船只失控，漂流至意外之地——${cityName(drift)}！`);
+      }
+      this.render();
+    },
+    // 赶路奇遇：约 30% 概率触发，六选一（含小概率客栈奇遇）
+    triggerEncounter(m) {
+      if (Math.random() >= 0.3) return;
+      const roll = Math.random() * 100;
+      if (roll < 30) this.encounterBandit();
+      else if (roll < 50) this.encounterTreasure();
+      else if (roll < 65) this.encounterCaravan(m);
+      else if (roll < 80) this.encounterSage();
+      else if (roll < 95) this.encounterGeneral(m);
+      else this.encounterInn(m);
+    },
+    encounterBandit() {
+      const heroScore = ratingScore(RPG.heroGeneral());
+      const win = Math.random() < Math.max(0.3, Math.min(0.85, 0.5 + (heroScore - 500) / 2000));
+      if (win) {
+        const gold = Bond.addGold(randInt(20, 50));
+        toast(`⚔️ 山贼拦路，一番厮杀后击退！获金 +${gold}`);
+      } else {
+        toast(`⚔️ 山贼拦路，混战中未能取胜，只得脱身而走。`);
+      }
+    },
+    encounterTreasure() {
+      Armory.dropItem();
+      toast(`✨ 路遇奇珍，捡到一件神秘宝物（详情请到宝物库鉴宝）！`);
+    },
+    encounterCaravan(m) {
+      m.discountUntilDay = m.day + 1;
+      Campaign.save();
+      toast(`🛒 遇上行脚商队，集市今明两日折扣八折！`);
+    },
+    encounterSage() {
+      RPG.char.points = (RPG.char.points || 0) + 1;
+      RPG.save();
+      toast(`🧙 偶遇世外高人，指点一二，获得可分配加点 +1！`);
+    },
+    encounterGeneral(m) {
+      const candidates = DB.list.filter(g => m.appeared.includes(g.id));
+      if (!candidates.length) return;
+      const g = candidates[randInt(0, candidates.length - 1)];
+      const add = randInt(5, 15);
+      Bond.addF(g.id, add); Bond.save();
+      toast(`🤝 路遇【${g.name}】，攀谈甚欢，友谊 +${add}！`);
+    },
+    encounterInn(m) {
+      m.ap = Math.min(m.apMax + 2, m.ap + 1);
+      Campaign.save();
+      toast(`🍵 客栈奇遇，店家赠送一碗神仙醋，今日行动力临时 +1！`);
+    },
+    camp() {
+      const m = Campaign.mapState();
+      m.day++; m.ap = m.apMax; Campaign.save();
+      AudioSystem.sfx.victory();
+      const revealed = Campaign.checkAppearances();
+      if (revealed.length) {
+        const names = revealed.map(id => { const g = DB.get(id); return g ? g.name : "？"; }).join("、");
+        toast(`⚡ 天下快报：${names} 现身天下！（第 ${m.day} 天）`);
+      } else {
+        toast(`🏕️ 宿营一夜，行动力已恢复（第 ${m.day} 天）`);
+      }
+      this.render();
     },
   };
 
@@ -3574,8 +4452,8 @@
       });
       const arrow = k => this.sort.key === k ? (this.sort.dir > 0 ? " ▲" : " ▼") : "";
       const th = (k, label) => `<th data-sort="${k}" class="${this.sort.key === k ? 'sorted' : ''}">${label}${arrow(k)}</th>`;
-      const hasBond = !!RPG.char;   // 有自选武将时显示与其的友谊值
-      const head = `<tr>${th("name", "姓名")}${DIMS.map(([k, l]) => th(k, l[0])).join("")}${th("rating", "评分")}<th>评级</th>${hasBond ? th("bond", "友谊") : ""}<th>操作</th></tr>`;
+      // 武将图鉴为全局设定集，只展示默认六维，不显示友谊/装备等游戏进度数据
+      const head = `<tr>${th("name", "姓名")}${DIMS.map(([k, l]) => th(k, l[0])).join("")}${th("rating", "评分")}<th>评级</th><th>操作</th></tr>`;
       const body = arr.map(g => {
         const cells = DIMS.map(([k]) => `<td class="num gt-${rateLetter(g[k])}">${g[k]}</td>`).join("");
         return `<tr data-id="${g.id}">
@@ -3583,7 +4461,6 @@
           ${cells}
           <td class="dt-total">${ratingScore(g)}</td>
           <td class="dt-grade">${ratingChip(g)}</td>
-          ${hasBond ? `<td class="dt-bond">${Bond.inTeam(g.id) ? "👥" : ""}${Bond.pts(g.id)}${Armory.itemsOf(g.id).length ? `<span class="dt-gear">${Armory.itemsOf(g.id).map(i => i.icon).join("")}</span>` : ""}</td>` : ""}
           <td class="dt-act">
             <button class="db-view" data-act="view">详</button>
             <button class="db-edit" data-act="edit">改</button>
@@ -3600,11 +4477,11 @@
         $$("[data-act]", tr).forEach(btn => btn.onclick = e => {
           e.stopPropagation();
           const act = btn.dataset.act;
-          if (act === "view") showDetail(DB.get(id));
+          if (act === "view") showDetail(DB.get(id), { global: true });
           else if (act === "edit") this.edit(DB.get(id));
           else if (act === "del") { if (confirm(`确定删除「${DB.get(id).name}」？`)) { DB.remove(id); this.render(); toast("已删除"); } }
         });
-        $(".dt-name", tr).onclick = () => showDetail(DB.get(id));
+        $(".dt-name", tr).onclick = () => showDetail(DB.get(id), { global: true });
       });
     },
     edit(g) {
@@ -3673,9 +4550,10 @@
     if (owner === "hero") return (RPG.char && RPG.char.name) || "主角";
     const g = DB.get(owner); return g ? g.name : "？";
   }
-  // 装备/赠送发生变化后，若武将图鉴列表当前正显示在背后，立刻重绘使其反映最新数据
+  // 装备/赠送发生变化后，若武将图鉴列表或天下地图当前正显示在背后，立刻重绘使其反映最新数据
   function refreshDBIfActive() {
     if ($("#screen-db").classList.contains("active")) DBUI.render();
+    if ($("#screen-map").classList.contains("active")) MapUI.render();
   }
   // 属性/效果的中文标签与单位：六维走 DIMS，奇珍的特殊效果走 Armory.CURIO_EFFECTS
   function statLabel(key) {
@@ -3687,6 +4565,17 @@
   function statUnit(key) {
     const e = Armory.CURIO_EFFECTS[key];
     return e ? e.unit : "";
+  }
+  // 某模板在四档稀有度下的属性标签与加成区间（自建/覆盖过的模板优先使用其自定义加成值）
+  function armoryStatRange(type, t) {
+    if (type.k === "curio") {
+      const eff = t.effect || "ti";
+      const vals = t.bonusOverride || Armory.curioVals(eff);
+      return { statLbl: statLabel(eff), lo: vals[0], hi: vals[vals.length - 1], unit: statUnit(eff) };
+    }
+    const statK = type.k === "book" ? (t.stat || "zhi") : type.stat;
+    const vals = t.bonusOverride || Armory.RARITIES.map(r => r.bonus);
+    return { statLbl: statLabel(statK), lo: vals[0], hi: vals[vals.length - 1], unit: "" };
   }
   function itemCard(item) {
     if (item.identified === false) {
@@ -3761,7 +4650,7 @@
 
   const ArmoryUI = {
     tab: "stock",
-    open() { this.render(); showScreen("armory"); },
+    open(tab) { if (tab) this.tab = tab; this.render(); showScreen("armory"); },
     setTab(t) {
       this.tab = t;
       $$(".armory-tab").forEach(el => el.classList.toggle("active", el.dataset.atab === t));
@@ -3791,22 +4680,14 @@
         <div class="item-grid">${items.map(itemCard).join("")}</div>`;
     },
     renderDex() {
-      const total = Object.values(Armory.TEMPLATES).reduce((s, arr) => s + arr.length, 0);
-      let html = `<div class="section-hint">已发现 <b>${Armory.data.discovered.length}</b> / ${total} 件</div>`;
+      const total = Armory.TYPES.reduce((s, type) => s + Armory.pool(type.k).length, 0);
+      let html = `<div class="section-hint">已发现 <b>${Armory.data.discovered.length}</b> / ${total} 件 · 前往首页「宝物阁」可查看/编辑/自建全部宝物</div>`;
       Armory.TYPES.forEach(type => {
         html += `<div class="dex-group"><div class="dex-group-title">${type.icon} ${type.n}</div><div class="dex-grid">`;
-        html += Armory.TEMPLATES[type.k].map(t => {
+        html += Armory.pool(type.k).map(t => {
           const found = Armory.data.discovered.includes(t.n);
           if (!found) return `<div class="dex-card locked"><div class="ic-icon">？</div><div class="ic-name">未发现</div></div>`;
-          let statLbl, lo, hi;
-          if (type.k === "curio") {
-            const eff = t.effect || "ti"; const vals = Armory.curioVals(eff);
-            statLbl = statLabel(eff); lo = vals[0]; hi = vals[vals.length - 1];
-          } else {
-            statLbl = statLabel(type.k === "book" ? (t.stat || "zhi") : type.stat);
-            const vals = Armory.RARITIES.map(r => r.bonus); lo = vals[0]; hi = vals[vals.length - 1];
-          }
-          const unit = type.k === "curio" ? statUnit(t.effect || "ti") : "";
+          const { statLbl, lo, hi, unit } = armoryStatRange(type, t);
           return `<div class="dex-card found"><div class="ic-icon">${type.icon}</div><div class="ic-name">${t.n}</div><div class="ic-stat">${statLbl} +${lo}~+${hi}${unit}</div><div class="ic-intro">${t.intro}</div></div>`;
         }).join("");
         html += `</div></div>`;
@@ -3815,15 +4696,16 @@
     },
     renderShop() {
       const shop = Armory.data.shop;
-      let html = `<div class="section-hint">💰 金币 <b>${Bond.gold()}</b> ｜ 每日自动刷新一次，也可主动花金重刷</div>
+      const discount = shopDiscountActive();
+      let html = `<div class="section-hint">💰 金币 <b>${Bond.gold()}</b> ｜ 每日自动刷新一次，也可主动花金重刷${discount ? ' ｜ 🛒 折扣生效中，全场八折！' : ''}</div>
         <div class="shop-actions"><button class="cup-go" id="shop-refresh">🔄 花 ${Armory.REFRESH_COST} 金重刷</button></div>
         <div class="item-grid">`;
       html += (shop.length ? shop.map((s, idx) => {
-        const type = Armory.typeDef(s.type), rar = Armory.rarityDef(s.rarity), price = Armory.shopPrice(s.rarity);
+        const type = Armory.typeDef(s.type), rar = Armory.rarityDef(s.rarity), price = Armory.shopPrice(s.rarity, discount);
         return `<div class="item-card" style="--rar-color:${rar.color}">
           <div class="ic-top"><span class="ic-icon">${type.icon}</span><span class="ic-name">${s.tmpl.n}</span><span class="ic-rar" style="color:${rar.color}">${rar.n}</span></div>
           <div class="ic-intro">${s.tmpl.intro}</div>
-          <button class="ic-buy" data-idx="${idx}">💰 ${price} 金购买</button>
+          <button class="ic-buy" data-idx="${idx}">💰 ${price} 金购买${discount ? '<small> (八折)</small>' : ''}</button>
         </div>`;
       }).join("") : `<div class="empty">今日货架已空，明日再来</div>`);
       html += `</div>`;
@@ -3857,6 +4739,102 @@
   };
 
   /* ============================================================
+   *  宝物阁（首页全局入口）：全部宝物一览，不受游戏进度影响；可编辑属性/加成、可自建/删除
+   * ============================================================ */
+  const VaultUI = {
+    open() { this.render(); showScreen("vault"); },
+    render() {
+      const C = $("#vault-content");
+      let html = `<div class="section-hint">全部宝物一览，不受游戏进度影响；可编辑名称/简介/属性/加成值（限幅 ≤15），也可自建新宝物</div>`;
+      Armory.TYPES.forEach(type => {
+        html += `<div class="dex-group"><div class="dex-group-title">${type.icon} ${type.n}
+          <button class="vault-add" data-type="${type.k}">＋ 自建${type.n}</button></div><div class="dex-grid">`;
+        html += Armory.pool(type.k).map(t => {
+          const { statLbl, lo, hi, unit } = armoryStatRange(type, t);
+          const overridden = !t._custom && Armory.overrides[t._key];
+          return `<div class="dex-card found vault-card">
+            <div class="ic-icon">${type.icon}</div>
+            <div class="ic-name">${t.n}${t._custom ? ' <i class="vault-tag">自建</i>' : overridden ? ' <i class="vault-tag">已改</i>' : ''}</div>
+            <div class="ic-stat">${statLbl} +${lo}~+${hi}${unit}</div>
+            <div class="ic-intro">${t.intro}</div>
+            <div class="vault-actions">
+              <button class="vault-edit" data-key="${t._key}">✏️ 编辑</button>
+              ${overridden ? `<button class="vault-reset" data-key="${t._key}">↺ 重置</button>` : ""}
+              ${t._custom ? `<button class="vault-del" data-key="${t._key}">🗑 删除</button>` : ""}
+            </div>
+          </div>`;
+        }).join("");
+        html += `</div></div>`;
+      });
+      C.innerHTML = html;
+      this.bind();
+    },
+    bind() {
+      $$(".vault-add").forEach(b => b.onclick = () => this.editForm(b.dataset.type, null));
+      $$(".vault-edit").forEach(b => b.onclick = () => { const key = b.dataset.key; this.editForm(key.split("|")[0], key); });
+      $$(".vault-reset").forEach(b => b.onclick = () => { if (confirm("重置为默认设定？")) { Armory.clearOverride(b.dataset.key); this.render(); } });
+      $$(".vault-del").forEach(b => b.onclick = () => {
+        const t = Armory.templateByKey(b.dataset.key);
+        if (t && confirm(`确定删除自建宝物「${t.n}」？`)) { Armory.removeCustomTemplate(t.uid); this.render(); }
+      });
+    },
+    editForm(typeK, key) {
+      const type = Armory.typeDef(typeK);
+      const t = key ? Armory.templateByKey(key) : null;
+      const isNew = !t;
+      const rarities = Armory.RARITIES;
+      const curBonus = t ? (t.bonusOverride || (typeK === "curio" ? Armory.curioVals(t.effect || "ti") : rarities.map(r => r.bonus))) : rarities.map(r => r.bonus);
+      const statField = typeK === "book"
+        ? `<div><label>属性</label><select id="vf-stat">
+            <option value="zhi" ${(!t || t.stat !== 'zheng') ? 'selected' : ''}>智力</option>
+            <option value="zheng" ${(t && t.stat === 'zheng') ? 'selected' : ''}>政治</option></select></div>`
+        : typeK === "curio"
+        ? `<div><label>特殊效果</label><select id="vf-effect">
+            ${Object.entries(Armory.CURIO_EFFECTS).map(([k, e]) => `<option value="${k}" ${(t ? (t.effect || 'ti') === k : k === 'ti') ? 'selected' : ''}>${e.label}</option>`).join("")}
+            </select></div>`
+        : `<div><label>属性</label><input value="${statLabel(type.stat)}" disabled></div>`;
+      openOverlay(`<div class="result-card detail-card">
+        <h1 style="font-size:22px">${isNew ? '自建' + type.n : '编辑' + type.n}</h1>
+        <div class="form-grid" style="margin-top:14px">
+          <div class="full"><label>名称</label><input id="vf-name" value="${t ? t.n : ''}"></div>
+          <div class="full"><label>简介</label><textarea id="vf-intro">${t ? t.intro : ''}</textarea></div>
+          ${statField}
+        </div>
+        <div class="vault-bonus-grid">
+          ${rarities.map((r, i) => `<div class="vf-bonus"><label style="color:${r.color}">${r.n}</label><input id="vf-bonus-${i}" type="number" min="1" max="15" value="${curBonus[i]}"></div>`).join("")}
+        </div>
+        <div class="section-hint">加成值范围 1~15</div>
+        <div class="btns" style="margin-top:16px">
+          <button class="btn-primary" id="vf-save">保存</button>
+          <button class="btn-ghost" id="vf-cancel">取消</button>
+        </div></div>`);
+      $("#vf-cancel").onclick = closeOverlay;
+      $("#vf-save").onclick = () => {
+        const name = $("#vf-name").value.trim();
+        if (!name) { toast("请填写名称"); return; }
+        const intro = $("#vf-intro").value.trim();
+        const bonusOverride = Armory.clampBonusArr(rarities.map((_, i) => $(`#vf-bonus-${i}`).value));
+        const patch = { n: name, intro, bonusOverride };
+        if (typeK === "book") patch.stat = $("#vf-stat").value;
+        if (typeK === "curio") patch.effect = $("#vf-effect").value;
+        if (isNew) {
+          Armory.addCustomTemplate(Object.assign({ type: typeK }, patch));
+          toast(`已新建宝物「${name}」`);
+        } else if (t._custom) {
+          const idx = Armory.custom.findIndex(c => c.uid === t.uid);
+          if (idx >= 0) Armory.custom[idx] = Object.assign({}, Armory.custom[idx], patch);
+          Armory.saveGlobal();
+          toast(`已保存「${name}」`);
+        } else {
+          Armory.setOverride(t._key, patch);
+          toast(`已保存「${name}」`);
+        }
+        closeOverlay(); this.render();
+      };
+    },
+  };
+
+  /* ============================================================
    *  音频按钮绑定
    * ============================================================ */
   function syncAudioBtns() {
@@ -3876,8 +4854,11 @@
     DB.load();
     Bond.load();
     Armory.load();
+    Armory.loadGlobal();
+    Campaign.load();
     $("#app-ver").textContent = APP_VERSION;
     RPG.load();   // 提前载入角色：友谊/金币的累计以其存在为前提
+    syncHomeButtons();
 
     // 首屏需用户交互才能启动音频
     let audioStarted = false;
@@ -3895,6 +4876,10 @@
       else if (go === "rpg") RPG.open();
       else if (go === "armory") ArmoryUI.open();
       else if (go === "db") DBUI.open();
+      else if (go === "vault") VaultUI.open();
+      else if (go === "minigames") showScreen("minigames");
+      else if (go === "onboard") Onboard.open();
+      else if (go === "continue") { if (RPG.char) MapUI.open(); }
     });
     $$(".armory-tab").forEach(t => t.onclick = () => ArmoryUI.setTab(t.dataset.atab));
 
@@ -3932,6 +4917,13 @@
       if (BATTLE) BATTLE.busy = false;
       War.abort();   // 终止可能在进行中的阵营大战
       closeOverlay();
+      // 宝物库（仓库/商店/锻造）挂在角色扮演主页或天下地图之下，退出应回到发起它的那一层（而非直接回首页）
+      if ($("#screen-armory").classList.contains("active") && RPG.char) { goHome(); return; }
+      // 角色扮演主页现为天下地图之下的角色详情页，退出固定回到地图（若尚未开局才回首页）
+      if ($("#screen-rpg").classList.contains("active")) {
+        if (RPG.char && Campaign.meta && Campaign.meta.active) { MapUI.open(); return; }
+        showScreen("home"); return;
+      }
       showScreen("home");
     });
 
@@ -3942,7 +4934,7 @@
     $("#select-random").onclick = () => SelectUI.randomPick();
 
     // 阵营战
-    $("#war-start").onclick = () => War.start(War.pendingHero);
+    $("#war-start").onclick = () => { if (War.pendingHero && !spendAP()) return; War.start(War.pendingHero); };
     $("#war-mode-fast").onclick = () => War.setMode("fast");
     $("#war-mode-detail").onclick = () => War.setMode("detail");
     $$(".war-scale").forEach(b => b.onclick = () => War.setScale(b.dataset.scale));
