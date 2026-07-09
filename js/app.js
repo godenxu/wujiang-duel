@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607092055";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607092134";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -2875,26 +2875,26 @@
         { n: "惊帆", intro: "奔驰如乘风破浪之帆，勇冠三军。" },
       ],
       book: [
-        { n: "孙子兵法", intro: "兵者诡道，通读可悟攻守之要。" },
-        { n: "六韬", intro: "太公兵法，谋略与治国并重。" },
-        { n: "三略", intro: "黄石公授张良之书，权谋深藏。" },
-        { n: "太公兵法", intro: "兴周灭商的不传之秘。" },
-        { n: "五轮书", intro: "宫本武藏毕生剑理所著。" },
-        { n: "甲阳军鉴", intro: "武田家兵法秘传，攻守皆宜。" },
-        { n: "贞观政要", intro: "治世箴言，修身齐家之道。" },
-        { n: "武经总要", intro: "宋代官修兵书，集历代阵法大成。" },
-        { n: "吴子兵法", intro: "吴起著兵书，与孙子兵法并称。" },
-        { n: "尉缭子", intro: "论兵制与军法，治军严明之道。" },
-        { n: "司马法", intro: "上古兵制典籍，礼战并重。" },
-        { n: "三十六计", intro: "计计相生，攻守进退皆藏玄机。" },
-        { n: "战国策", intro: "纵横家谋略汇编，辩术权谋兼备。" },
-        { n: "资治通鉴", intro: "鉴古知今，治乱兴衰尽在其中。" },
-        { n: "孙臏兵法", intro: "孙膑传世兵法，围魏救赵之智。" },
-        { n: "论语", intro: "修身立世的儒家经典。" },
-        { n: "汉书", intro: "记两汉兴衰，鉴古通今。" },
-        { n: "忍秘伝", intro: "忍者秘传心得，暗藏机变之术。" },
-        { n: "兵法家伝书", intro: "柳生家传剑术兵法合一之书。" },
-        { n: "太阁记", intro: "记丰臣秀吉一代霸业的兵略札记。" },
+        { n: "孙子兵法", intro: "兵者诡道，通读可悟攻守之要。", stat: "zhi" },
+        { n: "六韬", intro: "太公兵法，谋略与治国并重。", stat: "zhi" },
+        { n: "三略", intro: "黄石公授张良之书，权谋深藏。", stat: "zhi" },
+        { n: "太公兵法", intro: "兴周灭商的不传之秘。", stat: "zhi" },
+        { n: "五轮书", intro: "宫本武藏毕生剑理所著。", stat: "zhi" },
+        { n: "甲阳军鉴", intro: "武田家兵法秘传，攻守皆宜。", stat: "zhi" },
+        { n: "贞观政要", intro: "治世箴言，修身齐家之道。", stat: "zheng" },
+        { n: "武经总要", intro: "宋代官修兵书，集历代阵法大成。", stat: "zhi" },
+        { n: "吴子兵法", intro: "吴起著兵书，与孙子兵法并称。", stat: "zhi" },
+        { n: "尉缭子", intro: "论兵制与军法，治军严明之道。", stat: "zhi" },
+        { n: "司马法", intro: "上古兵制典籍，礼战并重。", stat: "zhi" },
+        { n: "三十六计", intro: "计计相生，攻守进退皆藏玄机。", stat: "zhi" },
+        { n: "战国策", intro: "纵横家谋略汇编，辩术权谋兼备。", stat: "zheng" },
+        { n: "资治通鉴", intro: "鉴古知今，治乱兴衰尽在其中。", stat: "zheng" },
+        { n: "孙臏兵法", intro: "孙膑传世兵法，围魏救赵之智。", stat: "zhi" },
+        { n: "论语", intro: "修身立世的儒家经典。", stat: "zheng" },
+        { n: "汉书", intro: "记两汉兴衰，鉴古通今。", stat: "zheng" },
+        { n: "忍秘伝", intro: "忍者秘传心得，暗藏机变之术。", stat: "zhi" },
+        { n: "兵法家伝书", intro: "柳生家传剑术兵法合一之书。", stat: "zhi" },
+        { n: "太阁记", intro: "记丰臣秀吉一代霸业的兵略札记。", stat: "zhi" },
       ],
       attire: [
         { n: "蜀锦战袍", intro: "蜀地织锦所制战袍，华美不失威仪。" },
@@ -2965,8 +2965,11 @@
       if (typeK === "curio") {
         stat = t.effect || "ti";
         bonus = this.curioVals(stat)[rIdx];
+      } else if (typeK === "book") {
+        stat = t.stat || "zhi";   // 每部典籍按其性质固定加智力或政治，不再随机
+        bonus = rar.bonus;
       } else {
-        stat = type.stat || (Math.random() < 0.5 ? "zhi" : "zheng");
+        stat = type.stat;
         bonus = rar.bonus;
       }
       const item = { uid: this.data.nextUid++, type: typeK, tid: t.n, name: t.n, icon: type.icon, intro: t.intro, rarity: rarityK, stat, bonus, equippedBy: null, identified: true };
@@ -3800,7 +3803,7 @@
             const eff = t.effect || "ti"; const vals = Armory.curioVals(eff);
             statLbl = statLabel(eff); lo = vals[0]; hi = vals[vals.length - 1];
           } else {
-            statLbl = type.stat ? statLabel(type.stat) : "智力或政治";
+            statLbl = statLabel(type.k === "book" ? (t.stat || "zhi") : type.stat);
             const vals = Armory.RARITIES.map(r => r.bonus); lo = vals[0]; hi = vals[vals.length - 1];
           }
           const unit = type.k === "curio" ? statUnit(t.effect || "ti") : "";
