@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607100001";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607100610";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -170,25 +170,37 @@
         : teamFull ? "🔁 招募（满员，需替换队友）"
         : p >= 250 ? "🤝 招募入队（免费）"
         : `🤝 招募入队（${Bond.recruitCost(g)} 金）`;
-      const visitedToday = (Bond.data.visitDay || {})[g.id] === new Date().toISOString().slice(0, 10);
+      const visitedToday = (Bond.data.visitDay || {})[g.id] === Bond.dayKey();
+      const sparredToday = (Bond.data.sparDay || {})[g.id] === Bond.dayKey();
+      const mSpar = Campaign.mapState();
+      const sparNoAp = !!mSpar && mSpar.ap <= 0;
       eqHtml = `<div class="eq-slots-wrap"><div class="bt-head">🎒 携带宝物<small>（点击槽位选择宝物即为赠送；宝物只在首次赠给某位武将时计入友谊）</small></div><div class="eq-slots compact">${eqSlotsHtml(g.id, true)}</div></div>`;
       bondHtml = `<div class="bond-box">
         <div class="bond-line">友谊 <b>${p}</b> · ${lv}${next ? `（还差 ${next - p} 至下一级）` : "（已至最高）"} · 💰 ${Bond.gold()} 金</div>
         <div class="bond-track"><span class="bond-fill" style="width:${pct}%"></span></div>
         <div class="bond-gifts">
           <button class="gift-btn ${visitedToday ? "dim" : ""}" id="bond-visit">🚶 拜访（+1~2）${visitedToday ? "（今日已访）" : ""}</button>
+          <button class="gift-btn ${(sparredToday || sparNoAp) ? "dim" : ""}" id="bond-spar">⚔️ 切磋（-1⚡）${sparredToday ? "（今日已切磋）" : sparNoAp ? "（行动力不足）" : ""}</button>
           <button class="gift-btn recruit ${inTeam || p < 150 ? "dim" : ""}" id="bond-recruit">${recruitLbl}</button>
         </div>
       </div>`;
     }
     const html = `<div class="result-card detail-card">
-      <div class="winner-av" style="background:${g.side === 'cn' ? 'linear-gradient(135deg,var(--cn-red),#7a1420)' : 'linear-gradient(135deg,var(--jp-indigo),#141e3c)'}">${avatarChar(g.name)}</div>
-      <div class="wname">${g.name}</div>
-      <div style="font-size:13px;color:#8a6d3b;margin-top:2px">${g.title || ''}</div>
-      <div class="wdesc">${g.intro || ''}</div>
-      <div class="radar-wrap">${radarSVG(hg)}</div>
-      <div class="overall-line">武将评分 <b class="ov-sum">${ratingScore(hg)}</b> <span class="ov-num">(六维 ${sumStats(hg)} + 突出加成 ${Math.round(ratingScore(hg) - sumStats(hg))})</span> · 武将评级 ${ratingChip(hg)}</div>
-      <div class="stat-rows">${statRow('体力', hg.ti, hg.ti - raw.ti)}${statRow('武力', hg.wu, hg.wu - raw.wu)}${statRow('统帅', hg.tong, hg.tong - raw.tong)}${statRow('智力', hg.zhi, hg.zhi - raw.zhi)}${statRow('政治', hg.zheng, hg.zheng - raw.zheng)}${statRow('魅力', hg.mei, hg.mei - raw.mei)}</div>
+      <div class="dc-head">
+        <div class="winner-av dc-av" style="background:${g.side === 'cn' ? 'linear-gradient(135deg,var(--cn-red),#7a1420)' : 'linear-gradient(135deg,var(--jp-indigo),#141e3c)'}">${avatarChar(g.name)}</div>
+        <div class="dc-head-info">
+          <div class="wname">${g.name}</div>
+          <div class="dc-title">${g.title || ''}</div>
+          <div class="dc-intro">${g.intro || ''}</div>
+        </div>
+      </div>
+      <div class="dc-body">
+        <div class="radar-wrap dc-radar">${radarSVG(hg, 168)}</div>
+        <div class="dc-stats">
+          <div class="overall-line">评分 <b class="ov-sum">${ratingScore(hg)}</b> <span class="ov-num">(六维${sumStats(hg)}+突出${Math.round(ratingScore(hg) - sumStats(hg))})</span> ${ratingChip(hg)}</div>
+          <div class="stat-rows">${statRow('体力', hg.ti, hg.ti - raw.ti)}${statRow('武力', hg.wu, hg.wu - raw.wu)}${statRow('统帅', hg.tong, hg.tong - raw.tong)}${statRow('智力', hg.zhi, hg.zhi - raw.zhi)}${statRow('政治', hg.zheng, hg.zheng - raw.zheng)}${statRow('魅力', hg.mei, hg.mei - raw.mei)}</div>
+        </div>
+      </div>
       ${eqHtml}
       ${bondHtml}
       <div class="btns">
@@ -201,6 +213,17 @@
     if (opts.pickable) $("#detail-pick").onclick = () => { closeOverlay(); opts.onPick(g); };
     if (bondable) {
       $("#bond-visit").onclick = () => { if (Bond.visit(g)) { showDetail(g, opts); refreshDBIfActive(); } };
+      $("#bond-spar").onclick = () => {
+        const today = Bond.dayKey();
+        if (!Bond.data.sparDay) Bond.data.sparDay = {};
+        if (Bond.data.sparDay[g.id] === today) { toast(`今天已与 ${g.name} 切磋过，宿营过夜后可再战`); return; }
+        const m = Campaign.mapState();
+        if (m && m.ap <= 0) { toast("今日行动力已耗尽，请先宿营恢复"); return; }
+        if (m) { m.ap--; m.activeSpar = g.id; Campaign.save(); }
+        Bond.data.sparDay[g.id] = today; Bond.save();
+        closeOverlay();
+        startClassicBattle(RPG.heroGeneral(), g, false, true);
+      };
       $("#bond-recruit").onclick = () => {
         if (Bond.inTeam(g.id) || Bond.pts(g.id) < 150) return;
         if (Bond.data.team.length >= Bond.teamLimit()) openTeamReplacePicker(g, () => { showDetail(g, opts); refreshDBIfActive(); });
@@ -381,7 +404,7 @@
    * ============================================================ */
   let BATTLE = null;
   let battleToken = 0;   // 每场战斗唯一票据，防止旧场的自动定时器误驱动新场
-  const PREF = { auto: false, speed: 1 };
+  const PREF = { auto: false, speed: 4 };
 
   function renderFighter(sel, fighter, sideClass) {
     const el = $(sel);
@@ -2717,9 +2740,9 @@
    * ============================================================ */
   const BOND_KEY = "wujiang_bond_v1";
   const Bond = {
-    data: { gold: 0, friends: {}, team: [], giftDay: {}, visitDay: {}, gifted: {} },
+    data: { gold: 0, friends: {}, team: [], giftDay: {}, visitDay: {}, gifted: {}, sparDay: {} },
     load() {
-      try { const d = JSON.parse(localStorage.getItem(BOND_KEY)); if (d) this.data = Object.assign({ gold: 0, friends: {}, team: [], giftDay: {}, visitDay: {}, gifted: {} }, d); } catch { }
+      try { const d = JSON.parse(localStorage.getItem(BOND_KEY)); if (d) this.data = Object.assign({ gold: 0, friends: {}, team: [], giftDay: {}, visitDay: {}, gifted: {}, sparDay: {} }, d); } catch { }
     },
     save() { localStorage.setItem(BOND_KEY, JSON.stringify(this.data)); },
     gold() { return this.data.gold; },
@@ -2789,11 +2812,16 @@
       this.addF(generalId, add); this.save();
       return add;
     },
-    // 拜访：无需宝物，每名武将每天限一次，友谊随机小额增长
+    // "一天"的标识：开局后按游戏内天数（宿营推进），未开局时回退自然日
+    dayKey() {
+      const m = typeof Campaign !== "undefined" && Campaign.mapState();
+      return m ? "d" + m.day : new Date().toISOString().slice(0, 10);
+    },
+    // 拜访：无需宝物，每名武将每（游戏）天限一次，友谊随机小额增长
     visit(g) {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = this.dayKey();
       if (!this.data.visitDay) this.data.visitDay = {};
-      if (this.data.visitDay[g.id] === today) { toast(`今天已拜访过 ${g.name}，明日再来`); return false; }
+      if (this.data.visitDay[g.id] === today) { toast(`今天已拜访过 ${g.name}，宿营过夜后可再访`); return false; }
       this.data.visitDay[g.id] = today;
       const add = randInt(1, 2);
       this.addF(g.id, add); this.save();
@@ -3138,10 +3166,13 @@
     FORGE_COST: 6,
     FORGE_GOLD: 40,
     FORGE_PITY: 12,
-    forge(typeK) {
-      if ((this.data.materials[typeK] || 0) < this.FORGE_COST) { toast(`材料不足（需 ${this.typeDef(typeK).n}材料 ${this.FORGE_COST}）`); return null; }
-      if (!Bond.spend(this.FORGE_GOLD)) { toast(`金币不足（需 ${this.FORGE_GOLD} 金）`); return null; }
-      this.data.materials[typeK] -= this.FORGE_COST;
+    // opts 可覆盖成本（城市铁匠铺的专精类型享受材料/金币减免），保底与产出逻辑不变
+    forge(typeK, opts) {
+      const matCost = (opts && opts.matCost) || this.FORGE_COST;
+      const goldCost = (opts && opts.goldCost) || this.FORGE_GOLD;
+      if ((this.data.materials[typeK] || 0) < matCost) { toast(`材料不足（需 ${this.typeDef(typeK).n}材料 ${matCost}）`); return null; }
+      if (!Bond.spend(goldCost)) { toast(`金币不足（需 ${goldCost} 金）`); return null; }
+      this.data.materials[typeK] -= matCost;
       this.data.pity[typeK] = (this.data.pity[typeK] || 0) + 1;
       const forcePity = this.data.pity[typeK] >= this.FORGE_PITY;
       const r = this.rollRarity(forcePity);
@@ -3360,17 +3391,7 @@
           <div class="eq-slots">${eqSlotsHtml("hero")}</div>
           <button class="cup-go" id="rpg-armory" style="margin-top:8px;width:100%">🏪 宝物库（仓库 · 商店 · 锻造）</button>
         </div>
-        <div class="rpg-actions">
-          <button class="cup-go primary" id="rpg-train">⚔ 历练单挑</button>
-          <button class="cup-go primary" id="rpg-gauntlet">🔥 车轮大战</button>
-          <button class="cup-go primary" id="rpg-tower">🗼 百人斩</button>
-          <button class="cup-go primary" id="rpg-duo">🤝 2v2 单挑</button>
-          <button class="cup-go primary" id="rpg-war">🚩 阵营大战</button>
-          <button class="cup-go primary" id="rpg-teamwar">🛡 组队厮杀</button>
-          <button class="cup-go primary" id="rpg-conquest">🗺 国战略地</button>
-          <button class="cup-go primary" id="rpg-cup32">🏆 世界杯 32 强</button>
-        </div>
-        <div class="section-hint">历练 / 车轮 / 百人斩 / 2v2 / 阵营 / 组队 / 世界杯（含竞猜）均可获得经验，升级获得加点；战绩越好经验越多。</div>
+        <div class="section-hint">历练、悬赏、擂台/道场等设施挑战请在「天下游历」地图中进行（均计入经验与名声）；只想爽玩各模式可去首页「小游戏」。</div>
       </div>`;
       // 蜘蛛图外框高度与右侧（评分+加点+六维）总高度对齐；图形本身按宽度等比居中，不被拉伸变形
       const sideEl = C.querySelector(".rpg-side"), radarEl = C.querySelector(".rpg-radar");
@@ -3380,18 +3401,10 @@
       }
       $$(".rd-plus").forEach(b => b.onclick = () => this.allocate(b.dataset.k));
       $("#rpg-armory").onclick = () => ArmoryUI.open();
-      $("#rpg-train").onclick = () => this.train();
-      $("#rpg-gauntlet").onclick = () => this.gauntlet();
-      $("#rpg-tower").onclick = () => this.tower();
       $$(".bt-chip").forEach(el => el.onclick = () => {
         const tg = DB.get(+el.dataset.id); if (tg) showDetail(tg);
       });
       bindEqSlots(() => this.renderHub());
-      $("#rpg-duo").onclick = () => this.duo();
-      $("#rpg-war").onclick = () => this.war();
-      $("#rpg-teamwar").onclick = () => this.teamBattle();
-      $("#rpg-conquest").onclick = () => this.conquest();
-      $("#rpg-cup32").onclick = () => this.joinCup(32);
       $("#rpg-rename").onclick = () => {
         const n = prompt("新的名字：", c.name); if (n && n.trim()) { c.name = n.trim().slice(0, 6); this.save(); this.renderHub(); }
       };
@@ -3408,8 +3421,15 @@
       this.save(); this.renderHub();
     },
 
-    /* ---- 历练（天下地图开启后消耗 1 点行动力；地图未开启/尚在过渡期时不限制） ---- */
+    // 历练解锁所需的最低名声阶梯：初期靠悬赏/切磋/设施打出名声后才开放这一自由练级手段
+    TRAIN_FAME_TIER: 1,
+    /* ---- 历练（天下地图开启后消耗 1 点行动力；名声需达「小有名气」阶梯方可开放） ---- */
     train() {
+      const m = typeof Campaign !== "undefined" && Campaign.mapState();
+      if (m && Campaign.fameTierIndex(m.fame || 0) < this.TRAIN_FAME_TIER) {
+        toast(`声望不足，需达到「${Campaign.FAME_TIERS[this.TRAIN_FAME_TIER].n}」名声阶梯才能历练——先去悬赏、切磋或设施挑战中扬名吧`);
+        return;
+      }
       if (!spendAP()) return;
       const pool = DB.list;
       const opp = clone(pool[randInt(0, pool.length - 1)]);
@@ -3458,6 +3478,17 @@
       if (m && (m.activeFacility === "duel" || m.activeFacility === "duo")) {
         if (heroWon) { Campaign.addFame(8); extraHtml += `<br>🏯 设施挑战获胜，名声 <b style="color:var(--cn-red)">+8</b>`; }
         m.activeFacility = null; Campaign.save();
+      }
+      // 切磋：胜利增进友谊，落败不加（每名武将每游戏日限一次，见 bond-spar 绑定处）
+      if (m && m.activeSpar != null) {
+        if (heroWon && opp.id === m.activeSpar) {
+          const add = randInt(3, 5);
+          Bond.addF(opp.id, add); Bond.save();
+          extraHtml += `<br>⚔️ 切磋获胜，与 ${opp.name} 友谊 <b style="color:var(--cn-red)">+${add}</b>`;
+        } else if (opp.id === m.activeSpar) {
+          extraHtml += `<br>⚔️ 切磋落败，未能增进与 ${opp.name} 的友谊`;
+        }
+        m.activeSpar = null; Campaign.save();
       }
       // 威名榜：击败八大高手记录战绩，凑齐后与武道会夺冠一并达成"天下无双"终局
       if (heroWon) extraHtml += checkRivalDefeat(opp);
@@ -3783,6 +3814,27 @@
     if (!m) return false;
     return m.curCity === "tsushima" || (m.discountUntilDay && m.day <= m.discountUntilDay);
   }
+  // 各城行情系数：对马岛黑市固定八折，其余按城名哈希稳定落在 0.90~1.20——低价城可"淘货"，高价城慎买
+  function cityPriceFactor(cityId) {
+    if (cityId === "tsushima") return 0.8;
+    return 0.9 + (hashStr(cityId) % 31) / 100;
+  }
+  // 简易可复现随机序列：城市集市货摊按 (城市, 游戏天数, 本局种子) 生成，宿营跨天即换新货
+  function seededRand(seed) {
+    let s = seed >>> 0;
+    return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+  }
+  function cityMarketStalls(m) {
+    const rnd = seededRand(hashStr(m.curCity + "|" + m.day + "|" + ((Campaign.meta && Campaign.meta.createdAt) || 0)));
+    return Array.from({ length: 4 }, () => {
+      const type = Armory.TYPES[Math.floor(rnd() * Armory.TYPES.length)];
+      const total = Armory.RARITIES.reduce((s, r) => s + r.weight, 0);
+      let x = rnd() * total, rar = "normal";
+      for (const r of Armory.RARITIES) { if (x < r.weight) { rar = r.k; break; } x -= r.weight; }
+      const pool = Armory.pool(type.k);
+      return { type: type.k, rarity: rar, tmpl: pool[Math.floor(rnd() * pool.length)] };
+    });
+  }
   // 史实分布：按势力/家臣归属给主要武将预设城池归属，其余（多为次要武将）按姓名哈希兜底分配，
   // 保证仍落在同阵营的城池范围内；仅为风味设计，非严谨考据。
   const CITY_HINTS_RAW = {
@@ -3928,7 +3980,7 @@
     // 开启一局新战役：清空角色/金币/友谊/队伍/宝物背包；武将图鉴与宝物模板编辑（全局层）不受影响
     reset(mode) {
       localStorage.removeItem(RPG_KEY); RPG.char = null;
-      Bond.data = { gold: 0, friends: {}, team: [], giftDay: {}, visitDay: {}, gifted: {} }; Bond.save();
+      Bond.data = { gold: 0, friends: {}, team: [], giftDay: {}, visitDay: {}, gifted: {}, sparDay: {} }; Bond.save();
       Armory.data = { items: [], materials: { weapon: 0, mount: 0, book: 0, attire: 0, curio: 0 }, discovered: [], pity: { weapon: 0, mount: 0, book: 0, attire: 0, curio: 0 }, shop: [], shopDay: "", nextUid: 1 };
       Armory.save(); Armory.ensureShop();
       const distribution = (mode && mode.distribution) || "historical";
@@ -3952,6 +4004,37 @@
       this.save();
     },
     mapState() { return this.meta && this.meta.map; },
+    // 兼容旧版本存档（第一/二期或更早创建的角色）：不清空任何既有数据，仅补建缺失的地图状态与新增字段，
+    // 使"继续游戏"总能正常进入天下地图
+    ensureMap() {
+      if (!RPG.char) return null;
+      let changed = false;
+      if (!this.meta) { this.meta = { active: true, createdAt: Date.now(), mode: {} }; changed = true; }
+      if (!this.meta.map) {
+        const distribution = (this.meta.mode && this.meta.mode.distribution) || "historical";
+        const assign = buildCityAssignment(distribution, this.meta.createdAt || Date.now());
+        const byCity = {};
+        Object.entries(assign).forEach(([gid, cid]) => { (byCity[cid] || (byCity[cid] = [])).push(+gid); });
+        const appeared = [];
+        Object.values(byCity).forEach(ids => { shuffle(ids); appeared.push(...ids.slice(0, randInt(2, 3))); });
+        this.meta.map = { day: 1, ap: 1, apMax: 1, curCity: null, assign, appeared, nextAppearDay: 6 };
+        changed = true;
+      }
+      const m = this.meta.map;
+      if (m.fame == null) { m.fame = 0; changed = true; }
+      if (!m.bounties) {
+        m.bounties = {};
+        CITIES.filter(c => c.side !== "sea").forEach(c => { m.bounties[c.id] = Array.from({ length: randInt(2, 3) }, () => genBounty(c.id, m.assign, m.appeared)); });
+        changed = true;
+      }
+      if (m.activeBounty === undefined) { m.activeBounty = null; changed = true; }
+      if (!m.uniqueOwned) { m.uniqueOwned = { chitu: false, senriGeta: false }; changed = true; }
+      if (!m.rivalsDefeated) { m.rivalsDefeated = []; changed = true; }
+      if (m.cupWon == null) { m.cupWon = false; changed = true; }
+      if (m.ending == null) { m.ending = false; changed = true; }
+      if (changed) this.save();
+      return m;
+    },
     // 名声四阶：无名之辈 → 小有名气 → 威震一方 → 名满天下
     FAME_TIERS: [
       { n: "无名之辈", min: 0 },
@@ -3965,6 +4048,7 @@
       return idx;
     },
     fameTierName(fame) { return this.FAME_TIERS[this.fameTierIndex(fame)].n; },
+    fameLabel(fame) { return `${this.fameTierName(fame)}（${fame || 0}）`; },
     // 增加名声；跨阶时提示，并重算行动力上限
     addFame(n) {
       const m = this.mapState(); if (!m || !n) return;
@@ -4078,16 +4162,16 @@
             <button class="cup-go" id="ob-reroll">🎲 重新随机</button>
           </div>
         </div>
-        <div class="btns">
-          <button class="btn-ghost" id="ob-type-back">‹ 换个方式</button>
-          <button class="btn-primary" id="ob-custom-next">下一步 ›</button>
+        <div class="rpg-create-btns">
+          <button class="cup-go" id="ob-type-back">‹ 换个方式</button>
+          <button class="cup-go primary" id="ob-custom-next">下一步 ›</button>
         </div>`;
     },
     genPickHtml() {
       return `<div class="section-hint">第 1 步 · 选一位史实武将扮演</div>
         <div class="search-box"><input id="ob-gen-search" placeholder="搜索…" value="${this._genSearch || ''}"></div>
         <div class="grid" id="ob-gen-grid">${this.genGridHtml()}</div>
-        <div class="btns"><button class="btn-ghost" id="ob-type-back">‹ 换个方式</button></div>`;
+        <div class="rpg-create-btns"><button class="cup-go" id="ob-type-back">‹ 换个方式</button></div>`;
     },
     genGridHtml() {
       const kw = (this._genSearch || "").trim();
@@ -4107,7 +4191,7 @@
           <button class="buff-btn ob-diff" data-v="young"><span class="bi">🌱</span><span class="bt"><b>少年模式</b><small>初始六维为默认值 60%；其中最高两项定为「本命天赋」，加点成长 +50%，可突破默认上限</small></span></button>
           <button class="buff-btn ob-diff" data-v="peak"><span class="bi">👑</span><span class="bt"><b>巅峰模式</b><small>默认原值开局，立即可用；但历练加点成长减半</small></span></button>
         </div>
-        <div class="btns"><button class="btn-ghost" id="ob-gen-back">‹ 重新选将</button></div>`;
+        <div class="rpg-create-btns"><button class="cup-go" id="ob-gen-back">‹ 重新选将</button></div>`;
     },
     charSummaryHtml() {
       const s = this.state;
@@ -4128,9 +4212,9 @@
           <div class="wname">${name}</div>
           <div class="wdesc">${desc}</div>
         </div>
-        <div class="btns">
-          <button class="btn-ghost" id="ob-redo1">重新选择</button>
-          <button class="btn-primary" id="ob-next1">下一步 ›</button>
+        <div class="rpg-create-btns">
+          <button class="cup-go" id="ob-redo1">重新选择</button>
+          <button class="cup-go primary" id="ob-next1">下一步 ›</button>
         </div>`;
     },
 
@@ -4142,10 +4226,9 @@
           <button class="buff-btn ob-dist ${s.distribution === 'historical' ? 'active' : ''}" data-v="historical"><span class="bi">🏯</span><span class="bt"><b>史实分布</b><small>武将按真实势力落位（蜀将在成都、武田家在甲斐…）</small></span></button>
           <button class="buff-btn ob-dist ${s.distribution === 'random' ? 'active' : ''}" data-v="random"><span class="bi">🎲</span><span class="bt"><b>群雄乱入</b><small>全部武将随机洗牌分配到各城，每局天下大不同</small></span></button>
         </div>
-        <div class="section-hint">（天下地图将于下个阶段开放，本次选择会在地图上线后生效）</div>
-        <div class="btns">
-          <button class="btn-ghost" id="ob-back1">‹ 上一步</button>
-          <button class="btn-primary" id="ob-next2">下一步 ›</button>
+        <div class="rpg-create-btns">
+          <button class="cup-go" id="ob-back1">‹ 上一步</button>
+          <button class="cup-go primary" id="ob-next2">下一步 ›</button>
         </div>`;
     },
 
@@ -4162,9 +4245,9 @@
           <div class="wdesc">${desc} · 天下格局：${s.distribution === 'historical' ? '史实分布' : '群雄乱入'}</div>
           ${hasExisting ? `<div class="wdesc" style="color:var(--cn-red)">⚠️ 当前已有存档（${RPG.char.name}），开始新游戏将覆盖角色、金币、友谊、队伍与宝物背包，且无法恢复！</div>` : ''}
         </div>
-        <div class="btns">
-          <button class="btn-ghost" id="ob-back2">‹ 上一步</button>
-          <button class="btn-primary" id="ob-confirm">⚔ ${hasExisting ? '覆盖存档，开始新的武将人生' : '开始新的武将人生'}</button>
+        <div class="rpg-create-btns">
+          <button class="cup-go" id="ob-back2">‹ 上一步</button>
+          <button class="cup-go primary" id="ob-confirm">⚔ ${hasExisting ? '覆盖存档，开始新的武将人生' : '开始新的武将人生'}</button>
         </div>`;
     },
 
@@ -4211,7 +4294,7 @@
    * ============================================================ */
   const MapUI = {
     open() {
-      const m = Campaign.mapState();
+      const m = Campaign.ensureMap();   // 旧版本存档自动补建地图状态，保证"继续游戏"总能进入
       if (!m || !RPG.char) { showScreen("home"); return; }
       if (!m.curCity) { m.curCity = RPG.char.side === "jp" ? "kyoto" : "luoyang"; Campaign.save(); }
       this.render();
@@ -4222,9 +4305,20 @@
       if (!m || !RPG.char) { showScreen("home"); return; }
       const C = $("#map-content");
       C.innerHTML = `<div class="map-wrap">
-        <div class="map-svg-box">${this.svgHtml(m)}</div>
-        <div class="map-city-panel">${this.cityPanelHtml(m)}</div>
-        <div class="map-status-bar">${this.statusHtml(m)}</div>
+        <div class="map-left">
+          <div class="map-svg-box">${this.svgHtml(m)}</div>
+          <div class="map-day-strip">
+            <span class="mds-item">📅 第 <b>${m.day}</b> 天</span>
+            <span class="mds-item">⚡ <b>${m.ap}</b>/${m.apMax}</span>
+            <span class="mds-item">💰 <b>${Bond.gold()}</b></span>
+            <span class="mds-item">⭐ <b>${Campaign.fameLabel(m.fame || 0)}</b></span>
+            <button class="ms-camp" id="map-camp">🏕️ 宿营</button>
+          </div>
+        </div>
+        <div class="map-city-panel">
+          ${this.heroCardHtml(m)}
+          ${this.cityPanelHtml(m)}
+        </div>
       </div>`;
       this.bind(m);
     },
@@ -4242,6 +4336,17 @@
       }).join("");
       return `<svg class="map-lines" viewBox="0 0 100 100" preserveAspectRatio="none">${lines}</svg>${dots}`;
     },
+    heroCardHtml(m) {
+      const c = RPG.char, hg = RPG.heroGeneral();
+      return `<div class="map-hero-card ${c.side}">
+        <div class="mh-av">${avatarChar(c.name)}</div>
+        <div class="mh-meta">
+          <div class="mh-name">${c.name} <span class="rpg-lv">Lv.${c.level}</span></div>
+          <div class="mh-sub">评分 ${ratingScore(hg)} ${ratingChip(hg)} · ⭐${Campaign.fameLabel(m.fame || 0)}</div>
+        </div>
+        <button class="cup-go" id="map-char">🎭 角色详情</button>
+      </div>`;
+    },
     cityPanelHtml(m) {
       const c = cityDef(m.curCity);
       const isSea = c.side === "sea";
@@ -4250,48 +4355,99 @@
       const hiddenCount = localGenerals.length - appearedHere.length;
       const fac = CITY_FACILITY[m.curCity];
       const bounties = (!isSea && m.bounties[m.curCity]) || [];
-      return `<div class="mc-head">📍 ${c.n}${isSea ? '<small>（海路中转站 · 黑市折扣常驻）</small>' : ''}</div>
-        <div class="mc-actions">
-          <button class="mc-btn" id="map-train" ${m.ap <= 0 ? "disabled" : ""}>🏋️ 历练<small>-1⚡</small></button>
-          <button class="mc-btn" id="map-shop">🏪 集市${isSea ? '<small>黑市</small>' : ''}</button>
-          <button class="mc-btn" id="map-forge">⚒️ 铁匠铺</button>
-          ${fac ? `<button class="mc-btn fac" id="map-facility" ${m.ap <= 0 ? "disabled" : ""}>${fac.icon} ${fac.n}<small>-1⚡</small></button>` : ""}
+      const factor = cityPriceFactor(m.curCity);
+      const factorTxt = factor <= 0.85 ? "黑市八折" : factor < 1 ? "行情便宜" : factor > 1.1 ? "行情偏贵" : "价格公道";
+      const smithType = Armory.TYPES[hashStr(m.curCity) % Armory.TYPES.length];
+      const trainLocked = Campaign.fameTierIndex(m.fame || 0) < RPG.TRAIN_FAME_TIER;
+      return `<div class="mc-head">📍 ${c.n}${isSea ? '<small>海路中转站</small>' : ''}</div>
+        <div class="menu map-menu">
+          <button class="menu-btn" id="map-train" ${(m.ap <= 0 || trainLocked) ? "disabled" : ""}><span class="mi">${trainLocked ? '🔒' : '🏋️'}</span><span>历练<small>${trainLocked ? `声望达「${Campaign.FAME_TIERS[RPG.TRAIN_FAME_TIER].n}」解锁` : '随机切磋练级 · 耗 1⚡'}</small></span></button>
+          <button class="menu-btn" id="map-shop"><span class="mi">🏪</span><span>集市<small>本地货摊每日上新 · ${factorTxt}</small></span></button>
+          <button class="menu-btn" id="map-forge"><span class="mi">⚒️</span><span>铁匠铺<small>专精${smithType.n}锻造 · 有减免</small></span></button>
+          ${fac ? `<button class="menu-btn" id="map-facility" ${m.ap <= 0 ? "disabled" : ""}><span class="mi">${fac.icon}</span><span>${fac.n}<small>设施挑战扬名 · 耗 1⚡</small></span></button>` : ""}
         </div>
-        ${bounties.length ? `<div class="mc-roster-head">📋 悬赏榜</div>
+        ${bounties.length ? `<div class="mc-sect">📋 悬赏榜</div>
         <div class="mc-bounty-list">${bounties.map(b => `<div class="mc-bounty ${b.legendary ? 'legendary' : ''}">
-          <div class="mcb-desc">${b.legendary ? '⭐ ' : ''}${b.desc}</div>
-          <div class="mcb-reward">赏 ${b.rewardGold}金 · 名声+${b.rewardFame}</div>
+          <div class="mcb-body"><div class="mcb-desc">${b.legendary ? '⭐ ' : ''}${b.desc}</div>
+          <div class="mcb-reward">赏 ${b.rewardGold} 金 · 名声 +${b.rewardFame}</div></div>
           <button class="mcb-accept" data-uid="${b.uid}" ${m.ap <= 0 ? "disabled" : ""}>接取<small>-1⚡</small></button>
         </div>`).join("")}</div>` : ""}
-        <div class="mc-roster-head">🚶 本地武将<small>${appearedHere.length} 位已现身${hiddenCount ? ` · 另有 ${hiddenCount} 位未现身` : ''}</small></div>
-        <div class="mc-roster">${appearedHere.map(g => `<button class="mc-gen" data-id="${g.id}">
-          <span class="mcg-av">${avatarChar(g.name)}</span><span class="mcg-name">${g.name}</span><span class="mcg-bond">${Bond.inTeam(g.id) ? "👥" : ""}${Bond.pts(g.id)}</span>
+        <div class="mc-sect">🚶 本地武将<small>${appearedHere.length} 位已现身${hiddenCount ? ` · 另有 ${hiddenCount} 位未现身` : ''}</small></div>
+        <div class="mc-roster">${appearedHere.map(g => `<button class="mc-gen ${g.side}" data-id="${g.id}">
+          <span class="mcg-av">${avatarChar(g.name)}</span><span class="mcg-name">${g.name}</span><span class="mcg-bond">${Bond.inTeam(g.id) ? "👥 " : ""}友谊 ${Bond.pts(g.id)}</span>
         </button>`).join("") || '<div class="empty" style="padding:14px 4px">这座城暂无已现身的武将，游历天下终会遇见他们。</div>'}</div>`;
-    },
-    statusHtml(m) {
-      const c = RPG.char, hg = RPG.heroGeneral();
-      return `<div class="ms-row">
-          <span class="ms-av">${avatarChar(c.name)}</span>
-          <span class="ms-info"><b>${c.name}</b> Lv.${c.level} · 评分 ${ratingScore(hg)} · ⭐${Campaign.fameTierName(m.fame || 0)}</span>
-          <button class="ms-btn" id="map-char">🎭 详情</button>
-        </div>
-        <div class="ms-row2">
-          <span>📅 第 ${m.day} 天</span>
-          <span>⚡ ${m.ap}/${m.apMax}</span>
-          <span>💰 ${Bond.gold()}</span>
-          <button class="ms-camp" id="map-camp">🏕️ 宿营${m.ap <= 0 ? "（今日已尽）" : ""}</button>
-        </div>`;
     },
     bind(m) {
       $$(".map-city").forEach(el => el.onclick = () => this.moveTo(el.dataset.id));
       $$(".mc-gen").forEach(el => el.onclick = () => { const g = DB.get(+el.dataset.id); if (g) showDetail(g); });
       $$(".mcb-accept").forEach(el => el.onclick = () => this.acceptBounty(m.curCity, el.dataset.uid));
       const trainBtn = $("#map-train"); if (trainBtn) trainBtn.onclick = () => RPG.train();
-      const shopBtn = $("#map-shop"); if (shopBtn) shopBtn.onclick = () => ArmoryUI.open("shop");
-      const forgeBtn = $("#map-forge"); if (forgeBtn) forgeBtn.onclick = () => ArmoryUI.open("forge");
+      const shopBtn = $("#map-shop"); if (shopBtn) shopBtn.onclick = () => this.openMarket();
+      const forgeBtn = $("#map-forge"); if (forgeBtn) forgeBtn.onclick = () => this.openForge();
       const facBtn = $("#map-facility"); if (facBtn) facBtn.onclick = () => this.openFacility();
       const campBtn = $("#map-camp"); if (campBtn) campBtn.onclick = () => this.camp();
       const charBtn = $("#map-char"); if (charBtn) charBtn.onclick = () => RPG.open();
+    },
+    /* ---- 集市：每城每（游戏）日一批本地货摊，价格按城市行情浮动；已购摊位当日售罄 ---- */
+    openMarket() {
+      const m = Campaign.mapState();
+      const c = cityDef(m.curCity);
+      const factor = shopDiscountActive() ? Math.min(0.8, cityPriceFactor(m.curCity)) : cityPriceFactor(m.curCity);
+      const key = m.curCity + "|" + m.day;
+      if (!m.marketSold) m.marketSold = {};
+      const sold = m.marketSold[key] || (m.marketSold[key] = []);
+      const stalls = cityMarketStalls(m);
+      openOverlay(`<div class="result-card detail-card">
+        <h1>🏪 ${c.n}集市</h1>
+        <div class="wdesc">本地行情：${factor <= 0.85 ? "🈹 黑市/折扣价" : factor < 1 ? "💰 偏低" : factor > 1.1 ? "📈 偏贵" : "⚖️ 公道"}（约 ${Math.round(factor * 100)}% 市价）· 货摊每日更新 · 💰 现有 ${Bond.gold()} 金</div>
+        <div class="buff-list">
+          ${stalls.map((s, i) => {
+            const type = Armory.typeDef(s.type), rar = Armory.rarityDef(s.rarity);
+            const price = Math.round(Armory.shopPrice(s.rarity) * factor);
+            if (sold.includes(i)) return `<div class="buff-btn sold"><span class="bi">${type.icon}</span><span class="bt"><b>${s.tmpl.n}</b><small>已售出</small></span></div>`;
+            return `<button class="buff-btn market-buy" data-i="${i}"><span class="bi">${type.icon}</span><span class="bt"><b style="color:${rar.color}">${s.tmpl.n}</b><small>${rar.n} · ${s.tmpl.intro}</small></span><span class="mkt-price">💰${price}</span></button>`;
+          }).join("")}
+        </div>
+        <div class="btns"><button class="btn-ghost" id="market-close">离开集市</button></div></div>`);
+      $$(".market-buy").forEach(b => b.onclick = () => {
+        const i = +b.dataset.i, s = stalls[i];
+        const price = Math.round(Armory.shopPrice(s.rarity) * factor);
+        if (!Bond.spend(price)) { toast(`金币不足（需 ${price} 金）`); return; }
+        const item = Armory.makeItem(s.type, s.rarity, s.tmpl);
+        Armory.data.items.push(item); Armory.save();
+        sold.push(i); Campaign.save();
+        AudioSystem.sfx.select();
+        toast(`已购得 ${item.icon}「${item.name}」（${Armory.rarityDef(s.rarity).n}）-${price}金`);
+        this.openMarket();   // 重开以刷新售罄状态与余额
+      });
+      $("#market-close").onclick = () => { closeOverlay(); this.render(); };
+    },
+    /* ---- 铁匠铺：各城专精一类宝物，锻造专精类省料省钱 ---- */
+    openForge() {
+      const m = Campaign.mapState();
+      const c = cityDef(m.curCity);
+      const specialty = Armory.TYPES[hashStr(m.curCity) % Armory.TYPES.length];
+      openOverlay(`<div class="result-card detail-card">
+        <h1>⚒️ ${c.n}铁匠铺</h1>
+        <div class="wdesc">本铺专精<b style="color:var(--cn-gold)">${specialty.icon}${specialty.n}</b>：锻${specialty.n}只需材料 5 + 30 金（其余类型 6 + 40 金）· 💰 现有 ${Bond.gold()} 金</div>
+        <div class="buff-list">
+          ${Armory.TYPES.map(type => {
+            const isSpec = type.k === specialty.k;
+            const mat = Armory.data.materials[type.k] || 0, pity = Armory.data.pity[type.k] || 0;
+            const matCost = isSpec ? 5 : Armory.FORGE_COST, goldCost = isSpec ? 30 : Armory.FORGE_GOLD;
+            return `<button class="buff-btn smith-forge ${isSpec ? 'active' : ''}" data-type="${type.k}" ${mat < matCost ? "disabled" : ""}>
+              <span class="bi">${type.icon}</span>
+              <span class="bt"><b>${type.n}${isSpec ? ' ★本铺专精' : ''}</b><small>材料 ${mat}/${matCost} · ${goldCost}金 · 保底 ${pity}/${Armory.FORGE_PITY}</small></span>
+            </button>`;
+          }).join("")}
+        </div>
+        <div class="btns"><button class="btn-ghost" id="forge-close">离开铁匠铺</button></div></div>`);
+      $$(".smith-forge").forEach(b => b.onclick = () => {
+        const typeK = b.dataset.type;
+        const isSpec = typeK === specialty.k;
+        if (Armory.forge(typeK, isSpec ? { matCost: 5, goldCost: 30 } : undefined)) this.openForge();
+      });
+      $("#forge-close").onclick = () => { closeOverlay(); this.render(); };
     },
     acceptBounty(cityId, uid) {
       const m = Campaign.mapState();
@@ -4409,7 +4565,9 @@
     },
     camp() {
       const m = Campaign.mapState();
-      m.day++; m.ap = m.apMax; Campaign.save();
+      m.day++; m.ap = m.apMax;
+      m.marketSold = {};   // 新的一天，各城集市重新上货
+      Campaign.save();
       AudioSystem.sfx.victory();
       const revealed = Campaign.checkAppearances();
       if (revealed.length) {
