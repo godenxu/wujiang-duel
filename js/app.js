@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607100610";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607102050";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -1157,18 +1157,21 @@
           <h1>连胜 ${this.streak}</h1>
           <div class="winner-av" style="background:linear-gradient(135deg,var(--cn-gold),#b8860b)">${avatarChar(this.hero.name)}</div>
           <div class="wname">${this.hero.name} 斩将！</div>
-          <div class="wdesc">击败 ${BATTLE.p2.g.name}！<br>战后恢复体力 ${heal} 点，下一阵对手更强。</div>
+          <div class="wdesc">击败 ${BATTLE.p2.g.name}！<br>战后恢复体力 ${heal} 点，下一阵对手更强。<br><small style="opacity:.75">即将自动迎战下一员…</small></div>
           <div class="btns">
-            <button class="btn-primary" id="g-next">迎战下一员</button>
+            <button class="btn-primary" id="g-next">立即迎战</button>
             <button class="btn-ghost" id="g-quit">鸣金收兵</button>
           </div></div>`);
-        $("#g-next").onclick = () => {
+        const advance = () => {
+          clearTimeout(timer);
           closeOverlay();
           const carry = this.hero._carryHp;
           this.next();
           BATTLE.p1.hp = carry; updateBars($("#f-left"), BATTLE.p1);
         };
-        $("#g-quit").onclick = () => { closeOverlay(); this.finish(false); };
+        const timer = setTimeout(advance, 900);
+        $("#g-next").onclick = advance;
+        $("#g-quit").onclick = () => { clearTimeout(timer); closeOverlay(); this.finish(false); };
       } else {
         AudioSystem.sfx.ko();
         this.finish(false, BATTLE.p2.g);
@@ -1259,13 +1262,15 @@
         <h1>第 ${this.floor} 层 · 破</h1>
         <div class="winner-av" style="background:linear-gradient(135deg,var(--cn-gold),#b8860b)">${avatarChar(this.hero.name)}</div>
         <div class="wname">${this.hero.name} 斩 ${BATTLE.p2.g.name}！</div>
-        <div class="wdesc">战后回复体力 ${healed} 点（现 ${Math.round(this.carryHp)}/${this.hero.ti}）。<br>已连斩 <b style="color:var(--cn-red)">${this.floor}</b> 员守将${b ? ` · 历史最佳 ${b.best} 层` : ""}。</div>
+        <div class="wdesc">战后回复体力 ${healed} 点（现 ${Math.round(this.carryHp)}/${this.hero.ti}）。<br>已连斩 <b style="color:var(--cn-red)">${this.floor}</b> 员守将${b ? ` · 历史最佳 ${b.best} 层` : ""}。<br><small style="opacity:.75">即将自动攀上一层…</small></div>
         <div class="btns">
-          <button class="btn-primary" id="twr-up">攀上一层</button>
+          <button class="btn-primary" id="twr-up">立即攀上</button>
           <button class="btn-ghost" id="twr-down">收兵下塔</button>
         </div></div>`);
-      $("#twr-up").onclick = () => { closeOverlay(); this.floor++; this.next(); };
-      $("#twr-down").onclick = () => { closeOverlay(); this.floor++; this.finish(null); };
+      const advance = () => { clearTimeout(timer); closeOverlay(); this.floor++; this.next(); };
+      const timer = setTimeout(advance, 900);
+      $("#twr-up").onclick = advance;
+      $("#twr-down").onclick = () => { clearTimeout(timer); closeOverlay(); this.floor++; this.finish(null); };
     },
     // 每 5 层：三选一机缘
     offerBuffs(healed) {
@@ -4035,12 +4040,13 @@
       if (changed) this.save();
       return m;
     },
-    // 名声四阶：无名之辈 → 小有名气 → 威震一方 → 名满天下
+    // 名声四阶：无名之辈 → 小有名气 → 威震一方 → 名满天下；数值上限 9999，阶梯拉宽以放缓晋升节奏
+    FAME_MAX: 9999,
     FAME_TIERS: [
       { n: "无名之辈", min: 0 },
-      { n: "小有名气", min: 60 },
-      { n: "威震一方", min: 200 },
-      { n: "名满天下", min: 500 },
+      { n: "小有名气", min: 500 },
+      { n: "威震一方", min: 2000 },
+      { n: "名满天下", min: 5000 },
     ],
     fameTierIndex(fame) {
       let idx = 0;
@@ -4053,7 +4059,7 @@
     addFame(n) {
       const m = this.mapState(); if (!m || !n) return;
       const before = this.fameTierIndex(m.fame || 0);
-      m.fame = (m.fame || 0) + n;
+      m.fame = Math.min(this.FAME_MAX, (m.fame || 0) + n);
       const after = this.fameTierIndex(m.fame);
       this.recalcApMax();
       this.save();
@@ -4305,19 +4311,23 @@
       if (!m || !RPG.char) { showScreen("home"); return; }
       const C = $("#map-content");
       C.innerHTML = `<div class="map-wrap">
-        <div class="map-left">
+        <div class="map-top">
           <div class="map-svg-box">${this.svgHtml(m)}</div>
-          <div class="map-day-strip">
-            <span class="mds-item">📅 第 <b>${m.day}</b> 天</span>
-            <span class="mds-item">⚡ <b>${m.ap}</b>/${m.apMax}</span>
-            <span class="mds-item">💰 <b>${Bond.gold()}</b></span>
-            <span class="mds-item">⭐ <b>${Campaign.fameLabel(m.fame || 0)}</b></span>
-            <button class="ms-camp" id="map-camp">🏕️ 宿营</button>
-          </div>
         </div>
-        <div class="map-city-panel">
-          ${this.heroCardHtml(m)}
-          ${this.cityPanelHtml(m)}
+        <div class="map-bottom">
+          <div class="map-info-col">
+            ${this.heroCardHtml(m)}
+            <div class="map-day-strip">
+              <span class="mds-item">📅 第 <b>${m.day}</b> 天</span>
+              <span class="mds-item">⚡ <b>${m.ap}</b>/${m.apMax}</span>
+              <span class="mds-item">💰 <b>${Bond.gold()}</b></span>
+              <span class="mds-item">⭐ <b>${Campaign.fameLabel(m.fame || 0)}</b></span>
+              <button class="ms-camp" id="map-camp">🏕️ 宿营</button>
+            </div>
+          </div>
+          <div class="map-city-panel">
+            ${this.cityPanelHtml(m)}
+          </div>
         </div>
       </div>`;
       this.bind(m);

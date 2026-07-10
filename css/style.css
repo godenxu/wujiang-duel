@@ -982,6 +982,9 @@ html, body {
  * ============================================================ */
 .map-wrap { display: flex; flex-direction: column; }
 #screen-map { overflow-y: auto; }
+.map-top { flex: 0 0 auto; }
+.map-bottom { display: flex; flex-direction: column; }
+.map-info-col { flex: 0 0 auto; }
 .map-svg-box {
   position: relative; flex: 0 0 auto; height: clamp(260px, 40vh, 380px); margin: 8px 12px 6px;
   border: 2px solid rgba(212,175,55,.4); border-radius: 14px; overflow: hidden;
@@ -1079,9 +1082,20 @@ html, body {
 .buff-btn .mkt-price { margin-left: auto; font-weight: 900; color: #b8860b; font-size: 16px; white-space: nowrap; font-family: "DotGothic16", monospace; }
 .buff-btn:disabled { opacity: .4; cursor: not-allowed; }
 
+/* 宽屏/折叠屏展开：地图横贯顶部（约占可视高度 30%），下方左右两栏——
+   左为角色资料与状态条，右为城池事务（历练等行动卡 · 悬赏榜 · 本地武将） */
 @media (min-width: 600px) {
-  .map-wrap { display: grid; grid-template-columns: 52% 48%; align-items: start; }
-  .map-left { grid-column: 1; position: sticky; top: 0; }
-  .map-svg-box { height: clamp(340px, 56vh, 560px); }
-  .map-city-panel { grid-column: 2; }
+  .map-top {
+    position: sticky; top: 0; z-index: 3; padding-top: 4px;
+    background: linear-gradient(160deg, #1c130b 0%, #201509 100%);
+    border-bottom: 1px solid rgba(212,175,55,.25);
+  }
+  .map-svg-box { height: clamp(200px, 30vh, 340px); margin-bottom: 6px; }
+  .map-bottom { display: grid; grid-template-columns: 38% 62%; align-items: start; gap: 0 16px; }
+  .map-info-col { grid-column: 1; padding: 4px 0 4px 12px; }
+  .map-info-col .map-day-strip { flex-direction: column; align-items: stretch; }
+  .map-info-col .ms-camp { margin-left: 0; width: 100%; text-align: center; }
+  .map-hero-card { flex-wrap: wrap; }
+  .map-hero-card .cup-go { width: 100%; text-align: center; }
+  .map-city-panel { grid-column: 2; padding: 4px 12px 16px 0; }
 }
