@@ -368,11 +368,27 @@ mitigation = 1 − min(0.55, 守.智/360)         （守方智力减伤）
 
 **边境战结算——不亲征（或与主角阵营无关）**：双方各取「已现身武将」（不限本地驻军）随机等量人马（`Math.min(己方数,敌方数)`），依次用 `js/engine.js` 的 `autoBattle(g1,g2)` 单场极速判定，败者出列直到一方队列耗尽，即时弹出战报。
 
-**边境战结算——亲征**：主角选择率团队亲征时，真正进入「阵营大战」小游戏画面（`showScreen("war")` + `War.start(hero, {customRoster, onDone})`）——`War.start` 新增 `opts.customRoster:{cn,jp}` 支持，跳过其默认的「全库 200 员 + 规模挑选」建军逻辑，改以双方「已现身武将」为基础名单（仍套用其既有的主角与同阵营队友强制编入队首逻辑），队伍打完整场（快捷模式自动播放战斗日志与击杀榜，与自由试玩的阵营大战观感一致，而非瞬间出结果）后经 `opts.onDone(result)` 回调交还结果，而非默认的 `RPG.onWarResult` 或试玩战报弹窗；`War.rpg` 标记（`this.rpg = !!hero`）供全局返回键逻辑判断该局是否应回到发起它的那一层。亲征取胜额外获得名声 +20、经验（击杀数×15 + 60）与金币（30 + 击杀数×5），若阵亡（`heroAlive`）则文案标注「阵中负伤」但不影响整体战果判定。
+**边境战结算——亲征**：主角选择率团队亲征时，改用**组队大战**（`TeamBattle`）而非阵营大战——武将选择原则不变（双方均从「已现身武将」中取，主角与同阵营队友必上阵，其余随机补足，双方数量相等），仅因 `TeamBattle` 单场最多 10 将上阵，双方数量额外取 `Math.min(己方,敌方,10)`（与国战攻城 `Conquest` 的做法一致）。调用 `TeamBattle.begin(mine, heroSide, {exact:true, enemies:theirs, rpg:true, onDone})`——`exact:true` 跳过其默认的「不足 10 人从全库补满」逻辑，`rpg:true` 供全局返回键逻辑判断该局应回到发起它的那一层（地图）。战斗打完后经 `onDone(result)` 回调（`result = {playerWon, mySurvivors, theirSurvivors, kills}`）取代默认的「再来一场/返回菜单」收尾；亲征取胜额外获得名声 +20、经验（本方战场斩获数×15 + 60）与金币（30 + 斩获数×5），主角是否阵亡由 `mySurvivors` 中是否仍含 `id===-1` 判定，若阵亡则文案标注「阵中负伤」但不影响整体战果判定。
 
 **夺城后的部署调整**：无论哪种结算方式，胜方都通过共用的 `applyBorderWarOutcome(m, edge, winnerSide)` 处理后续——`m.cityOwner[被占城]` 改写为胜方阵营；败方原驻守该城（`m.assign[gid] === 被占城`）的己方武将，各自退守至与该城相邻、仍由己方持有的城池（`adjCities` + `cityOwnerSide` 过滤，找不到时原地不动）；胜方从「已现身武将」中随机挑选 2~4 名（`randInt(2,4)`，排除已在该城的）进驻该城成为新的本地驻防。
 
 **潜入敌境与刺杀**：`showDetail` 按目标与主角阵营关系互斥展示交友区（同阵营）或刺杀区（异阵营，非只读视图），刺杀按钮标注「-1⚡」耗行动力（与切磋同规格，行动力不足时置灰）。刺杀即经典单挑（`m.activeAssassin` 记目标，`Bond.data.assassinDay` 限每人每日一次），结算走 `RPG.onBattleEnd`：取胜则从六维中随机一维给敌将扣 1~3（`randInt(1,3)`）、主角名声 +15，落败则反过来扣主角自己同样一维 1~3；数值写入战役内 `m.statPenalty`（键为武将 id 或 `"hero"`），由 `Armory.geared()` 在既有装备加成之上一并减去，六维下限 10，且只影响本局战役展示与战斗数值、不写回武将图鉴全局默认值；展示侧的装备增量标注（`statRow`/`rpg-dim` 两处 `rd-gear`）按数值正负显示 `+N`/`-N`，避免负值被固定 `+` 前缀拼接成 `+-N`。为避免通用胜利结算里"不打不相识"友谊加成意外拉近与敌将关系，`Bond.addF` 在该分支被限定为仅同阵营对手才执行。
+
+## 十八、阵营大战亲历模式与武将大会
+
+**阵营大战亲历询问**：角色详情页新增「⚔️ 阵营大战」入口（`RPG.war()` → `War.open(heroGeneral())`，耗 1⚡ 于点击「开战」时结算），此前该入口在早期改版中曾被移除，本轮为配合下述「逐场询问」功能重新接回。`War.start(hero, opts)` 快捷模式下每逢队列轮到的一方是主角本人（`id===-1`）或现有队友（`Bond.inTeam`）时，`isHeroOrMate()` 判定为真，弹窗 `askJoinDuel()` 询问「亲自应战」（走 `autoPlayBattle` 进入经典单挑画面）或「自动观战」（照常 `autoBattle` 瞬间结算）；`War.abort()` 新增对该弹窗 pending promise 的清理，避免中途退出留下悬空的 `await`。
+
+**武将大会触发**：`isTournamentDay(day)` 即 `calYMD(day)` 的 `month∈{2,5,8,11} && dom===1`，在 `camp()` 中于月末边境战判定之前检查（`MapUI.checkTournament`）。若当前无任何已现身武将则直接跳过（凑不出赛程）。
+
+**报名与费用**：`checkTournament` 弹窗报名费按 `Math.round(ratingScore(heroGeneral())×2)` 计算（与招募费用同一量级公式），金币不足时报名按钮置灰。选择报名则立即 `Bond.spend(fee)`，若最终战报判定「杀入四强」（`heroPlacement().label` 命中 `/夺冠|决赛|半决赛/`，即至少打入四强赛轮次）则全额 `Bond.addGold(fee)` 退还。
+
+**参赛名单**：除主角外的 31 席从 `m.appeared` 已现身武将（不分阵营、含队友）中随机抽取，不足则以 `MapUI.byeFighter(i)` 生成的「轮空」占位武将（六维均为 10，几乎必败）补满，保证赛程恒定 32 强；`Tournament.size` 在开赛前强制重置为 32，避免沿用小游戏自由试玩残留的规模设置。
+
+**不参加时的后台判定**：`Tournament.simulate(parts)` 是新增的无 UI 纯逻辑赛程模拟（小组循环赛取前二 → 单败淘汰，全程 `autoBattle`），供主角选择不参加时仍在后台产生冠亚军并发放奖励，不占用/不影响 `Tournament` 模块的交互状态（`this.participants` 等）。
+
+**参加时的完赛回调**：`Tournament` 新增 `onDone` 可选回调（`settlePrediction` 内两处收尾分支均优先判断 `this.onDone`），设置后取代默认的 `RPG.onCupResult`／试玩战报弹窗，交由调用方（`MapUI.runTournament`）自行展示战报与结算奖励。
+
+**冠亚军奖励**：`MapUI.applyTournamentPrize(m, general, statAmt, isChampion)` 统一处理——冠军 `statAmt=3`、亚军 `statAmt=1`。主角六维加成经 `grantHeroStatGrowth`（`RPG.char.alloc[dim] += 加成`，逐维检查 `RPG.eff(c,k)<120` 挑选未封顶的维度，已全部封顶则加成为 0，不会突破上限）直接永久生效；非主角武将经 `grantNpcStatGrowth` 写入战役内新字段 `m.statGrowth[gid][dim]`（与 `m.statPenalty` 同构、符号相反），由 `Armory.geared()` 一并叠加展示，不写回武将图鉴全局数值。冠军额外触发 `grantChampionTreasure`：主角冠军 `Armory.guaranteedItem("legend")` 直接入库（未鉴定）；非主角冠军随机选定宝物类型 `Armory.makeItem(typeK,"legend")`，与其当前该类型已装备宝物比较稀有度/加成（`Armory.RARITIES` 顺序 + `bonus` 数值），更好则直接为其换装（原装备退回未装备状态），持平或更差（如双方皆为传说级）则改发一次 `grantNpcStatGrowth(m, championId, 3)`——与冠军的基础 +3 各自独立发放，因而运气不佳时会叠加为同一维度或不同维度累计 +6。
 
 **宿营反向夜袭**：宿营结算顺序为「天数+1 → 月末边境战判定 → 夜袭判定 → 常规天下快报/迁移提示」。若当前城池本地已现身武将中存在敌方阵营成员，15% 概率弹出夜袭（随机挑一名敌将发起），「应战」直接复用与主动刺杀完全相同的结算通道，胜负判定对称。
 

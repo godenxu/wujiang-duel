@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607112238";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607120003";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -1440,6 +1440,24 @@
       this.running = false;
       $("#war-start").disabled = false;
       if (BATTLE && BATTLE.spectate) { BATTLE.busy = false; if (BATTLE.abortResolve) BATTLE.abortResolve(); }
+      if (this._askResolve) { const r = this._askResolve; this._askResolve = null; r(false); }
+    },
+    // 快捷模式下轮到主角本人或团队成员出战：弹窗询问是否亲自进入经典单挑画面应战
+    askJoinDuel(cnF, jpF) {
+      return new Promise(resolve => {
+        this._askResolve = resolve;
+        const mine = isHeroOrMate(cnF) ? cnF : jpF, foe = mine === cnF ? jpF : cnF;
+        openOverlay(`<div class="result-card">
+          <h1>⚔️ 轮到您方出战</h1>
+          <div class="wdesc">${mine.id === -1 ? '您' : '您的队友 ' + mine.name}即将迎战 ${foe.name}（${sideName(foe.side)}），是否亲自上阵单挑？</div>
+          <div class="btns">
+            <button class="btn-primary" id="war-ask-join">亲自应战</button>
+            <button class="btn-ghost" id="war-ask-skip">自动观战</button>
+          </div>
+        </div>`);
+        $("#war-ask-join").onclick = () => { closeOverlay(); this._askResolve = null; resolve(true); };
+        $("#war-ask-skip").onclick = () => { closeOverlay(); this._askResolve = null; resolve(false); };
+      });
     },
     // 同步模式开关高亮
     syncModeBtns() {
@@ -1547,8 +1565,13 @@
 
         // 详情模式：切到经典单挑画面，自动演完整场；快捷模式：直接结算
         let res;
-        // 详情模式且未脱离观战：进入经典单挑画面演完整场；否则（快捷/已返回）直接结算
-        const showDuel = this.mode === "detail" && !this.detached;
+        // 详情模式且未脱离观战：进入经典单挑画面演完整场；否则（快捷/已返回）直接结算；
+        // 快捷模式下若轮到主角本人或其团队成员出战，额外询问是否亲自应战（不强制，跳过则按快捷结算）
+        let showDuel = this.mode === "detail" && !this.detached;
+        if (!showDuel && hero && (isHeroOrMate(cnFighter) || isHeroOrMate(jpFighter))) {
+          showDuel = await this.askJoinDuel(cnFighter, jpFighter);
+          if (this.gen !== myGen || this.aborted) return;  // 询问期间被中止/接管：安静退出
+        }
         if (showDuel) {
           res = await autoPlayBattle(cnFighter, jpFighter, {
             title: `阵营大战 · 第 ${battleNo} 阵`,
@@ -1646,6 +1669,8 @@
   function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } }
   function pad(n) { return ("#" + n).padEnd(4, " "); }
   function sideName(side) { return side === "cn" ? "三国" : "战国"; }
+  // 阵营大战快捷模式下用于判断某个（克隆的）武将是否为角色扮演主角本人或其现有队友
+  function isHeroOrMate(g) { return g.id === -1 || Bond.inTeam(g.id); }
 
   /* ============================================================
    *  组队大战：固定三国 vs 战国，双方各自最多 10 名武将带兵出战。
@@ -2447,6 +2472,33 @@
       this.draw();
       showScreen("cup");
     },
+    // 无界面的完整赛程模拟（小组循环赛取前二 → 单败淘汰），供武将大会主角不参赛时
+    // 仍在后台照常产生冠亚军（不影响/不使用当前 this.participants 等交互状态）
+    simulate(parts) {
+      const n = parts.length, gcount = n / 4;
+      let ko = [];
+      for (let i = 0; i < gcount; i++) {
+        const teams = parts.slice(i * 4, i * 4 + 4);
+        const stat = new Map(teams.map(t => [t.id, { g: t, w: 0, l: 0, hp: 0 }]));
+        [[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]].forEach(([x, y]) => {
+          const a = teams[x], b = teams[y], res = autoBattle(a, b);
+          const aHp = res.p1.g.id === a.id ? res.p1.hp : res.p2.hp;
+          const bHp = res.p1.g.id === b.id ? res.p1.hp : res.p2.hp;
+          const sa = stat.get(a.id), sb = stat.get(b.id);
+          sa.hp += Math.max(0, aHp); sb.hp += Math.max(0, bHp);
+          if (res.winner.id === a.id) { sa.w++; sb.l++; } else { sb.w++; sa.l++; }
+        });
+        const table = [...stat.values()].sort((x, y) => y.w - x.w || y.hp - x.hp);
+        ko.push(...table.slice(0, 2).map(s => s.g));
+      }
+      while (ko.length > 2) {
+        const next = [];
+        for (let i = 0; i < ko.length; i += 2) next.push(autoBattle(ko[i], ko[i + 1]).winner);
+        ko = next;
+      }
+      const final = autoBattle(ko[0], ko[1]);
+      return { champion: final.winner, runnerUp: final.loser };
+    },
     draw() {
       shuffle(this.participants);
       const n = this.size, gcount = n / 4;
@@ -2547,6 +2599,7 @@
       AudioSystem.sfx.victory();
       this.busy = false; this.render();
       this.settlePrediction(() => {
+        if (this.onDone) { const cb = this.onDone; this.onDone = null; this.rpgMode = false; cb(this.heroPlacement()); return; }
         if (this.rpgMode) { this.rpgMode = false; RPG.onCupResult(this.heroPlacement()); }
       });
     },
@@ -2599,6 +2652,7 @@
       this.busy = false; this.render();
       this.settlePrediction(() => {
         this.rpgMode = false;
+        if (this.onDone) { const cb = this.onDone; this.onDone = null; cb(this.heroPlacement()); return; }
         RPG.onCupResult(this.heroPlacement(), this.cupExp);
       }, true);
     },
@@ -3247,17 +3301,20 @@
     },
     // __geared 标记该对象已叠加过装备加成，避免战斗中生成的战斗单位(其 g 已是叠加结果)
     // 在详情弹窗里被 showDetail 二次叠加而显示虚高数值。
-    // 同时叠加刺杀等战役内负面效果（Campaign.mapState().statPenalty，owner 为武将id或"hero"），
-    // 只影响当局战役展示与交战，不写回全局武将图鉴数据。
+    // 同时叠加刺杀等战役内负面效果（Campaign.mapState().statPenalty，owner 为武将id或"hero"）与
+    // 武将大会等战役内正面效果（Campaign.mapState().statGrowth，同一 owner 键），只影响当局战役
+    // 展示与交战，不写回全局武将图鉴数据。
     geared(g, owner) {
       if (g.__geared) return g;
       const b = this.statBonus(owner);
       const m = typeof Campaign !== "undefined" && Campaign.mapState();
       const penalty = m && m.statPenalty && m.statPenalty[owner];
-      if (!Object.keys(b).length && !penalty) return g;
+      const growth = m && m.statGrowth && m.statGrowth[owner];
+      if (!Object.keys(b).length && !penalty && !growth) return g;
       const g2 = clone(g);
       Object.keys(b).forEach(k => { g2[k] = (g2[k] || 0) + b[k]; });
       if (penalty) Object.keys(penalty).forEach(k => { g2[k] = Math.max(10, (g2[k] || 0) - penalty[k]); });
+      if (growth) Object.keys(growth).forEach(k => { g2[k] = (g2[k] || 0) + growth[k]; });
       g2.__geared = true;
       return g2;
     },
@@ -3504,6 +3561,7 @@
           <div class="bt-head">🎒 我的装备<small>（点击槽位可装备/更换宝物库中的宝物）</small></div>
           <div class="eq-slots">${eqSlotsHtml("hero")}</div>
           <button class="cup-go" id="rpg-armory" style="margin-top:8px;width:100%">🏪 宝物库（仓库 · 商店 · 锻造）</button>
+          <button class="cup-go" id="rpg-war" style="margin-top:8px;width:100%">⚔️ 阵营大战（率队出征 · 耗 1⚡）</button>
         </div>
         <div class="section-hint">历练、悬赏、擂台/道场等设施挑战请在「天下游历」地图中进行（均计入经验与名声）；只想爽玩各模式可去首页「小游戏」。</div>
       </div>`;
@@ -3515,6 +3573,7 @@
       }
       $$(".rd-plus").forEach(b => b.onclick = () => this.allocate(b.dataset.k));
       $("#rpg-armory").onclick = () => ArmoryUI.open();
+      $("#rpg-war").onclick = () => this.war();
       $$(".bt-chip").forEach(el => el.onclick = () => {
         const tg = DB.get(+el.dataset.id); if (tg) showDetail(tg);
       });
@@ -3898,7 +3957,10 @@
 
   /* ============================================================
    *  天下地图：40 城（中原二十城 + 战国二十城）+ 对马岛海路中转
-   *  坐标为风格化的相对位置（%），道路为邻接关系，非精确测绘
+   *  坐标为风格化的相对位置（%），道路为邻接关系，非精确测绘；
+   *  hefei/higo/bungo/bizen/omi 五城坐标经过微调，避免与其无直接道路的另一条 ROADS
+   *  边几乎共线重叠——原坐标下这类"城池恰好落在别处两城连线正中间"会让玩家误以为
+   *  该城与那条线的两端都直接相连（实际上邻接关系仅由 ROADS 决定，与视觉上是否共线无关）
    * ============================================================ */
   const CITIES = [
     { id: "chengdu", n: "成都", side: "cn", x: 10, y: 55 },
@@ -3919,7 +3981,7 @@
     { id: "runan", n: "汝南", side: "cn", x: 32, y: 46 },
     { id: "xiapi", n: "下邳", side: "cn", x: 40, y: 36 },
     { id: "shouchun", n: "寿春", side: "cn", x: 36, y: 46 },
-    { id: "hefei", n: "合肥", side: "cn", x: 38, y: 50 },
+    { id: "hefei", n: "合肥", side: "cn", x: 35, y: 50 },
     { id: "wuchang", n: "武昌", side: "cn", x: 34, y: 58 },
     { id: "tsushima", n: "对马岛", side: "sea", x: 50, y: 66 },
     { id: "satsuma", n: "萨摩", side: "jp", x: 60, y: 82 },
@@ -3932,11 +3994,11 @@
     { id: "odawara", n: "小田原", side: "jp", x: 86, y: 42 },
     { id: "echigo", n: "越后", side: "jp", x: 76, y: 32 },
     { id: "oushu", n: "奥州", side: "jp", x: 82, y: 20 },
-    { id: "higo", n: "肥后", side: "jp", x: 56, y: 80 },
-    { id: "bungo", n: "丰后", side: "jp", x: 62, y: 76 },
+    { id: "higo", n: "肥后", side: "jp", x: 52, y: 78 },
+    { id: "bungo", n: "丰后", side: "jp", x: 59, y: 72 },
     { id: "izumo", n: "出云", side: "jp", x: 62, y: 64 },
-    { id: "bizen", n: "备前", side: "jp", x: 70, y: 64 },
-    { id: "omi", n: "近江", side: "jp", x: 76, y: 56 },
+    { id: "bizen", n: "备前", side: "jp", x: 72, y: 68 },
+    { id: "omi", n: "近江", side: "jp", x: 79, y: 59 },
     { id: "echizen", n: "越前", side: "jp", x: 70, y: 48 },
     { id: "kaga", n: "加贺", side: "jp", x: 72, y: 40 },
     { id: "mino", n: "美浓", side: "jp", x: 76, y: 48 },
@@ -3973,6 +4035,8 @@
   }
   function calLabel(day) { const d = calYMD(day); return `${d.year}年${d.month}月${d.dom}日`; }
   function isMonthEnd(day) { return day % 30 === 0; }
+  // 武将大会：每季度第二月（2/5/8/11 月）第 1 天举行
+  function isTournamentDay(day) { const d = calYMD(day); return [2, 5, 8, 11].includes(d.month) && d.dom === 1; }
   // 城池归属（可随边境阵营大战易主，独立于武将分布用的静态 c.side）：对马岛海路中转站初始划归战国一方，
   // 其余城池按其固有阵营起始归属
   function initCityOwner() {
@@ -4264,7 +4328,7 @@
           day: 1, ap: 1, apMax: 1, curCity: null, assign, appeared, nextAppearDay: 6,
           fame: 0, bounties, activeBounty: null,
           uniqueOwned: { chitu: false, senriGeta: false }, rivalsDefeated: [], cupWon: false, ending: false,
-          cityOwner: initCityOwner(), statPenalty: {}, activeAssassin: null,
+          cityOwner: initCityOwner(), statPenalty: {}, statGrowth: {}, activeAssassin: null,
         },
       };
       this.save();
@@ -4300,6 +4364,7 @@
       if (m.ending == null) { m.ending = false; changed = true; }
       if (!m.cityOwner) { m.cityOwner = initCityOwner(); changed = true; }
       if (!m.statPenalty) { m.statPenalty = {}; changed = true; }
+      if (!m.statGrowth) { m.statGrowth = {}; changed = true; }
       if (m.activeAssassin === undefined) { m.activeAssassin = null; changed = true; }
       if (changed) this.save();
       return m;
@@ -4642,7 +4707,7 @@
         <div class="mh-av">${avatarChar(c.name)}</div>
         <div class="mh-meta">
           <div class="mh-name">${c.name}</div>
-          <div class="mh-sub">Lv.${c.level} · 评分 ${ratingScore(hg)} ${ratingChip(hg)}</div>
+          <div class="mh-sub">Lv.${c.level} · ${ratingChip(hg)}</div>
         </div>
         <div class="mh-action-col">
           <div class="mh-fame">⭐ ${Campaign.fameLabel(m.fame || 0)}</div>
@@ -4984,7 +5049,8 @@
       const wandered = this.wanderGenerals(m);
       Campaign.save();
       AudioSystem.sfx.victory();
-      // 月末边境战、敌营夜袭均会另起弹窗/战斗流程，各自负责后续渲染，故提前返回避免与常规宿营提示叠加
+      // 武将大会、月末边境战、敌营夜袭均会另起弹窗/战斗流程，各自负责后续渲染，故提前返回避免与常规宿营提示叠加
+      if (isTournamentDay(m.day) && this.checkTournament(m)) return;
       if (isMonthEnd(m.day) && this.checkBorderWar(m)) return;
       if (this.checkAmbush(m)) return;
       const revealed = Campaign.checkAppearances();
@@ -5087,27 +5153,35 @@
         $("#bw-close").onclick = () => { closeOverlay(); this.render(); };
         return;
       }
-      // 亲征：率主角与同阵营队友，真正进入阵营大战小游戏（其余上阵武将从双方已现身武将中随机等量选取）
-      let cn = DB.list.filter(g => g.side === "cn" && m.appeared.includes(g.id)).map(clone);
-      let jp = DB.list.filter(g => g.side === "jp" && m.appeared.includes(g.id)).map(clone);
-      shuffle(cn); shuffle(jp);
+      // 亲征：率主角与同阵营队友，改用组队大战（TeamBattle）模式而非阵营大战——武将选择原则不变
+      // （双方均从已现身武将中取，主角与队友必上阵，其余随机补足，双方数量相等），
+      // 仅因 TeamBattle 单场最多 10 将上阵，双方数量额外取 min(...,10)（与国战攻城的做法一致）
+      const oppSide = heroSide === "cn" ? "jp" : "cn";
       const hero = RPG.heroGeneral();
-      showScreen("war");
-      War.start(hero, {
-        customRoster: { cn, jp },
+      const mates = Bond.teamGenerals().filter(g => g.side === heroSide);
+      const mateIds = new Set(mates.map(g => g.id));
+      let minePool = DB.list.filter(g => g.side === heroSide && m.appeared.includes(g.id) && !mateIds.has(g.id));
+      let theirPool = DB.list.filter(g => g.side === oppSide && m.appeared.includes(g.id));
+      shuffle(minePool); shuffle(theirPool);
+      const count = Math.min(1 + mates.length + minePool.length, theirPool.length, 10);
+      const mine = [hero, ...mates, ...minePool].slice(0, count);
+      const theirs = theirPool.slice(0, count);
+      TeamBattle.begin(mine, heroSide, {
+        exact: true, enemies: theirs, rpg: true,
         onDone: (result) => {
-          const winnerSide = result.cnWin ? "cn" : "jp";
+          const winnerSide = result.playerWon ? heroSide : oppSide;
           const capturedCity = this.applyBorderWarOutcome(m, edge, winnerSide);
           const c = RPG.char;
-          const goldGain = result.heroSideWon ? Bond.addGold(30 + result.heroKills * 5) : Bond.addGold(10);
-          if (result.heroSideWon) Campaign.addFame(20);
-          const exp = result.heroKills * 15 + (result.heroSideWon ? 60 : 15);
+          const heroAlive = result.mySurvivors.some(g => g.id === -1);
+          const goldGain = result.playerWon ? Bond.addGold(30 + result.kills * 5) : Bond.addGold(10);
+          if (result.playerWon) Campaign.addFame(20);
+          const exp = result.kills * 15 + (result.playerWon ? 60 : 15);
           c.exp += exp;
           let lvUp = 0;
           while (c.exp >= RPG.expNeed(c.level)) { c.exp -= RPG.expNeed(c.level); c.level++; c.points += 1; lvUp++; }
           RPG.save();
           const heroHtml = `<div class="mc-sect">🎖️ 你的战果</div>
-            <div class="wdesc">${result.heroAlive ? '全身而退' : '力战倒下（阵中负伤）'}，斩获 <b style="color:var(--cn-red)">${result.heroKills}</b> 员${result.heroSideWon ? `，己方 ${sideName(heroSide)} 全线告捷！夺取【${cityName(capturedCity)}】，名声 <b style="color:var(--cn-red)">+20</b>` : '，惜未能扭转战局。'}<br>获得经验 <b style="color:var(--cn-red)">+${exp}</b>${Bond.goldLine(goldGain)}${lvUp ? `<br>🎉 升级 ${lvUp} 级！` : ''}</div>`;
+            <div class="wdesc">${heroAlive ? '全身而退' : '力战倒下（阵中负伤）'}，本方战场斩获 <b style="color:var(--cn-red)">${result.kills}</b> 员${result.playerWon ? `，己方 ${sideName(heroSide)} 全线告捷！夺取【${cityName(capturedCity)}】，名声 <b style="color:var(--cn-red)">+20</b>` : '，惜未能扭转战局。'}<br>获得经验 <b style="color:var(--cn-red)">+${exp}</b>${Bond.goldLine(goldGain)}${lvUp ? `<br>🎉 升级 ${lvUp} 级！` : ''}</div>`;
           openOverlay(`<div class="result-card detail-card">
             <h1>⚔️ 边境战报</h1>
             <div class="wdesc">${cityName(a)} vs ${cityName(b)}：<b style="color:var(--cn-red)">${sideName(winnerSide)}</b>获胜，夺取【${cityName(capturedCity)}】</div>
@@ -5137,6 +5211,125 @@
         startClassicBattle(RPG.heroGeneral(), attacker, false, true);
       };
       return true;
+    },
+    // 武将大会（季度武将世界杯）：询问主角是否报名（较高报名费，杀入四强全额退还）；
+    // 无论主角是否参加，其余 31 席都从已现身武将中随机抽取（不含主角，不足 32 人以「轮空」占位替补，
+    // 队友与其他已现身武将一视同仁、独立参赛），冠亚军照常产生并发放奖励
+    checkTournament(m) {
+      const pool = DB.list.filter(g => m.appeared.includes(g.id));
+      if (!pool.length) return false;
+      const fee = Math.round(ratingScore(RPG.heroGeneral()) * 2);
+      openOverlay(`<div class="result-card detail-card">
+        <h1>🏆 武将大会</h1>
+        <div class="wdesc">四方豪杰云集，本季武将大会即将开幕（32 强淘汰赛）。是否报名参加？报名费 <b style="color:var(--cn-red)">${fee}</b> 金（现有 💰${Bond.gold()}），若能杀入四强将全额退还。</div>
+        <div class="btns">
+          <button class="btn-primary" id="tn-join" ${Bond.gold() < fee ? "disabled" : ""}>报名参加</button>
+          <button class="btn-ghost" id="tn-skip">不参加，静观其变</button>
+        </div>
+      </div>`);
+      $("#tn-join").onclick = () => { closeOverlay(); this.runTournament(m, pool, true); };
+      $("#tn-skip").onclick = () => { closeOverlay(); this.runTournament(m, pool, false); };
+      return true;
+    },
+    // 生成「轮空」占位武将：仅在已现身武将不足 32 人时用于补满赛程，几乎必败
+    byeFighter(i) {
+      return { id: -3000 - i, name: "轮空", title: "", intro: "", side: "cn", ti: 10, wu: 10, tong: 10, zhi: 10, zheng: 10, mei: 10 };
+    },
+    runTournament(m, pool, joining) {
+      let others = pool.slice(); shuffle(others);
+      others = others.slice(0, joining ? 31 : 32);
+      let i = 0;
+      while (others.length < (joining ? 31 : 32)) others.push(this.byeFighter(i++));
+      if (!joining) {
+        const { champion, runnerUp } = Tournament.simulate(others);
+        const champTxt = this.applyTournamentPrize(m, champion, 3, true);
+        const runnerTxt = this.applyTournamentPrize(m, runnerUp, 1, false);
+        toast(`🏆 本届武将大会：${champion.name} 夺冠，${runnerUp.name} 屈居亚军（你未参加）`);
+        this.render();
+        return;
+      }
+      const fee = Math.round(ratingScore(RPG.heroGeneral()) * 2);
+      Bond.spend(fee);
+      const parts = [RPG.heroGeneral(), ...others];
+      Tournament.size = 32;   // 武将大会固定 32 强，避免沿用小游戏自由试玩时残留的规模设置
+      Tournament.rpgMode = true;
+      Tournament.onDone = () => {
+        const champion = Tournament.champion;
+        const finalMatch = Tournament.koRounds[Tournament.koRounds.length - 1].matches[0];
+        const runnerUp = finalMatch.winner.id === finalMatch.a.id ? finalMatch.b : finalMatch.a;
+        const placement = Tournament.heroPlacement();
+        const reachedTop4 = !!placement && /夺冠|决赛|半决赛/.test(placement.label);
+        let feeHtml = "";
+        if (reachedTop4) { Bond.addGold(fee); feeHtml = `<br>杀入四强，报名费 <b style="color:var(--cn-red)">${fee}</b> 金全额退还！`; }
+        const champHtml = this.applyTournamentPrize(m, champion, 3, true);
+        const runnerHtml = this.applyTournamentPrize(m, runnerUp, 1, false);
+        openOverlay(`<div class="result-card detail-card">
+          <h1>🏆 武将大会战报</h1>
+          <div class="wdesc">冠军：<b style="color:var(--cn-red)">${champion.name}</b>${champion.id === -1 ? '（你）' : ''}　亚军：<b>${runnerUp.name}</b>${runnerUp.id === -1 ? '（你）' : ''}${feeHtml}</div>
+          <div class="wdesc">${champHtml}</div>
+          <div class="wdesc">${runnerHtml}</div>
+          <div class="btns"><button class="btn-primary" id="tn-close">返回天下地图</button></div>
+        </div>`);
+        $("#tn-close").onclick = () => { closeOverlay(); this.render(); showScreen("map"); };
+      };
+      Tournament.begin(parts);
+    },
+    applyTournamentPrize(m, general, statAmt, isChampion) {
+      const isHero = general.id === -1;
+      let html;
+      if (isHero) {
+        const { dimLabel, add } = this.grantHeroStatGrowth(statAmt);
+        html = `${isChampion ? '🏆 夺冠' : '🥈 亚军'}！你的${dimLabel} <b style="color:var(--cn-red)">+${add}</b>`;
+      } else {
+        const dimLabel = this.grantNpcStatGrowth(m, general.id, statAmt);
+        html = `${isChampion ? '🏆 夺冠' : '🥈 亚军'}：${general.name} 的${dimLabel} <b style="color:var(--cn-red)">+${statAmt}</b>（战役内生效）`;
+      }
+      if (isChampion) html += `<br>${this.grantChampionTreasure(m, general)}`;
+      return html;
+    },
+    // 主角六维随机一项 +amt（已达 120 上限的维度不会被抽中，除非全部已封顶）
+    grantHeroStatGrowth(amt) {
+      const c = RPG.char;
+      const eligible = DIMS.filter(([k]) => RPG.eff(c, k) < 120);
+      const pool = eligible.length ? eligible : DIMS;
+      const dim = pool[randInt(0, pool.length - 1)];
+      const room = Math.max(0, 120 - RPG.eff(c, dim[0]));
+      const add = Math.min(amt, room) || 0;
+      c.alloc[dim[0]] = (c.alloc[dim[0]] || 0) + add;
+      RPG.save();
+      return { dimLabel: dim[1], add };
+    },
+    // 非主角武将六维随机一项 +amt，写入战役内 Campaign.mapState().statGrowth（与 statPenalty 同键、符号相反的独立字段），
+    // 由 Armory.geared() 叠加展示，不写回武将图鉴全局数值
+    grantNpcStatGrowth(m, gid, amt) {
+      const dim = DIMS[randInt(0, DIMS.length - 1)];
+      if (!m.statGrowth) m.statGrowth = {};
+      if (!m.statGrowth[gid]) m.statGrowth[gid] = { ti: 0, wu: 0, tong: 0, zhi: 0, zheng: 0, mei: 0 };
+      m.statGrowth[gid][dim[0]] += amt;
+      Campaign.save();
+      return dim[1];
+    },
+    // 冠军额外获得一件传说级宝物：主角冠军直接收入宝物库（未鉴定）；非主角冠军与其当前同类型装备比较，
+    // 更好则直接换装，更差（含平局，如双方皆为传说级）则改发一次六维 +3（与上方的冠军基础奖励各自独立叠加）
+    grantChampionTreasure(m, champion) {
+      if (champion.id === -1) {
+        const item = Armory.guaranteedItem("legend");
+        return `另获得传说级宝物【${item.name}】，已放入宝物库（未鉴定）。`;
+      }
+      const typeK = Armory.TYPES[randInt(0, Armory.TYPES.length - 1)].k;
+      const newItem = Armory.makeItem(typeK, "legend");
+      const oldItem = Armory.itemsOf(champion.id).find(i => i.type === typeK);
+      const order = Armory.RARITIES.map(r => r.k);
+      const better = !oldItem || order.indexOf(newItem.rarity) > order.indexOf(oldItem.rarity) ||
+        (newItem.rarity === oldItem.rarity && newItem.bonus > oldItem.bonus);
+      if (better) {
+        if (oldItem) oldItem.equippedBy = null;
+        newItem.equippedBy = champion.id;
+        Armory.data.items.push(newItem); Armory.save();
+        return `喜获传说级宝物【${newItem.name}】，已为其换装！`;
+      }
+      const dimLabel = this.grantNpcStatGrowth(m, champion.id, 3);
+      return `所获传说级宝物不及其现有装备，改赠${dimLabel} <b style="color:var(--cn-red)">+3</b>。`;
     },
   };
 

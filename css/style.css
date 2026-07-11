@@ -951,8 +951,8 @@ html, body {
  *  武将扮演版改造 · 第一期：首页新结构 / 开局向导 / 宝物阁
  * ============================================================ */
 .menu-main { grid-template-columns: 1fr; max-width: 420px; }
-.menu-main .menu-btn:disabled { opacity: .4; cursor: not-allowed; filter: grayscale(.6); }
-.menu-main .menu-btn:disabled:active { transform: none; }
+.menu-main .menu-btn:disabled, .map-menu .menu-btn:disabled { opacity: .4; cursor: not-allowed; filter: grayscale(.6); }
+.menu-main .menu-btn:disabled:active, .map-menu .menu-btn:disabled:active { transform: none; }
 
 /* 本命天赋 / 成长模式提示 */
 .rd-talent { color: var(--cn-gold); font-style: normal; margin-left: 2px; font-size: 11px; }
