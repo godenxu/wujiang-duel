@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607111907";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607111929";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -4384,8 +4384,7 @@
           <span class="mts-item">⚡<b>${m.ap}</b>/${m.apMax}</span>
           <span class="mts-item">💰<b>${Bond.gold()}</b></span>
           <span class="mts-item">⭐<b>${m.fame || 0}</b></span>
-          <span class="mts-item">Lv.<b>${RPG.char.level}</b></span>
-          <button class="mts-camp" id="map-camp" title="宿营">🏕️</button>`;
+          <span class="mts-item">Lv.<b>${RPG.char.level}</b></span>`;
       }
       const C = $("#map-content");
       C.innerHTML = `<div class="map-wrap">
@@ -4448,26 +4447,8 @@
       const appearedHere = localGenerals.filter(g => m.appeared.includes(g.id));
       return `<div class="mc-sect local-gen-head">🚶 本地武将<small>已现身${appearedHere.length}/${localGenerals.length}</small><button class="mc-all-btn" id="map-all-gens">全部武将</button></div>
         <div class="mc-roster narrow">${appearedHere.map(g => `<button class="mc-gen ${g.side}" data-id="${g.id}">
-          <span class="mcg-av">${avatarChar(g.name)}</span><span class="mcg-name">${g.name}</span>
+          <span class="mcg-name">${g.name}</span>
         </button>`).join("") || '<div class="empty" style="padding:14px 4px">这座城暂无已现身的武将，游历天下终会遇见他们。</div>'}</div>`;
-    },
-    // 全部已现身武将清单：跨城汇总，含友谊值与当前所在城池
-    openAllGenerals() {
-      const m = Campaign.mapState();
-      const met = DB.list.filter(g => m.appeared.includes(g.id))
-        .slice().sort((a, b) => Bond.pts(b.id) - Bond.pts(a.id));
-      openOverlay(`<div class="result-card detail-card">
-        <h1>🌐 已现身武将（${met.length}）</h1>
-        <div class="buff-list" style="max-height:56vh;overflow-y:auto">
-          ${met.map(g => `<button class="buff-btn all-gen-item" data-id="${g.id}">
-            <span class="bi">${avatarChar(g.name)}</span>
-            <span class="bt"><b>${g.name}</b><small>📍<span class="allgen-city">${cityName(m.assign[g.id])}</span> · 友谊 ${Bond.pts(g.id)}${Bond.inTeam(g.id) ? " · 👥同袍" : ""}</small></span>
-          </button>`).join("") || '<div class="empty">尚未遇见任何武将，游历天下去结识他们吧。</div>'}
-        </div>
-        <div class="btns"><button class="btn-ghost" id="allgen-close">关闭</button></div>
-      </div>`);
-      $$(".all-gen-item").forEach(b => b.onclick = () => { const g = DB.get(+b.dataset.id); if (g) showDetail(g); });
-      $("#allgen-close").onclick = () => { closeOverlay(); this.render(); };
     },
     cityPanelHtml(m) {
       const c = cityDef(m.curCity);
@@ -4484,6 +4465,7 @@
           <button class="menu-btn" id="map-shop"><span class="mi">🏪</span><span>集市<small>本地货摊每日上新 · ${factorTxt}</small></span></button>
           <button class="menu-btn" id="map-forge"><span class="mi">⚒️</span><span>铁匠铺<small>专精${smithType.n}锻造 · 有减免</small></span></button>
           ${fac ? `<button class="menu-btn" id="map-facility" ${m.ap <= 0 ? "disabled" : ""}><span class="mi">${fac.icon}</span><span>${fac.n}<small>设施挑战扬名 · 耗 1⚡</small></span></button>` : ""}
+          <button class="menu-btn" id="map-camp"><span class="mi">🏕️</span><span>宿营<small>推进一天 · 行动力回满</small></span></button>
         </div>
         ${bounties.length ? `<div class="mc-sect">📋 悬赏榜</div>
         <div class="mc-bounty-list">${bounties.map(b => `<div class="mc-bounty ${b.legendary ? 'legendary' : ''}">
@@ -4502,7 +4484,7 @@
       const facBtn = $("#map-facility"); if (facBtn) facBtn.onclick = () => this.openFacility();
       const campBtn = $("#map-camp"); if (campBtn) campBtn.onclick = () => this.camp();
       const charBtn = $("#map-char"); if (charBtn) charBtn.onclick = () => RPG.open();
-      const allGenBtn = $("#map-all-gens"); if (allGenBtn) allGenBtn.onclick = () => this.openAllGenerals();
+      const allGenBtn = $("#map-all-gens"); if (allGenBtn) allGenBtn.onclick = () => AllGenUI.open();
     },
     // 地图缩放/拖动：鼠标拖拽、触控拖拽、双指捏合缩放、滚轮缩放、右上角 +/- 按钮；缩放状态跨渲染持久（MapZoom 为模块级变量）
     applyZoom(box) {
@@ -4789,6 +4771,74 @@
         count++;
       });
       return count;
+    },
+  };
+
+  /* ============================================================
+   *  全部武将（战役内已现身名录）：与武将图鉴同一 db-table 风格的只读表格，
+   *  不含新增/编辑/删除；六维与评分按 Armory.geared() 叠加当前装备的实时数值，
+   *  另加友谊值与当前所在城池两列
+   * ============================================================ */
+  const AllGenUI = {
+    side: "all",
+    sort: { key: "bond", dir: -1 },   // 默认按友谊从高到低
+    open() {
+      this.side = "all";
+      $$(".side-tab[data-agside]").forEach(t => t.classList.toggle("active", t.dataset.agside === "all"));
+      const kw = $("#allgen-search"); if (kw) kw.value = "";
+      this.render();
+      showScreen("allgen");
+    },
+    setSide(side) {
+      this.side = side;
+      $$(".side-tab[data-agside]").forEach(t => t.classList.toggle("active", t.dataset.agside === side));
+      this.render();
+    },
+    sortBy(key) {
+      if (this.sort.key === key) this.sort.dir *= -1;
+      else this.sort = { key, dir: key === "name" || key === "city" ? 1 : -1 };
+      this.render();
+    },
+    render() {
+      const m = Campaign.mapState();
+      const list = $("#allgen-list");
+      if (!m) { list.innerHTML = '<div class="empty">尚未开局</div>'; return; }
+      const kw = ($("#allgen-search") && $("#allgen-search").value.trim()) || "";
+      let arr = DB.list.filter(g => m.appeared.includes(g.id));
+      if (this.side !== "all") arr = arr.filter(g => g.side === this.side);
+      if (kw) arr = arr.filter(g => g.name.includes(kw) || (g.title || "").includes(kw));
+      const rows = arr.map(g => ({ g, hg: Armory.geared(g, g.id) }));
+      const { key, dir } = this.sort;
+      rows.sort((a, b) => {
+        if (key === "name") return a.g.name.localeCompare(b.g.name, "zh") * dir;
+        if (key === "city") return cityName(m.assign[a.g.id]).localeCompare(cityName(m.assign[b.g.id]), "zh") * dir;
+        let va, vb;
+        if (key === "rating") { va = ratingScore(a.hg); vb = ratingScore(b.hg); }
+        else if (key === "bond") { va = Bond.pts(a.g.id); vb = Bond.pts(b.g.id); }
+        else { va = a.hg[key]; vb = b.hg[key]; }
+        return (va - vb) * dir;
+      });
+      const arrow = k => key === k ? (dir > 0 ? " ▲" : " ▼") : "";
+      const th = (k, label) => `<th data-sort="${k}" class="${key === k ? 'sorted' : ''}">${label}${arrow(k)}</th>`;
+      const head = `<tr>${th("name", "姓名")}${DIMS.map(([k, l]) => th(k, l[0])).join("")}${th("rating", "评分")}<th>评级</th>${th("bond", "友谊")}${th("city", "所在城")}</tr>`;
+      const body = rows.map(({ g, hg }) => {
+        const cells = DIMS.map(([k]) => `<td class="num gt-${rateLetter(hg[k])}">${hg[k]}</td>`).join("");
+        return `<tr data-id="${g.id}">
+          <td class="dt-name ${g.side}"><span class="dt-dot"></span>${g.name}</td>
+          ${cells}
+          <td class="dt-total">${ratingScore(hg)}</td>
+          <td class="dt-grade">${ratingChip(hg)}</td>
+          <td class="num">${Bond.pts(g.id)}</td>
+          <td class="allgen-city">${cityName(m.assign[g.id])}</td>
+        </tr>`;
+      }).join("");
+      list.innerHTML = rows.length
+        ? `<table class="db-table"><thead>${head}</thead><tbody>${body}</tbody></table>`
+        : `<div class="empty">未找到符合条件的已现身武将</div>`;
+      $$("#allgen-list th[data-sort]").forEach(h => h.onclick = () => this.sortBy(h.dataset.sort));
+      $$("#allgen-list tbody tr").forEach(tr => {
+        tr.onclick = () => { const g = DB.get(+tr.dataset.id); if (g) showDetail(g); };
+      });
     },
   };
 
@@ -5289,6 +5339,8 @@
       closeOverlay();
       // 宝物库（仓库/商店/锻造）挂在角色扮演主页或天下地图之下，退出应回到发起它的那一层（而非直接回首页）
       if ($("#screen-armory").classList.contains("active") && RPG.char) { goHome(); return; }
+      // 全部武将名录固定挂在天下地图之下
+      if ($("#screen-allgen").classList.contains("active")) { MapUI.open(); return; }
       // 角色扮演主页现为天下地图之下的角色详情页，退出固定回到地图（若尚未开局才回首页）
       if ($("#screen-rpg").classList.contains("active")) {
         if (RPG.char && Campaign.meta && Campaign.meta.active) { MapUI.open(); return; }
@@ -5334,6 +5386,10 @@
     $("#db-export").onclick = () => DBUI.exportJSON();
     $("#db-import").onchange = e => { if (e.target.files[0]) DBUI.importJSON(e.target.files[0]); e.target.value = ""; };
     $("#db-reset").onclick = () => { if (confirm("恢复为默认 200 名武将？将覆盖当前数据库。")) { DB.resetDefault(); DBUI.render(); toast("已恢复默认"); } };
+
+    // 全部武将（战役内已现身名录）
+    $$(".side-tab[data-agside]").forEach(t => t.onclick = () => AllGenUI.setSide(t.dataset.agside));
+    $("#allgen-search").oninput = () => AllGenUI.render();
 
     bindAudio();
     syncAudioBtns();
