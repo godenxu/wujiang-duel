@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607120003";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607120025";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -218,24 +218,24 @@
     }
     if (showFriendBox) {
       const p = Bond.pts(g.id), lv = Bond.levelName(p), next = Bond.nextThreshold(p);
-      const pct = Math.min(100, p / 250 * 100);
+      const atCap = p >= Bond.MAX_FRIEND;
+      const pct = Math.min(100, p / Bond.MAX_FRIEND * 100);
       let giftsRow = "";
       if (bondable) {
         const inTeam = Bond.inTeam(g.id);
         const teamFull = Bond.data.team.length >= Bond.teamLimit();
         const recruitLbl = inTeam ? "✓ 已在队中"
-          : p < 150 ? "🔒 挚友后可招募"
+          : !atCap ? `🔒 友谊满上限（${Bond.MAX_FRIEND}）后可招募`
           : teamFull ? "🔁 招募（满员，需替换队友）"
-          : p >= 250 ? "🤝 招募入队（免费）"
           : `🤝 招募入队（${Bond.recruitCost(g)} 金）`;
         const visitedToday = (Bond.data.visitDay || {})[g.id] === Bond.dayKey();
         const sparredToday = (Bond.data.sparDay || {})[g.id] === Bond.dayKey();
         const mSpar = Campaign.mapState();
         const sparNoAp = !!mSpar && mSpar.ap <= 0;
         giftsRow = `<div class="bond-gifts">
-          <button class="gift-btn ${visitedToday ? "dim" : ""}" id="bond-visit">🚶 拜访（+1~2）${visitedToday ? "（今日已访）" : ""}</button>
+          <button class="gift-btn ${(atCap || visitedToday) ? "dim" : ""}" id="bond-visit">🚶 拜访（+1~2）${atCap ? "（友谊已满）" : visitedToday ? "（今日已访）" : ""}</button>
           <button class="gift-btn ${(sparredToday || sparNoAp) ? "dim" : ""}" id="bond-spar">⚔️ 切磋（-1⚡）${sparredToday ? "（今日已切磋）" : sparNoAp ? "（行动力不足）" : ""}</button>
-          <button class="gift-btn recruit ${inTeam || p < 150 ? "dim" : ""}" id="bond-recruit">${recruitLbl}</button>
+          <button class="gift-btn recruit ${inTeam || !atCap ? "dim" : ""}" id="bond-recruit">${recruitLbl}</button>
         </div>`;
       }
       bondHtml = `<div class="bond-box">
@@ -2923,12 +2923,13 @@
     },
     spend(n) { if (this.data.gold < n) return false; this.data.gold -= n; this.save(); return true; },
     pts(id) { return this.data.friends[id] || 0; },
+    MAX_FRIEND: 300,
     addF(id, n) {
       if (!RPG.char || id == null || id === -1) return;
-      this.data.friends[id] = Math.min(999, (this.data.friends[id] || 0) + n);
+      this.data.friends[id] = Math.min(this.MAX_FRIEND, (this.data.friends[id] || 0) + n);
     },
     addMany(gens, n) { (gens || []).forEach(g => g && this.addF(g.id, n)); this.save(); },
-    LEVELS: [[250, "生死之交"], [150, "挚友"], [80, "好友"], [30, "相识"], [0, "陌生"]],
+    LEVELS: [[300, "生死之交"], [150, "挚友"], [80, "好友"], [30, "相识"], [0, "陌生"]],
     levelName(p) { return this.LEVELS.find(([t]) => p >= t)[1]; },
     nextThreshold(p) { const up = this.LEVELS.slice().reverse().find(([t]) => t > p); return up ? up[0] : null; },
     teamLimit() { return 5 + Math.floor(((RPG.char && RPG.char.level) || 1) / 10); },
@@ -2936,17 +2937,18 @@
     // 注：不在此预先叠加装备加成——如今任何武将的装备加成统一由 makeFighter/makeTroopUnit
     // 在其真正上场结算时按 id 查询叠加，避免队友在此处理和上场结算时被重复叠加。
     teamGenerals() { return this.data.team.map(id => DB.get(id)).filter(Boolean); },
-    recruitCost(g) { return ratingScore(g) * 2; },
-    // 招募：挚友(150)可花金，生死之交(250)免费；团队已满时须传入 replaceId 指定顶替的队友，
+    // 招募改为重金：只有友谊满上限（300）才谈得上招募，且金额较挚友期大幅上调，不再有免费档
+    recruitCost(g) { return ratingScore(g) * 10; },
+    // 招募：友谊须满上限（300）方可谈及，且始终需付重金；团队已满时须传入 replaceId 指定顶替的队友，
     // 队友不可被随意请出团队——唯一的移除途径就是被新招募的武将顶替。
     recruit(g, replaceId) {
       const p = this.pts(g.id);
       if (this.inTeam(g.id)) { toast(`${g.name} 已在队中`); return false; }
-      if (p < 150) { toast("友谊未到「挚友」，还不能招募"); return false; }
+      if (p < this.MAX_FRIEND) { toast(`友谊未满上限（${this.MAX_FRIEND}），还不能招募`); return false; }
       if (this.data.team.length >= this.teamLimit() && !(replaceId != null && this.data.team.includes(replaceId))) {
         toast(`团队已满（${this.teamLimit()} 人上限），需选择一名队友替换`); return false;
       }
-      const cost = p >= 250 ? 0 : this.recruitCost(g);
+      const cost = this.recruitCost(g);
       if (cost > 0 && !this.spend(cost)) { toast(`金币不足（需 ${cost} 金）`); return false; }
       let replacedName = "";
       if (replaceId != null && this.data.team.includes(replaceId)) {
@@ -2982,6 +2984,7 @@
     },
     // 拜访：无需宝物，每名武将每（游戏）天限一次，友谊随机小额增长
     visit(g) {
+      if (this.pts(g.id) >= this.MAX_FRIEND) { toast(`${g.name} 友谊已至上限，无需再拜访`); return false; }
       const today = this.dayKey();
       if (!this.data.visitDay) this.data.visitDay = {};
       if (this.data.visitDay[g.id] === today) { toast(`今天已拜访过 ${g.name}，宿营过夜后可再访`); return false; }
@@ -3192,21 +3195,24 @@
     },
     // 奇珍某效果在四档稀有度下的数值（体魄沿用通用属性加成表，其余效果各有独立幅度表）
     curioVals(effect) { return effect === "ti" ? this.RARITIES.map(r => r.bonus) : this.CURIO_VALS[effect]; },
+    // 加成数值在基础档位之上小幅浮动：普通1~2、精良3~5、稀有6~8、传说9~10（每件宝物生成时各自独立随机）
+    BONUS_RANGE: { normal: [1, 2], fine: [3, 5], rare: [6, 8], legend: [9, 10] },
+    rollBonus(rarityK) { const [lo, hi] = this.BONUS_RANGE[rarityK]; return randInt(lo, hi); },
     makeItem(typeK, rarityK, tmpl) {
-      const type = this.typeDef(typeK), rar = this.rarityDef(rarityK);
+      const type = this.typeDef(typeK);
       const pool = this.pool(typeK);
       const t = tmpl || pool[randInt(0, pool.length - 1)];
       const rIdx = this.RARITIES.findIndex(r => r.k === rarityK);
       let stat, bonus;
       if (typeK === "curio") {
         stat = t.effect || "ti";
-        bonus = t.bonusOverride ? t.bonusOverride[rIdx] : this.curioVals(stat)[rIdx];
+        bonus = t.bonusOverride ? t.bonusOverride[rIdx] : (stat === "ti" ? this.rollBonus(rarityK) : this.curioVals(stat)[rIdx]);
       } else if (typeK === "book") {
         stat = t.stat || "zhi";   // 每部典籍按其性质固定加智力或政治，不再随机
-        bonus = t.bonusOverride ? t.bonusOverride[rIdx] : rar.bonus;
+        bonus = t.bonusOverride ? t.bonusOverride[rIdx] : this.rollBonus(rarityK);
       } else {
         stat = type.stat;
-        bonus = t.bonusOverride ? t.bonusOverride[rIdx] : rar.bonus;
+        bonus = t.bonusOverride ? t.bonusOverride[rIdx] : this.rollBonus(rarityK);
       }
       const item = { uid: this.data.nextUid++, type: typeK, tid: t.n, name: t.n, icon: type.icon, intro: t.intro, rarity: rarityK, stat, bonus, equippedBy: null, identified: true };
       if (!this.data.discovered.includes(t.n)) this.data.discovered.push(t.n);
@@ -3374,9 +3380,11 @@
       this.save();
       return true;
     },
-    // discount 为真时（对马黑市常驻 / 行脚商队奇遇临时触发）全场八折
+    // discount 为真时（对马黑市常驻 / 行脚商队奇遇临时触发）全场八折；
+    // 基础售价按稀有度基准加成数值的约1000倍计算（普通1000/精良3000/稀有6000/传说10000），
+    // 取基准值而非每件实际浮动后的加成——货摊/商店展示价格时实际宝物尚未生成，无从得知精确浮动值
     shopPrice(rarityK, discount) {
-      const base = { normal: 220, fine: 520, rare: 1100, legend: 2600 }[rarityK];
+      const base = this.rarityDef(rarityK).bonus * 1000;
       return discount ? Math.round(base * 0.8) : base;
     },
     buyShop(idx) {
@@ -3668,7 +3676,8 @@
         if (heroWon) { Campaign.addFame(8); extraHtml += `<br>🏯 设施挑战获胜，名声 <b style="color:var(--cn-red)">+8</b>`; }
         m.activeFacility = null; Campaign.save();
       }
-      // 切磋：胜利增进友谊，落败不加（每名武将每游戏日限一次，见 bond-spar 绑定处）
+      // 切磋：胜利增进友谊，落败不加（每名武将每游戏日限一次，见 bond-spar 绑定处）；
+      // 双方按彼此当前友谊值有 1%~31% 概率触发「切磋习得」——若败方六维中最高一项大于胜方同项数值，胜方该项 +1
       if (m && m.activeSpar != null) {
         if (heroWon && opp.id === m.activeSpar) {
           const add = randInt(3, 5);
@@ -3677,6 +3686,7 @@
         } else if (opp.id === m.activeSpar) {
           extraHtml += `<br>⚔️ 切磋落败，未能增进与 ${opp.name} 的友谊`;
         }
+        extraHtml += this.trySparLearn(m, heroWon, opp);
         m.activeSpar = null; Campaign.save();
       }
       // 刺杀：潜入敌境对敌方阵营武将的单挑。胜则重创敌将六维（随机一项 -1~3，写入 Campaign 战役内 statPenalty，
@@ -3709,6 +3719,28 @@
         </div></div>`);
       $("#rpg-again").onclick = () => { closeOverlay(); this.train(); };
       $("#rpg-hub").onclick = () => { closeOverlay(); goHome(); };
+    },
+    // 切磋习得：按对手当前友谊值算出 1%~31% 的触发概率；命中后比较双方（按当前实际数值，含装备/惩罚/成长加成）
+    // 六维——若败方六维中最高一项严格大于胜方同一项，胜方该项 +1（主角走 alloc 永久成长，NPC 走战役内 statGrowth）
+    trySparLearn(m, heroWon, opp) {
+      const chance = 0.01 + (Bond.pts(opp.id) / Bond.MAX_FRIEND) * 0.30;
+      if (Math.random() >= chance) return "";
+      const winnerG = heroWon ? this.heroGeneral() : Armory.geared(opp, opp.id);
+      const loserG = heroWon ? Armory.geared(opp, opp.id) : this.heroGeneral();
+      const loserBest = DIMS.reduce((best, d) => loserG[d[0]] > loserG[best[0]] ? d : best, DIMS[0]);
+      const [dimKey, dimLabel] = loserBest;
+      if ((winnerG[dimKey] || 0) >= (loserG[dimKey] || 0)) return "";
+      if (heroWon) {
+        if (RPG.eff(this.char, dimKey) >= 120) return "";
+        this.char.alloc[dimKey] = (this.char.alloc[dimKey] || 0) + 1;
+        this.save();
+        return `<br>💡 切磋中你悟得 ${opp.name} 之长，${dimLabel} <b style="color:var(--cn-red)">+1</b>！`;
+      }
+      if (!m.statGrowth) m.statGrowth = {};
+      if (!m.statGrowth[opp.id]) m.statGrowth[opp.id] = { ti: 0, wu: 0, tong: 0, zhi: 0, zheng: 0, mei: 0 };
+      m.statGrowth[opp.id][dimKey] += 1;
+      Campaign.save();
+      return `<br>💡 ${opp.name} 从你身上悟得一二，${dimLabel} <b style="color:var(--cn-red)">+1</b>！`;
     },
 
     /* ---- 报名世界杯（16 / 32 强） ---- */
