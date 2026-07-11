@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607120025";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607120110";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -2924,9 +2924,13 @@
     spend(n) { if (this.data.gold < n) return false; this.data.gold -= n; this.save(); return true; },
     pts(id) { return this.data.friends[id] || 0; },
     MAX_FRIEND: 300,
+    // 返回实际增加量（可能因已达/接近上限而低于 n，甚至为 0）
     addF(id, n) {
-      if (!RPG.char || id == null || id === -1) return;
-      this.data.friends[id] = Math.min(this.MAX_FRIEND, (this.data.friends[id] || 0) + n);
+      if (!RPG.char || id == null || id === -1) return 0;
+      const before = this.data.friends[id] || 0;
+      const after = Math.min(this.MAX_FRIEND, before + n);
+      this.data.friends[id] = after;
+      return after - before;
     },
     addMany(gens, n) { (gens || []).forEach(g => g && this.addF(g.id, n)); this.save(); },
     LEVELS: [[300, "生死之交"], [150, "挚友"], [80, "好友"], [30, "相识"], [0, "陌生"]],
@@ -2973,8 +2977,8 @@
       const list = this.data.gifted[generalId] || (this.data.gifted[generalId] = []);
       if (list.includes(item.uid)) return 0;
       list.push(item.uid);
-      const add = this.GIFT_FRIEND[item.rarity] || 0;
-      this.addF(generalId, add); this.save();
+      const nominal = this.GIFT_FRIEND[item.rarity] || 0;
+      const add = this.addF(generalId, nominal); this.save();
       return add;
     },
     // "一天"的标识：开局后按游戏内天数（宿营推进），未开局时回退自然日
@@ -2989,10 +2993,9 @@
       if (!this.data.visitDay) this.data.visitDay = {};
       if (this.data.visitDay[g.id] === today) { toast(`今天已拜访过 ${g.name}，宿营过夜后可再访`); return false; }
       this.data.visitDay[g.id] = today;
-      const add = randInt(1, 2);
-      this.addF(g.id, add); this.save();
+      const add = this.addF(g.id, randInt(1, 2)); this.save();
       AudioSystem.sfx.select();
-      toast(`🚶 拜访 ${g.name}，畅谈甚欢，友谊 +${add}`);
+      toast(add > 0 ? `🚶 拜访 ${g.name}，畅谈甚欢，友谊 +${add}` : `🚶 拜访 ${g.name}，畅谈甚欢（友谊已至上限）`);
       return true;
     },
   };
@@ -3339,6 +3342,24 @@
       return true;
     },
 
+    /* ---- 出售：售价为市价的一半（低于市价），售出的宝物以货摊形式回流集市，可再被他人购得 ---- */
+    SELL_FACTOR: 0.5,
+    sellItem(uid) {
+      const idx = this.data.items.findIndex(i => i.uid === uid); if (idx < 0) return false;
+      const item = this.data.items[idx];
+      if (item.identified === false) { toast("需先鉴宝，才能出售"); return false; }
+      if (item.equippedBy) { toast("请先卸下装备再出售"); return false; }
+      const price = Math.round(this.shopPrice(item.rarity) * this.SELL_FACTOR);
+      const gold = Bond.addGold(price);
+      this.data.items.splice(idx, 1);
+      // 直接以该宝物自身的名称/描述/属性重建货摊模板，不依赖图鉴模板池（避免自建模板事后被删导致挂空引用）
+      const tmpl = { n: item.name, intro: item.intro, stat: item.stat, effect: item.stat };
+      this.data.shop.push({ type: item.type, rarity: item.rarity, tmpl });
+      this.save();
+      toast(`已出售「${item.name}」，获得 ${gold} 金（宝物已回流集市）`);
+      return true;
+    },
+
     /* ---- 锻造（保底：连续12次未出稀有以上，下一次必出稀有以上） ---- */
     FORGE_COST: 6,
     FORGE_GOLD: 40,
@@ -3569,7 +3590,6 @@
           <div class="bt-head">🎒 我的装备<small>（点击槽位可装备/更换宝物库中的宝物）</small></div>
           <div class="eq-slots">${eqSlotsHtml("hero")}</div>
           <button class="cup-go" id="rpg-armory" style="margin-top:8px;width:100%">🏪 宝物库（仓库 · 商店 · 锻造）</button>
-          <button class="cup-go" id="rpg-war" style="margin-top:8px;width:100%">⚔️ 阵营大战（率队出征 · 耗 1⚡）</button>
         </div>
         <div class="section-hint">历练、悬赏、擂台/道场等设施挑战请在「天下游历」地图中进行（均计入经验与名声）；只想爽玩各模式可去首页「小游戏」。</div>
       </div>`;
@@ -3581,7 +3601,6 @@
       }
       $$(".rd-plus").forEach(b => b.onclick = () => this.allocate(b.dataset.k));
       $("#rpg-armory").onclick = () => ArmoryUI.open();
-      $("#rpg-war").onclick = () => this.war();
       $$(".bt-chip").forEach(el => el.onclick = () => {
         const tg = DB.get(+el.dataset.id); if (tg) showDetail(tg);
       });
@@ -3593,7 +3612,7 @@
     allocate(k) {
       const c = this.char;
       if (c.points <= 0) return;
-      if (this.eff(c, k) >= 120) { toast("该维度已达上限 120"); return; }
+      if (this.eff(c, k) >= 110) { toast("该维度已达上限 110"); return; }
       // 本命天赋（少年模式最高两项）加点成长 +50%；巅峰模式整体成长减半
       const mul = (c.growthMul || 1) * (c.talents && c.talents.includes(k) ? 1.5 : 1);
       c.alloc[k] = (c.alloc[k] || 0) + mul;
@@ -3680,9 +3699,10 @@
       // 双方按彼此当前友谊值有 1%~31% 概率触发「切磋习得」——若败方六维中最高一项大于胜方同项数值，胜方该项 +1
       if (m && m.activeSpar != null) {
         if (heroWon && opp.id === m.activeSpar) {
-          const add = randInt(3, 5);
-          Bond.addF(opp.id, add); Bond.save();
-          extraHtml += `<br>⚔️ 切磋获胜，与 ${opp.name} 友谊 <b style="color:var(--cn-red)">+${add}</b>`;
+          const add = Bond.addF(opp.id, randInt(3, 5)); Bond.save();
+          extraHtml += add > 0
+            ? `<br>⚔️ 切磋获胜，与 ${opp.name} 友谊 <b style="color:var(--cn-red)">+${add}</b>`
+            : `<br>⚔️ 切磋获胜，惜与 ${opp.name} 友谊已至上限（${Bond.MAX_FRIEND}）`;
         } else if (opp.id === m.activeSpar) {
           extraHtml += `<br>⚔️ 切磋落败，未能增进与 ${opp.name} 的友谊`;
         }
@@ -3731,7 +3751,7 @@
       const [dimKey, dimLabel] = loserBest;
       if ((winnerG[dimKey] || 0) >= (loserG[dimKey] || 0)) return "";
       if (heroWon) {
-        if (RPG.eff(this.char, dimKey) >= 120) return "";
+        if (RPG.eff(this.char, dimKey) >= 110) return "";
         this.char.alloc[dimKey] = (this.char.alloc[dimKey] || 0) + 1;
         this.save();
         return `<br>💡 切磋中你悟得 ${opp.name} 之长，${dimLabel} <b style="color:var(--cn-red)">+1</b>！`;
@@ -5009,8 +5029,11 @@
       const isSea = m.curCity === "tsushima" || id === "tsushima";
       if (isSea && Math.random() < 0.2) { this.seaStorm(m); return; }
       m.curCity = id; Campaign.save();
+      // 团队成员与主角同行，一并迁至目的城池（使其在新城的「本地武将」名录中同步现身）
+      Bond.data.team.forEach(gid => { m.assign[gid] = id; });
+      Campaign.save();
       toast(`🚩 抵达${cityName(id)}`);
-      this.triggerEncounter(m);
+      if (!this.triggerTeamEncounter(m)) this.triggerEncounter(m);
       this.render();
     },
     // 渡海风暴：延误(耗尽当日行动力，滞留原地) 或 漂流(随机漂到另一港口，仍消耗本次移动)
@@ -5025,6 +5048,42 @@
         toast(`🌊 风暴突至！船只失控，漂流至意外之地——${cityName(drift)}！`);
       }
       this.render();
+    },
+    // 组队遭遇战：约 12% 概率触发，与「赶路奇遇」互斥（同次移动只触发其一）。
+    // 己方为主角与团队成员，敌方从对方阵营已现身武将中随机抽取相同人数，走组队大战（TeamBattle）结算
+    triggerTeamEncounter(m) {
+      if (Math.random() >= 0.12) return false;
+      const heroSide = RPG.char.side, oppSide = heroSide === "cn" ? "jp" : "cn";
+      const hero = RPG.heroGeneral();
+      const mates = Bond.teamGenerals().filter(g => g.side === heroSide);
+      let oppPool = DB.list.filter(g => g.side === oppSide && m.appeared.includes(g.id));
+      if (!oppPool.length) return false;
+      shuffle(oppPool);
+      const count = Math.min(1 + mates.length, oppPool.length, 10);
+      const mine = [hero, ...mates].slice(0, count);
+      const theirs = oppPool.slice(0, count);
+      toast(`⚔️ 途中遭遇${sideName(oppSide)}游兵，一场遭遇战一触即发！`);
+      TeamBattle.begin(mine, heroSide, {
+        exact: true, enemies: theirs, rpg: true,
+        onDone: (result) => {
+          const gold = result.playerWon ? Bond.addGold(20 + result.kills * 4) : Bond.addGold(5);
+          if (result.playerWon) Campaign.addFame(6);
+          const exp = result.kills * 12 + (result.playerWon ? 40 : 10);
+          const c = RPG.char;
+          c.exp += exp;
+          let lvUp = 0;
+          while (c.exp >= RPG.expNeed(c.level)) { c.exp -= RPG.expNeed(c.level); c.level++; c.points += 1; lvUp++; }
+          RPG.save();
+          const heroAlive = result.mySurvivors.some(g => g.id === -1);
+          openOverlay(`<div class="result-card detail-card">
+            <h1>⚔️ 遭遇战报</h1>
+            <div class="wdesc">${heroAlive ? '全身而退' : '力战倒下（阵中负伤）'}，本场斩获 <b style="color:var(--cn-red)">${result.kills}</b> 员${result.playerWon ? `，一战告捷！名声 <b style="color:var(--cn-red)">+6</b>` : '，惜未能取胜。'}<br>获得经验 <b style="color:var(--cn-red)">+${exp}</b>${Bond.goldLine(gold)}${lvUp ? `<br>🎉 升级 ${lvUp} 级！` : ''}</div>
+            <div class="btns"><button class="btn-primary" id="te-close">知道了</button></div>
+          </div>`);
+          $("#te-close").onclick = () => { closeOverlay(); this.render(); };
+        }
+      });
+      return true;
     },
     // 赶路奇遇：约 30% 概率触发，六选一（含小概率客栈奇遇）
     triggerEncounter(m) {
@@ -5319,13 +5378,13 @@
       if (isChampion) html += `<br>${this.grantChampionTreasure(m, general)}`;
       return html;
     },
-    // 主角六维随机一项 +amt（已达 120 上限的维度不会被抽中，除非全部已封顶）
+    // 主角六维随机一项 +amt（已达 110 上限的维度不会被抽中，除非全部已封顶）
     grantHeroStatGrowth(amt) {
       const c = RPG.char;
-      const eligible = DIMS.filter(([k]) => RPG.eff(c, k) < 120);
+      const eligible = DIMS.filter(([k]) => RPG.eff(c, k) < 110);
       const pool = eligible.length ? eligible : DIMS;
       const dim = pool[randInt(0, pool.length - 1)];
-      const room = Math.max(0, 120 - RPG.eff(c, dim[0]));
+      const room = Math.max(0, 110 - RPG.eff(c, dim[0]));
       const add = Math.min(amt, room) || 0;
       c.alloc[dim[0]] = (c.alloc[dim[0]] || 0) + add;
       RPG.save();
@@ -5603,7 +5662,10 @@
       <div class="ic-stat">${statLabel(item.stat)} +${item.bonus}${statUnit(item.stat)}</div>
       <div class="ic-intro">${item.intro}</div>
       ${ownerTag}
-      ${!item.equippedBy ? `<button class="ic-dismantle" data-uid="${item.uid}">拆解取材</button>` : ""}
+      ${!item.equippedBy ? `<div class="ic-btn-row">
+        <button class="ic-dismantle" data-uid="${item.uid}">拆解</button>
+        <button class="ic-sell" data-uid="${item.uid}">出售（${Math.round(Armory.shopPrice(item.rarity) * Armory.SELL_FACTOR)}金）</button>
+      </div>` : ""}
     </div>`;
   }
   // 装备槽位（供角色扮演主页/主角 与 武将详情/史实武将 共用）；未鉴定的宝物不会出现在此。
@@ -5741,6 +5803,10 @@
       $$(".ic-dismantle").forEach(b => b.onclick = () => {
         const item = Armory.data.items.find(i => i.uid === +b.dataset.uid);
         if (item && confirm(`确定拆解「${item.name}」？将永久失去此宝物，换取材料。`)) { Armory.dismantle(item.uid); this.render(); }
+      });
+      $$(".ic-sell").forEach(b => b.onclick = () => {
+        const item = Armory.data.items.find(i => i.uid === +b.dataset.uid);
+        if (item && confirm(`确定出售「${item.name}」？将永久失去此宝物，换取金币（宝物会回流集市）。`)) { Armory.sellItem(item.uid); this.render(); }
       });
       $$(".ic-identify").forEach(b => b.onclick = () => { if (Armory.identify(+b.dataset.uid)) this.render(); });
       const rf = $("#shop-refresh"); if (rf) rf.onclick = () => { if (Armory.refreshShop(true)) this.render(); };
