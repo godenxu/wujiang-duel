@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607111834";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607111907";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -4378,6 +4378,15 @@
     render() {
       const m = Campaign.mapState();
       if (!m || !RPG.char) { showScreen("home"); return; }
+      const statusBar = $("#map-topbar-status");
+      if (statusBar) {
+        statusBar.innerHTML = `<span class="mts-item">📅<b>${m.day}</b></span>
+          <span class="mts-item">⚡<b>${m.ap}</b>/${m.apMax}</span>
+          <span class="mts-item">💰<b>${Bond.gold()}</b></span>
+          <span class="mts-item">⭐<b>${m.fame || 0}</b></span>
+          <span class="mts-item">Lv.<b>${RPG.char.level}</b></span>
+          <button class="mts-camp" id="map-camp" title="宿营">🏕️</button>`;
+      }
       const C = $("#map-content");
       C.innerHTML = `<div class="map-wrap">
         <div class="map-top">
@@ -4386,13 +4395,7 @@
         <div class="map-bottom">
           <div class="map-info-col">
             ${this.heroCardHtml(m)}
-            <div class="map-day-strip">
-              <span class="mds-item">📅 第 <b>${m.day}</b> 天</span>
-              <span class="mds-item">⚡ <b>${m.ap}</b>/${m.apMax}</span>
-              <span class="mds-item">💰 <b>${Bond.gold()}</b></span>
-              <span class="mds-item">⭐ <b>${Campaign.fameLabel(m.fame || 0)}</b></span>
-              <button class="ms-camp" id="map-camp">🏕️ 宿营</button>
-            </div>
+            ${this.localGeneralsHtml(m)}
           </div>
           <div class="map-city-panel">
             ${this.cityPanelHtml(m)}
@@ -4432,18 +4435,43 @@
       return `<div class="map-hero-card ${c.side}">
         <div class="mh-av">${avatarChar(c.name)}</div>
         <div class="mh-meta">
-          <div class="mh-name">${c.name} <span class="rpg-lv">Lv.${c.level}</span></div>
-          <div class="mh-sub">评分 ${ratingScore(hg)} ${ratingChip(hg)} · ⭐${Campaign.fameLabel(m.fame || 0)}</div>
+          <div class="mh-name">${c.name}</div>
+          <div class="mh-sub">评分 ${ratingScore(hg)} ${ratingChip(hg)}</div>
         </div>
         <button class="cup-go" id="map-char">🎭 角色详情</button>
       </div>`;
     },
+    // 本地武将：原「游戏信息区域」（天数/行动力/金币/名声/等级已上移顶栏状态条）腾出的位置，
+    // 每条更窄以适应左栏宽度，右上角「全部武将」入口查看跨城完整名录
+    localGeneralsHtml(m) {
+      const localGenerals = DB.list.filter(g => m.assign[g.id] === m.curCity);
+      const appearedHere = localGenerals.filter(g => m.appeared.includes(g.id));
+      return `<div class="mc-sect local-gen-head">🚶 本地武将<small>已现身${appearedHere.length}/${localGenerals.length}</small><button class="mc-all-btn" id="map-all-gens">全部武将</button></div>
+        <div class="mc-roster narrow">${appearedHere.map(g => `<button class="mc-gen ${g.side}" data-id="${g.id}">
+          <span class="mcg-av">${avatarChar(g.name)}</span><span class="mcg-name">${g.name}</span>
+        </button>`).join("") || '<div class="empty" style="padding:14px 4px">这座城暂无已现身的武将，游历天下终会遇见他们。</div>'}</div>`;
+    },
+    // 全部已现身武将清单：跨城汇总，含友谊值与当前所在城池
+    openAllGenerals() {
+      const m = Campaign.mapState();
+      const met = DB.list.filter(g => m.appeared.includes(g.id))
+        .slice().sort((a, b) => Bond.pts(b.id) - Bond.pts(a.id));
+      openOverlay(`<div class="result-card detail-card">
+        <h1>🌐 已现身武将（${met.length}）</h1>
+        <div class="buff-list" style="max-height:56vh;overflow-y:auto">
+          ${met.map(g => `<button class="buff-btn all-gen-item" data-id="${g.id}">
+            <span class="bi">${avatarChar(g.name)}</span>
+            <span class="bt"><b>${g.name}</b><small>📍<span class="allgen-city">${cityName(m.assign[g.id])}</span> · 友谊 ${Bond.pts(g.id)}${Bond.inTeam(g.id) ? " · 👥同袍" : ""}</small></span>
+          </button>`).join("") || '<div class="empty">尚未遇见任何武将，游历天下去结识他们吧。</div>'}
+        </div>
+        <div class="btns"><button class="btn-ghost" id="allgen-close">关闭</button></div>
+      </div>`);
+      $$(".all-gen-item").forEach(b => b.onclick = () => { const g = DB.get(+b.dataset.id); if (g) showDetail(g); });
+      $("#allgen-close").onclick = () => { closeOverlay(); this.render(); };
+    },
     cityPanelHtml(m) {
       const c = cityDef(m.curCity);
       const isSea = c.side === "sea";
-      const localGenerals = DB.list.filter(g => m.assign[g.id] === m.curCity);
-      const appearedHere = localGenerals.filter(g => m.appeared.includes(g.id));
-      const hiddenCount = localGenerals.length - appearedHere.length;
       const fac = CITY_FACILITY[m.curCity];
       const bounties = (!isSea && m.bounties[m.curCity]) || [];
       const factor = cityPriceFactor(m.curCity);
@@ -4462,11 +4490,7 @@
           <div class="mcb-body"><div class="mcb-desc">${b.legendary ? '⭐ ' : ''}${b.desc}</div>
           <div class="mcb-reward">赏 ${b.rewardGold} 金 · 名声 +${b.rewardFame}</div></div>
           <button class="mcb-accept" data-uid="${b.uid}" ${m.ap <= 0 ? "disabled" : ""}>接取<small>-1⚡</small></button>
-        </div>`).join("")}</div>` : ""}
-        <div class="mc-sect">🚶 本地武将<small>${appearedHere.length} 位已现身${hiddenCount ? ` · 另有 ${hiddenCount} 位未现身` : ''}</small></div>
-        <div class="mc-roster">${appearedHere.map(g => `<button class="mc-gen ${g.side}" data-id="${g.id}">
-          <span class="mcg-av">${avatarChar(g.name)}</span><span class="mcg-name">${g.name}</span><span class="mcg-bond">${Bond.inTeam(g.id) ? "👥 " : ""}友谊 ${Bond.pts(g.id)}</span>
-        </button>`).join("") || '<div class="empty" style="padding:14px 4px">这座城暂无已现身的武将，游历天下终会遇见他们。</div>'}</div>`;
+        </div>`).join("")}</div>` : ""}`;
     },
     bind(m) {
       $$(".map-city").forEach(el => el.onclick = () => this.moveTo(el.dataset.id));
@@ -4478,6 +4502,7 @@
       const facBtn = $("#map-facility"); if (facBtn) facBtn.onclick = () => this.openFacility();
       const campBtn = $("#map-camp"); if (campBtn) campBtn.onclick = () => this.camp();
       const charBtn = $("#map-char"); if (charBtn) charBtn.onclick = () => RPG.open();
+      const allGenBtn = $("#map-all-gens"); if (allGenBtn) allGenBtn.onclick = () => this.openAllGenerals();
     },
     // 地图缩放/拖动：鼠标拖拽、触控拖拽、双指捏合缩放、滚轮缩放、右上角 +/- 按钮；缩放状态跨渲染持久（MapZoom 为模块级变量）
     applyZoom(box) {
@@ -4737,16 +4762,33 @@
       const m = Campaign.mapState();
       m.day++; m.ap = m.apMax;
       m.marketSold = {};   // 新的一天，各城集市重新上货
+      const wandered = this.wanderGenerals(m);
       Campaign.save();
       AudioSystem.sfx.victory();
       const revealed = Campaign.checkAppearances();
       if (revealed.length) {
         const names = revealed.map(id => { const g = DB.get(id); return g ? g.name : "？"; }).join("、");
         toast(`⚡ 天下快报：${names} 现身天下！（第 ${m.day} 天）`);
+      } else if (wandered) {
+        toast(`🚶 天下武将行踪有变，${wandered} 位已悄然改换驻地（第 ${m.day} 天）`);
       } else {
         toast(`🏕️ 宿营一夜，行动力已恢复（第 ${m.day} 天）`);
       }
       this.render();
+    },
+    // 已现身的武将每次宿营有小概率自行迁往同阵营的相邻城池（不含对马岛海路），令天下版图持续流动
+    wanderGenerals(m) {
+      let count = 0;
+      m.appeared.forEach(gid => {
+        if (Math.random() >= 0.03) return;
+        const g = DB.get(gid), cur = m.assign[gid];
+        if (!g || !cur) return;
+        const opts = adjCities(cur).filter(id => { const c = cityDef(id); return c && c.side === g.side; });
+        if (!opts.length) return;
+        m.assign[gid] = opts[randInt(0, opts.length - 1)];
+        count++;
+      });
+      return count;
     },
   };
 

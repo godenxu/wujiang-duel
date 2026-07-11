@@ -61,6 +61,19 @@ html, body {
 .topbar .back:active { background: rgba(255,255,255,.1); }
 .topbar h2 { margin: 0; font-size: 22px; color: var(--cn-gold); letter-spacing: 2px; flex: 1;
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#screen-map .topbar h2 { flex: 0 0 auto; }
+.map-topbar-status {
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+  gap: 6px 8px; flex: 1; min-width: 0; font-size: 12px; color: #c9b890; letter-spacing: 0;
+}
+.map-topbar-status .mts-item { white-space: nowrap; }
+.map-topbar-status .mts-item b { color: var(--cn-gold); font-family: "DotGothic16", monospace; font-size: 13px; }
+.map-topbar-status .mts-camp {
+  flex: 0 0 auto; width: 27px; height: 27px; border-radius: 8px; border: none;
+  background: linear-gradient(135deg, #f0d678, var(--accent)); color: #1a1410;
+  font-size: 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0;
+}
+.map-topbar-status .mts-camp:active { transform: scale(.92); }
 .audio-btns { display: flex; gap: 6px; align-items: center; }
 .audio-btns button {
   background: rgba(212,175,55,.15); border: 1px solid rgba(212,175,55,.4);
@@ -76,6 +89,7 @@ html, body {
 
 /* ---------- 标题页 ---------- */
 #screen-home { justify-content: center; align-items: center; text-align: center; padding: 24px; }
+#screen-minigames { align-items: center; }
 .home-title {
   font-size: clamp(34px, 9vw, 64px); font-weight: 900; letter-spacing: 6px;
   background: linear-gradient(180deg, #f7e9b0, var(--cn-gold) 40%, #b8860b);
@@ -1011,26 +1025,11 @@ html, body {
 .map-city.cn .mcity-dot { border-color: rgba(255,107,107,.7); background: linear-gradient(135deg, var(--cn-red), #7a1420); }
 .map-city.jp .mcity-dot { border-color: rgba(122,144,255,.7); background: linear-gradient(135deg, var(--jp-indigo), #141e3c); }
 .map-city.sea .mcity-dot { border-color: rgba(190,190,190,.6); background: #3a3a3a; }
-.mcity-name { font-size: 14px; font-weight: 700; color: #d8c79c; white-space: nowrap; line-height: 1; text-shadow: 0 1px 3px #000, 0 0 6px #000; }
+.mcity-name { font-size: 9px; font-weight: 700; color: #d8c79c; white-space: nowrap; line-height: 1; text-shadow: 0 1px 3px #000, 0 0 6px #000; }
 .map-city.cur .mcity-dot { border-color: var(--cn-gold); box-shadow: 0 0 10px rgba(232,194,90,.9); width: 16px; height: 16px; }
-.map-city.cur .mcity-name { color: var(--cn-gold); font-size: 16px; }
+.map-city.cur .mcity-name { color: var(--cn-gold); font-size: 11px; }
 .map-city.adj .mcity-dot { box-shadow: 0 0 8px rgba(90,214,106,.8); border-color: #5ad66a; }
 .map-city.far { opacity: .45; }
-
-/* 天数/行动力/金币/名声 一行横幅 + 宿营 */
-.map-day-strip {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 12px 8px;
-  padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(212,175,55,.35);
-  background: rgba(0,0,0,.35); font-size: 15px; color: #d8c79c; letter-spacing: 1px;
-}
-.mds-item b { color: var(--cn-gold); font-family: "DotGothic16", monospace; font-size: 17px; }
-.ms-camp {
-  margin-left: auto; padding: 9px 18px; border-radius: 20px; border: none;
-  background: linear-gradient(135deg, #f0d678, var(--accent)); color: #1a1410;
-  font-weight: 700; font-size: 15px; font-family: inherit; cursor: pointer; letter-spacing: 1px;
-  box-shadow: 0 3px 8px rgba(0,0,0,.35);
-}
-.ms-camp:active { transform: scale(.96); }
 
 /* 角色卡片（与养成主页 rpg-card 同一视觉语言） */
 .map-hero-card {
@@ -1074,17 +1073,27 @@ html, body {
 .mcb-accept:active { transform: scale(.96); }
 
 .mc-roster { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.mc-roster.narrow { grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); }
 .mc-gen {
   display: flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 10px;
   border: 1px solid rgba(212,175,55,.35); background: rgba(0,0,0,.32); color: var(--paper);
   font-family: inherit; cursor: pointer; text-align: left; width: 100%; min-width: 0;
   box-shadow: 0 2px 8px rgba(0,0,0,.25);
 }
+.mc-roster.narrow .mc-gen { padding: 5px 7px; gap: 4px; }
 .mc-gen:active { transform: scale(.97); }
 .mc-gen.cn { border-left: 3px solid var(--cn-red); }
 .mc-gen.jp { border-left: 3px solid var(--jp-indigo); }
 .mcg-av { font-size: 18px; flex: 0 0 auto; }
 .mcg-name { font-size: 15px; font-weight: 800; letter-spacing: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.local-gen-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.mc-all-btn {
+  margin-left: auto; font-size: 12px; padding: 4px 11px; border-radius: 14px;
+  border: 1px solid rgba(212,175,55,.5); background: rgba(212,175,55,.12); color: var(--cn-gold);
+  cursor: pointer; font-family: inherit; white-space: nowrap;
+}
+.mc-all-btn:active { transform: scale(.95); }
+.allgen-city { color: var(--cn-gold); }
 .mcg-bond { margin-left: auto; font-size: 12px; color: var(--cn-gold); white-space: nowrap; }
 
 /* 集市货摊：已售出置灰、右侧价签 */
@@ -1093,7 +1102,7 @@ html, body {
 .buff-btn:disabled { opacity: .4; cursor: not-allowed; }
 
 /* 宽屏/折叠屏展开：地图横贯顶部（约占可视高度 30%），下方左右两栏——
-   左为角色资料与状态条，右为城池事务（历练等行动卡 · 悬赏榜 · 本地武将） */
+   左为角色资料与本地武将（天数/行动力/金币/名声/等级已上移至顶栏状态条），右为城池事务（历练等行动卡 · 悬赏榜） */
 @media (min-width: 600px) {
   .map-top {
     position: sticky; top: 0; z-index: 3; padding-top: 4px;
@@ -1103,8 +1112,6 @@ html, body {
   .map-svg-box { height: clamp(200px, 30vh, 340px); margin-bottom: 6px; }
   .map-bottom { display: grid; grid-template-columns: 38% 62%; align-items: start; gap: 0 16px; }
   .map-info-col { grid-column: 1; padding: 4px 0 4px 12px; }
-  .map-info-col .map-day-strip { flex-direction: column; align-items: stretch; }
-  .map-info-col .ms-camp { margin-left: 0; width: 100%; text-align: center; }
   .map-hero-card { flex-wrap: wrap; }
   .map-hero-card .cup-go { width: 100%; text-align: center; }
   .map-city-panel { grid-column: 2; padding: 4px 12px 16px 0; }
