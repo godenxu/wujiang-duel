@@ -45,6 +45,17 @@
   - **全部武将详情改为只读**：`showDetail(g, opts)` 新增 `opts.readonly`——`bondable` 判定加入 `&& !opts.readonly`（不显示拜访/切磋/招募等交友板块），装备槽位仍显示当前真实装备（复用 `eqSlotsHtml`）但外层容器加 `.readonly` 类（CSS `pointer-events:none`），且不再调用 `bindEqSlots()`，双重确保不可点击更换；`AllGenUI` 的行点击从 `showDetail(g)` 改为 `showDetail(g, {readonly:true})`。
   - **顶栏信息去重排版**：等级信息从顶栏状态条移除，改在 `heroCardHtml` 的姓名下方、评分左侧显示（`Lv.${c.level} · 评分 ...`）；顶栏状态条本身通过 `flex-basis:100%` + `order` 强制独占一行，排在"返回箭头+标题+音乐按钮"那一行的下方，不论折叠屏展开与否都固定两行布局，不再出现文字挤在一起换行错位的问题。
   - **同步手机系统返回键**：原先内联在 `[data-back]` 点击事件里的路由判断逻辑抽成独立函数 `handleBackAction()`，`showScreen(id)` 在非"返回导航触发"时正常 `history.pushState`；新增 `popstate` 监听——弹窗打开时优先 `closeOverlay()` 并立即补推一条历史记录（不消耗"画面"层级，避免关闭弹窗被计成一次导航）；否则置位 `backNavActive` 标记后调用同一个 `handleBackAction()`（该标记使 `showScreen` 内部不再重复 push，避免历史栈因"返回导致的切屏"而越返越深）。首次进入的 `screen-home` 本就是 HTML 静态 `active`，从未走过 `showScreen()`，因此天然充当历史栈的"地基"——在首页再按一次返回键即为退出 PWA/关闭标签页的默认浏览器行为，符合预期。
+- **顶栏三度重排 + 悬赏丰富化**（已完成）：
+  - **全部武将详情恢复交友区**：`showDetail` 拆出 `showFriendBox`（同阵营即显示，不再受 `opts.readonly` 影响）与 `bondable`（决定是否渲染 `.bond-gifts` 拜访/切磋/招募三按钮，仍受 `opts.readonly` 约束）两个独立判定，`AllGenUI` 因此重新看得到目标武将的友谊进度条与等级，但保持不可互动。
+  - **顶栏信息第三次重排**：`#map-topbar-status` 精简到只剩当前游历天数（换算为下述天下历），行动力/金币移至 `cityPanelHtml` 的 `.mc-head-stats`（当前城池名称同一行右侧对齐），名声（含名声等级、等级在前）移至 `heroCardHtml` 新增的 `.mh-action-col`（`.mh-fame`，在「🎭 角色详情」按钮正上方），四类此前散落各处的状态首次实现"各自贴着与之最相关的元素显示"而非集中堆在一处。
+  - **天下历**：新增 `calYMD`/`calLabel`/`isMonthEnd` 三个纯函数，把 `Campaign.mapState().day` 这个从第 1 天起递增的原始计数器，换算为每年 12 月、每月 30 天的"X 年 X 月 X 日"展示格式；`isMonthEnd` 同时作为下述边境阵营大战的月度触发条件复用。
+  - **悬赏榜四类穿插 + 交互简化**：`genBounty` 新增"登塔令"（百人斩爬至指定层）与"双雄令"（2v2 取胜一场）两类，与既有讨伐令/车轮令按 4/2/2/2 权重穿插；`RPG.duo()` 拆分出 `RPG.duoPicker(apSpent)`，悬赏接取时以 `duoPicker(true)` 跳过二次扣行动力（`acceptBounty` 已统一扣过）。UI 上 `.mc-bounty-list` 由纵向单列改为两列网格，原先卡片内嵌套的"领取"按钮去掉，整张卡片本身即可点击接取。
+- **边境阵营大战与刺杀系统**（已完成）：
+  - **城池归属独立于武将分布**：新增 `m.cityOwner`（城池 id → `'cn'|'jp'`，随边境战事可变）与静态的 `c.side`（武将分布/悬赏出题等沿用的固有阵营标记）两套并行概念，`cityOwnerSide(m, id)` 统一读取入口；`initCityOwner()` 令海路中转站对马岛（唯一 `side==="sea"` 的城池）初始归属战国一方，其余城池归属与其固有阵营一致。
+  - **边境战自动识别**：`borderEdges(m)` 遍历 `ROADS`，筛出两端 `cityOwnerSide` 不同的边——天然只在对马岛与其两座三国邻城（建业/徐州）之间起步，但会随城池易主自然向外蔓延，无需为"前线"单独维护一份数据。
+  - **月末阵营大战**：`camp()` 中若 `isMonthEnd(m.day)` 成立则调用 `checkBorderWar`，逐条边境弹出 `openBorderWarPicker`——若涉及主角所在阵营可选择率团队亲征其中一场（`resolveBorderWars` 中把主角与同阵营队友强制编入该场角色阵营的队列），否则各地驻军自行迎战。战斗本体复用 `js/engine.js` 现成的 `autoBattle(g1,g2)` 单场极速判定（同一函数已用于既有的「阵营大战」小游戏），双方各出「已现身武将」中随机等量人马（`Math.min` 取两侧较小值），依次淘汰直到一方队列耗尽，胜方直接把 `m.cityOwner[捕获城]` 改写为己方，前线因而逐月推移；亲征分支额外结算主角经验/金币/名声。
+  - **潜入敌境唯有刺杀**：`showDetail` 新增 `assassinable`（同阵营改交友、异阵营且非 readonly 视图改「🗡️ 刺杀」，二者互斥），点击后进入与切磋相同的经典单挑通道，`m.activeAssassin` 记录目标；`RPG.onBattleEnd` 新增判定块——胜则从 `DIMS` 随机挑一维给敌将扣 1~3，败则反过来扣自己，全部写入战役内 `m.statPenalty`（`Armory.geared()` 在既有装备加成基础上一并减去，六维不低于 10，不写回武将图鉴全局数值）；`Bond.data.assassinDay` 提供与 `visitDay`/`sparDay` 一致的每日一次限制。为避免刺杀战胜的"不打不相识"惯例逻辑意外拉近与敌将的友谊，`RPG.onBattleEnd` 通用胜利分支的 `Bond.addF` 改为仅在 `opp.side === c.side` 时才执行。
+  - **宿营反向夜袭**：`MapUI.checkAmbush(m)` 在 `camp()` 天数递增后、月末边境战判定之后运行——若当前城池的本地已现身武将中恰好存在敌方阵营成员，15% 概率弹出夜袭提示，「应战」直接复用与主动刺杀完全相同的 `m.activeAssassin` + `RPG.onBattleEnd` 结算通道（胜负判定对称，无需为"谁发起的"另写一套逻辑）。
 
 ---
 
