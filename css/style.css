@@ -61,10 +61,11 @@ html, body {
 .topbar .back:active { background: rgba(255,255,255,.1); }
 .topbar h2 { margin: 0; font-size: 22px; color: var(--cn-gold); letter-spacing: 2px; flex: 1;
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#screen-map .topbar h2 { flex: 0 0 auto; }
+#screen-map .topbar { flex-wrap: wrap; }
 .map-topbar-status {
   display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
-  gap: 6px 10px; flex: 1; min-width: 0; font-size: 15px; color: #d8c79c; letter-spacing: 0;
+  gap: 6px 10px; flex: 1 0 100%; min-width: 0; font-size: 15px; color: #d8c79c; letter-spacing: 0;
+  order: 10; margin-top: 2px;
 }
 .map-topbar-status .mts-item { white-space: nowrap; }
 .map-topbar-status .mts-item b { color: var(--cn-gold); font-family: "DotGothic16", monospace; font-size: 17px; }
@@ -872,6 +873,7 @@ html, body {
 .eq-slots-wrap .eq-slot { background: rgba(0,0,0,.06); border-color: rgba(0,0,0,.2); }
 .eq-slots-wrap .eq-body { color: #5a4a30; }
 .eq-slots-wrap .eq-body small { color: #8a7d5e; }
+.eq-slots.readonly .eq-slot { cursor: default; pointer-events: none; opacity: .85; }
 
 /* ---------- 宝物库：仓库 / 图鉴 / 商店 / 锻造 ---------- */
 .armory-tabs .armory-tab { font-size: 15px; padding: 11px 6px; }
@@ -1014,16 +1016,19 @@ html, body {
   cursor: pointer; line-height: 1; font-family: inherit; padding: 0;
 }
 .map-zoom-ctl button:active { transform: scale(.92); }
-.map-city { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 2px; cursor: pointer; z-index: 1; padding: 4px; }
-.mcity-dot { display: block; width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(212,175,55,.4); background: rgba(20,12,8,.9); }
-.map-city.cn .mcity-dot { border-color: rgba(255,107,107,.7); background: linear-gradient(135deg, var(--cn-red), #7a1420); }
-.map-city.jp .mcity-dot { border-color: rgba(122,144,255,.7); background: linear-gradient(135deg, var(--jp-indigo), #141e3c); }
-.map-city.sea .mcity-dot { border-color: rgba(190,190,190,.6); background: #3a3a3a; }
-.mcity-name { font-size: 6px; font-weight: 700; color: #d8c79c; white-space: nowrap; line-height: 1; text-shadow: 0 1px 3px #000, 0 0 6px #000; }
-.map-city.cur .mcity-dot { border-color: var(--cn-gold); box-shadow: 0 0 10px rgba(232,194,90,.9); width: 16px; height: 16px; }
+.map-city {
+  position: absolute; transform: translate(-50%, -50%); display: flex; align-items: center; justify-content: center;
+  cursor: pointer; z-index: 1; padding: 1.5px 3px; min-width: 16px; border-radius: 3px;
+  border: 1px solid rgba(212,175,55,.45); background: rgba(20,12,8,.85);
+}
+.map-city.cn { border-color: rgba(255,107,107,.75); background: linear-gradient(135deg, rgba(193,39,45,.6), rgba(90,15,24,.75)); }
+.map-city.jp { border-color: rgba(122,144,255,.75); background: linear-gradient(135deg, rgba(43,58,103,.65), rgba(16,20,48,.75)); }
+.map-city.sea { border-color: rgba(190,190,190,.6); background: rgba(58,58,58,.75); }
+.mcity-name { font-size: 6px; font-weight: 700; color: #fff; white-space: nowrap; line-height: 1.4; text-shadow: 0 1px 2px #000; }
+.map-city.cur { border-color: var(--cn-gold); box-shadow: 0 0 8px rgba(232,194,90,.9); }
 .map-city.cur .mcity-name { color: var(--cn-gold); font-size: 8px; }
-.map-city.adj .mcity-dot { box-shadow: 0 0 8px rgba(90,214,106,.8); border-color: #5ad66a; }
-.map-city.far { opacity: .45; }
+.map-city.adj { box-shadow: 0 0 6px rgba(90,214,106,.8); border-color: #5ad66a; }
+.map-city.far { opacity: .5; }
 
 /* 角色卡片（与养成主页 rpg-card 同一视觉语言） */
 .map-hero-card {
@@ -1068,6 +1073,9 @@ html, body {
 
 .mc-roster { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
 .mc-roster.narrow { grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); }
+.mc-roster.narrow.triple { grid-template-columns: repeat(3, 1fr); }
+.mc-roster.narrow.triple .mc-gen { padding: 4px 5px; justify-content: center; text-align: center; }
+.mc-roster.narrow.triple .mcg-name { font-size: 13px; }
 .mc-gen {
   display: flex; align-items: center; gap: 6px; padding: 6px 9px; border-radius: 10px;
   border: 1px solid rgba(212,175,55,.35); background: rgba(0,0,0,.32); color: var(--paper);
@@ -1079,13 +1087,7 @@ html, body {
 .mc-gen.cn { border-left: 3px solid var(--cn-red); }
 .mc-gen.jp { border-left: 3px solid var(--jp-indigo); }
 .mcg-name { font-size: 15px; font-weight: 800; letter-spacing: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.local-gen-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.mc-all-btn {
-  margin-left: auto; font-size: 12px; padding: 4px 11px; border-radius: 14px;
-  border: 1px solid rgba(212,175,55,.5); background: rgba(212,175,55,.12); color: var(--cn-gold);
-  cursor: pointer; font-family: inherit; white-space: nowrap;
-}
-.mc-all-btn:active { transform: scale(.95); }
+.allgen-btn { display: block; width: 100%; text-align: center; margin: 8px 0 4px; }
 .allgen-city { color: var(--cn-gold); }
 .mcg-bond { margin-left: auto; font-size: 12px; color: var(--cn-gold); white-space: nowrap; }
 

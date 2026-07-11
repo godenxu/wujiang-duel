@@ -39,6 +39,12 @@
   - **顶栏状态字号放大 + 宿营按钮归位**：`#map-topbar-status` 字号由 12/13px 提升至 15/17px，更易辨读；「🏕️ 宿营」按钮从顶栏移出，并入 `cityPanelHtml` 的 `.menu.map-menu` 行动卡网格（与历练/集市/铁匠铺/设施同排同风格），顶栏因此腾出空间、只保留纯状态展示。
   - **本地武将条目精简**：`localGeneralsHtml` 的 `.mc-gen` 去掉 `avatarChar()` 生成的大字单姓头像（`.mcg-av`），只保留完整姓名，`.mc-roster.narrow` 的 `minmax` 相应从 78px 调宽到 92px 以容纳更长姓名不被省略号截断。
   - **全部武将改版为图鉴风格只读表格**：原先的卡片式弹窗（`buff-list`）替换为新增的独立页面 `#screen-allgen`（`AllGenUI` 模块），结构、CSS（`.db-table`/`.side-tabs`/`.search-box`）均与武将图鉴 `#screen-db` 一致——可按任意列排序、按三国/战国/全部筛选、按姓名搜索，但去除新增/编辑/删除等修改类操作；六维与评分不再取图鉴默认值，而是用 `Armory.geared(g, g.id)` 叠加该武将当前已装备宝物后的实时数值（与详情弹窗、战斗结算所见一致），并新增"友谊""所在城"两列（默认按友谊降序）。导航上固定挂在天下地图之下（`data-back` 处理逻辑新增 `#screen-allgen → MapUI.open()` 分支），点击任意武将行仍复用 `showDetail` 弹出完整详情（含赠礼/切磋/装备等所有既有交互）。
+- **地图交互与全局返回体验**（已完成）：
+  - **城市标记改矩形徽章**：`.map-city` 由"圆点 `.mcity-dot` + 下方悬浮 `.mcity-name`"改为单一矩形（圆角 3px，按阵营着色）容器，姓名直接排布在矩形内部，不再是两个视觉元素堆叠，客观上也略微缓解了 40 城密集时的重叠观感。
+  - **地图聚焦/全览按钮**：`.map-zoom-ctl` 新增 `#map-zoom-focus`（🎯，`MapUI.focusCurCity()`——按 `transform-origin:center` 的缩放数学关系换算出让当前城池坐标居中所需的 `translate`，缩放至 2.2 倍，超出可平移边界时被既有的 `clampZoomState` 安全收紧）与 `#map-zoom-overview`（🗺️，直接复位 `scale(1) translate(0,0)`）两个按钮。
+  - **全部武将详情改为只读**：`showDetail(g, opts)` 新增 `opts.readonly`——`bondable` 判定加入 `&& !opts.readonly`（不显示拜访/切磋/招募等交友板块），装备槽位仍显示当前真实装备（复用 `eqSlotsHtml`）但外层容器加 `.readonly` 类（CSS `pointer-events:none`），且不再调用 `bindEqSlots()`，双重确保不可点击更换；`AllGenUI` 的行点击从 `showDetail(g)` 改为 `showDetail(g, {readonly:true})`。
+  - **顶栏信息去重排版**：等级信息从顶栏状态条移除，改在 `heroCardHtml` 的姓名下方、评分左侧显示（`Lv.${c.level} · 评分 ...`）；顶栏状态条本身通过 `flex-basis:100%` + `order` 强制独占一行，排在"返回箭头+标题+音乐按钮"那一行的下方，不论折叠屏展开与否都固定两行布局，不再出现文字挤在一起换行错位的问题。
+  - **同步手机系统返回键**：原先内联在 `[data-back]` 点击事件里的路由判断逻辑抽成独立函数 `handleBackAction()`，`showScreen(id)` 在非"返回导航触发"时正常 `history.pushState`；新增 `popstate` 监听——弹窗打开时优先 `closeOverlay()` 并立即补推一条历史记录（不消耗"画面"层级，避免关闭弹窗被计成一次导航）；否则置位 `backNavActive` 标记后调用同一个 `handleBackAction()`（该标记使 `showScreen` 内部不再重复 push，避免历史栈因"返回导致的切屏"而越返越深）。首次进入的 `screen-home` 本就是 HTML 静态 `active`，从未走过 `showScreen()`，因此天然充当历史栈的"地基"——在首页再按一次返回键即为退出 PWA/关闭标签页的默认浏览器行为，符合预期。
 
 ---
 

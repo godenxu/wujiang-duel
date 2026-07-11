@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607111929";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607112008";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -103,6 +103,9 @@
     m.ap--; Campaign.save();
     return true;
   }
+  // 手机系统/浏览器返回键同步：每次切屏正常推入一条历史记录；popstate（硬件返回）触发时置位该标记，
+  // 使 showScreen 内部不再重复 push，避免历史栈因"返回导致的切屏"而越返越深
+  let backNavActive = false;
   function showScreen(id) {
     $$(".screen").forEach(s => s.classList.remove("active"));
     $("#screen-" + id).classList.add("active");
@@ -113,6 +116,40 @@
     if (BGM[id]) AudioSystem.playFile(BGM[id]);
     else AudioSystem.playChip();
     AudioSystem.resume();
+    if (!backNavActive) history.pushState({ screen: id }, "", "");
+  }
+  // 返回逻辑（原「返回」按钮点击与硬件/浏览器返回键共用）：战斗动画进行中阻止误触，
+  // 阵营大战观战/组队大战挑唆单挑有各自的中途退出规则，其余按 homeBase 或固定路由返回上一层
+  function handleBackAction() {
+    const onBattle = $("#screen-battle").classList.contains("active");
+    // 阵营大战详情观战：脱离单挑画面退回战报界面，但本场大战继续推进（非中止）
+    if (onBattle && BATTLE && BATTLE.spectate && BATTLE.mode !== "team") {
+      closeOverlay();
+      War.detach();   // 内部已切回战报界面、切到「快捷」并续算当前阵
+      return;
+    }
+    if (BATTLE && BATTLE.busy && onBattle) return;
+    // 组队大战·挑唆单挑中途退出：视为中止该场单挑，回到组队大战战场（不终止整场组队大战）
+    if (onBattle && BATTLE && BATTLE.mode === "team") {
+      const b = BATTLE; BATTLE = null;
+      closeOverlay();
+      showScreen(b.backScreen || "home");
+      if (b.abortResolve) b.abortResolve();
+      return;
+    }
+    if (BATTLE) BATTLE.busy = false;
+    War.abort();   // 终止可能在进行中的阵营大战
+    closeOverlay();
+    // 宝物库（仓库/商店/锻造）挂在角色扮演主页或天下地图之下，退出应回到发起它的那一层（而非直接回首页）
+    if ($("#screen-armory").classList.contains("active") && RPG.char) { goHome(); return; }
+    // 全部武将名录固定挂在天下地图之下
+    if ($("#screen-allgen").classList.contains("active")) { MapUI.open(); return; }
+    // 角色扮演主页现为天下地图之下的角色详情页，退出固定回到地图（若尚未开局才回首页）
+    if ($("#screen-rpg").classList.contains("active")) {
+      if (RPG.char && Campaign.meta && Campaign.meta.active) { MapUI.open(); return; }
+      showScreen("home"); return;
+    }
+    showScreen("home");
   }
 
   /* ---------------- 弹窗 ---------------- */
@@ -149,9 +186,10 @@
   }
 
   function showDetail(g, opts = {}) {
-    // 友谊面板：有自选武将(角色扮演)且对象是库中武将时显示；opts.global（武将图鉴全局视图）时完全不显示进度数据，只呈现默认六维
+    // 友谊面板：有自选武将(角色扮演)且对象是库中武将时显示；opts.global（武将图鉴全局视图）时完全不显示进度数据，只呈现默认六维；
+    // opts.readonly（全部武将名录只读视图）呈现真实战役数值但不展示交友互动，装备槽只看不可点
     let bondHtml = "", eqHtml = "";
-    const bondable = !opts.global && RPG.char && g.id !== -1 && DB.get(g.id);
+    const bondable = !opts.global && !opts.readonly && RPG.char && g.id !== -1 && DB.get(g.id);
     // 装备加成：六维数值、雷达图、总评均按「若此武将佩戴其当前装备」实时展示。
     // hg 是叠加装备后的最终值（若传入的 g 本就来自战斗单位、已叠加过，则原样沿用，避免二次叠加）；
     // raw 专门用于计算装备增量标注——重新查一份「不含装备」的原始六维做对比基准，
@@ -160,6 +198,9 @@
     const raw = opts.global ? g : (g.id === -1
       ? (RPG.char ? Object.assign({}, g, Object.fromEntries(DIMS.map(([k]) => [k, RPG.eff(RPG.char, k)]))) : g)
       : (DB.get(g.id) || g));
+    if (opts.readonly && !opts.global && g.id !== -1 && DB.get(g.id)) {
+      eqHtml = `<div class="eq-slots-wrap"><div class="bt-head">🎒 携带宝物</div><div class="eq-slots compact readonly">${eqSlotsHtml(g.id, true)}</div></div>`;
+    }
     if (bondable) {
       const p = Bond.pts(g.id), lv = Bond.levelName(p), next = Bond.nextThreshold(p);
       const inTeam = Bond.inTeam(g.id);
@@ -4383,8 +4424,7 @@
         statusBar.innerHTML = `<span class="mts-item">📅<b>${m.day}</b></span>
           <span class="mts-item">⚡<b>${m.ap}</b>/${m.apMax}</span>
           <span class="mts-item">💰<b>${Bond.gold()}</b></span>
-          <span class="mts-item">⭐<b>${m.fame || 0}</b></span>
-          <span class="mts-item">Lv.<b>${RPG.char.level}</b></span>`;
+          <span class="mts-item">⭐<b>${m.fame || 0}</b></span>`;
       }
       const C = $("#map-content");
       C.innerHTML = `<div class="map-wrap">
@@ -4413,7 +4453,7 @@
       const dots = CITIES.map(c => {
         const cls = c.id === m.curCity ? "cur" : adj.includes(c.id) ? "adj" : "far";
         return `<div class="map-city ${c.side} ${cls}" data-id="${c.id}" style="left:${c.x}%;top:${c.y}%">
-          <span class="mcity-dot"></span><span class="mcity-name">${c.n}</span>
+          <span class="mcity-name">${c.n}</span>
         </div>`;
       }).join("");
       return `<div class="map-zoom-layer">
@@ -4427,6 +4467,8 @@
       <div class="map-zoom-ctl">
         <button id="map-zoom-in" type="button">＋</button>
         <button id="map-zoom-out" type="button">－</button>
+        <button id="map-zoom-focus" type="button" title="聚焦当前城市">🎯</button>
+        <button id="map-zoom-overview" type="button" title="显示全景">🗺️</button>
       </div>`;
     },
     heroCardHtml(m) {
@@ -4435,20 +4477,21 @@
         <div class="mh-av">${avatarChar(c.name)}</div>
         <div class="mh-meta">
           <div class="mh-name">${c.name}</div>
-          <div class="mh-sub">评分 ${ratingScore(hg)} ${ratingChip(hg)}</div>
+          <div class="mh-sub">Lv.${c.level} · 评分 ${ratingScore(hg)} ${ratingChip(hg)}</div>
         </div>
         <button class="cup-go" id="map-char">🎭 角色详情</button>
       </div>`;
     },
-    // 本地武将：原「游戏信息区域」（天数/行动力/金币/名声/等级已上移顶栏状态条）腾出的位置，
-    // 每条更窄以适应左栏宽度，右上角「全部武将」入口查看跨城完整名录
+    // 本地武将：原「游戏信息区域」（天数/行动力/金币/名声已上移顶栏状态条，等级已移入角色资料卡）腾出的位置，
+    // 每行 3 个更紧凑；「全部武将」改为与「角色详情」同风格的大按钮，置于名录下方
     localGeneralsHtml(m) {
       const localGenerals = DB.list.filter(g => m.assign[g.id] === m.curCity);
       const appearedHere = localGenerals.filter(g => m.appeared.includes(g.id));
-      return `<div class="mc-sect local-gen-head">🚶 本地武将<small>已现身${appearedHere.length}/${localGenerals.length}</small><button class="mc-all-btn" id="map-all-gens">全部武将</button></div>
-        <div class="mc-roster narrow">${appearedHere.map(g => `<button class="mc-gen ${g.side}" data-id="${g.id}">
+      return `<div class="mc-sect">🚶 本地武将<small>已现身${appearedHere.length}/${localGenerals.length}</small></div>
+        <div class="mc-roster narrow triple">${appearedHere.map(g => `<button class="mc-gen ${g.side}" data-id="${g.id}">
           <span class="mcg-name">${g.name}</span>
-        </button>`).join("") || '<div class="empty" style="padding:14px 4px">这座城暂无已现身的武将，游历天下终会遇见他们。</div>'}</div>`;
+        </button>`).join("") || '<div class="empty" style="padding:14px 4px">这座城暂无已现身的武将，游历天下终会遇见他们。</div>'}</div>
+        <button class="cup-go allgen-btn" id="map-all-gens">🌐 全部武将</button>`;
     },
     cityPanelHtml(m) {
       const c = cityDef(m.curCity);
@@ -4561,6 +4604,19 @@
       const zoomStep = d => { MapZoom.scale += d; if (MapZoom.scale <= 1.001) { MapZoom.x = 0; MapZoom.y = 0; } this.clampZoomState(box); this.applyZoom(box); };
       const inBtn = $("#map-zoom-in"); if (inBtn) inBtn.onclick = () => zoomStep(0.4);
       const outBtn = $("#map-zoom-out"); if (outBtn) outBtn.onclick = () => zoomStep(-0.4);
+      const focusBtn = $("#map-zoom-focus"); if (focusBtn) focusBtn.onclick = () => this.focusCurCity(box);
+      const overviewBtn = $("#map-zoom-overview"); if (overviewBtn) overviewBtn.onclick = () => { MapZoom.scale = 1; MapZoom.x = 0; MapZoom.y = 0; this.applyZoom(box); };
+    },
+    // 聚焦当前城市：以其相对坐标为中心放大（越靠近地图边缘，越可能被 clampZoomState 的平移边界收紧，属预期内的安全兜底）
+    focusCurCity(box) {
+      const m = Campaign.mapState(); if (!m) return;
+      const c = cityDef(m.curCity); if (!c) return;
+      const rect = box.getBoundingClientRect();
+      MapZoom.scale = 2.2;
+      MapZoom.x = MapZoom.scale * rect.width * (0.5 - c.x / 100);
+      MapZoom.y = MapZoom.scale * rect.height * (0.5 - c.y / 100);
+      this.clampZoomState(box);
+      this.applyZoom(box);
     },
     /* ---- 集市：每城每（游戏）日一批本地货摊，价格按城市行情浮动；已购摊位当日售罄 ---- */
     openMarket() {
@@ -4837,7 +4893,7 @@
         : `<div class="empty">未找到符合条件的已现身武将</div>`;
       $$("#allgen-list th[data-sort]").forEach(h => h.onclick = () => this.sortBy(h.dataset.sort));
       $$("#allgen-list tbody tr").forEach(tr => {
-        tr.onclick = () => { const g = DB.get(+tr.dataset.id); if (g) showDetail(g); };
+        tr.onclick = () => { const g = DB.get(+tr.dataset.id); if (g) showDetail(g, { readonly: true }); };
       });
     },
   };
@@ -5316,37 +5372,19 @@
       }, 150);
     });
 
-    // 返回（仅在战斗进行中且正处于战斗画面时才阻止）
-    $$("[data-back]").forEach(b => b.onclick = () => {
-      const onBattle = $("#screen-battle").classList.contains("active");
-      // 阵营大战详情观战：脱离单挑画面退回战报界面，但本场大战继续推进（非中止）
-      if (onBattle && BATTLE && BATTLE.spectate && BATTLE.mode !== "team") {
+    // 返回（点击左上角箭头）：与硬件/浏览器返回键（见下方 popstate 监听）共用同一套 handleBackAction 逻辑
+    $$("[data-back]").forEach(b => b.onclick = handleBackAction);
+    // 手机系统/浏览器返回键同步：弹窗打开时优先关闭弹窗（不消耗画面层级，随即补回一条历史记录）；
+    // 否则与左上角返回箭头走同一套逻辑（backNavActive 置位期间 showScreen 不再重复 push，避免历史栈越返越深）
+    window.addEventListener("popstate", () => {
+      if (overlay.classList.contains("show")) {
         closeOverlay();
-        War.detach();   // 内部已切回战报界面、切到「快捷」并续算当前阵
+        history.pushState({ t: Date.now() }, "", "");
         return;
       }
-      if (BATTLE && BATTLE.busy && onBattle) return;
-      // 组队大战·挑唆单挑中途退出：视为中止该场单挑，回到组队大战战场（不终止整场组队大战）
-      if (onBattle && BATTLE && BATTLE.mode === "team") {
-        const b = BATTLE; BATTLE = null;
-        closeOverlay();
-        showScreen(b.backScreen || "home");
-        if (b.abortResolve) b.abortResolve();
-        return;
-      }
-      if (BATTLE) BATTLE.busy = false;
-      War.abort();   // 终止可能在进行中的阵营大战
-      closeOverlay();
-      // 宝物库（仓库/商店/锻造）挂在角色扮演主页或天下地图之下，退出应回到发起它的那一层（而非直接回首页）
-      if ($("#screen-armory").classList.contains("active") && RPG.char) { goHome(); return; }
-      // 全部武将名录固定挂在天下地图之下
-      if ($("#screen-allgen").classList.contains("active")) { MapUI.open(); return; }
-      // 角色扮演主页现为天下地图之下的角色详情页，退出固定回到地图（若尚未开局才回首页）
-      if ($("#screen-rpg").classList.contains("active")) {
-        if (RPG.char && Campaign.meta && Campaign.meta.active) { MapUI.open(); return; }
-        showScreen("home"); return;
-      }
-      showScreen("home");
+      backNavActive = true;
+      handleBackAction();
+      backNavActive = false;
     });
 
     // 选将
