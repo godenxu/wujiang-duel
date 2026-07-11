@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607102050";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607111834";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -3427,7 +3427,8 @@
     },
 
     // 历练解锁所需的最低名声阶梯：初期靠悬赏/切磋/设施打出名声后才开放这一自由练级手段
-    TRAIN_FAME_TIER: 1,
+    TRAIN_FAME_TIER: 2,
+    CUP_FAME_TIER: 4,
     /* ---- 历练（天下地图开启后消耗 1 点行动力；名声需达「小有名气」阶梯方可开放） ---- */
     train() {
       const m = typeof Campaign !== "undefined" && Campaign.mapState();
@@ -3515,7 +3516,7 @@
     /* ---- 报名世界杯（16 / 32 强） ---- */
     joinCup(size) {
       const mChk = Campaign.mapState();
-      if (mChk && Campaign.fameTierIndex(mChk.fame || 0) < 2) { toast("声望不足，需达到「威震一方」名声阶梯才能报名天下第一武道会"); return; }
+      if (mChk && Campaign.fameTierIndex(mChk.fame || 0) < this.CUP_FAME_TIER) { toast(`声望不足，需达到「${Campaign.FAME_TIERS[this.CUP_FAME_TIER].n}」名声阶梯才能报名天下第一武道会`); return; }
       if (!spendAP()) return;
       Tournament.size = size || 16;
       const hero = this.heroGeneral();
@@ -3750,7 +3751,7 @@
   };
 
   /* ============================================================
-   *  天下地图：20 城（中原十城 + 战国十城）+ 对马岛海路中转
+   *  天下地图：40 城（中原二十城 + 战国二十城）+ 对马岛海路中转
    *  坐标为风格化的相对位置（%），道路为邻接关系，非精确测绘
    * ============================================================ */
   const CITIES = [
@@ -3764,6 +3765,16 @@
     { id: "jingzhou", n: "荆州", side: "cn", x: 24, y: 58 },
     { id: "chaisang", n: "柴桑", side: "cn", x: 32, y: 60 },
     { id: "jianye", n: "建业", side: "cn", x: 40, y: 55 },
+    { id: "tianshui", n: "天水", side: "cn", x: 10, y: 34 },
+    { id: "baidicheng", n: "白帝城", side: "cn", x: 14, y: 60 },
+    { id: "shangyong", n: "上庸", side: "cn", x: 20, y: 50 },
+    { id: "jiangling", n: "江陵", side: "cn", x: 18, y: 62 },
+    { id: "wancheng", n: "宛城", side: "cn", x: 26, y: 48 },
+    { id: "runan", n: "汝南", side: "cn", x: 32, y: 46 },
+    { id: "xiapi", n: "下邳", side: "cn", x: 40, y: 36 },
+    { id: "shouchun", n: "寿春", side: "cn", x: 36, y: 46 },
+    { id: "hefei", n: "合肥", side: "cn", x: 38, y: 50 },
+    { id: "wuchang", n: "武昌", side: "cn", x: 34, y: 58 },
     { id: "tsushima", n: "对马岛", side: "sea", x: 50, y: 66 },
     { id: "satsuma", n: "萨摩", side: "jp", x: 60, y: 82 },
     { id: "aki", n: "安艺", side: "jp", x: 66, y: 66 },
@@ -3775,14 +3786,36 @@
     { id: "odawara", n: "小田原", side: "jp", x: 86, y: 42 },
     { id: "echigo", n: "越后", side: "jp", x: 76, y: 32 },
     { id: "oushu", n: "奥州", side: "jp", x: 82, y: 20 },
+    { id: "higo", n: "肥后", side: "jp", x: 56, y: 80 },
+    { id: "bungo", n: "丰后", side: "jp", x: 62, y: 76 },
+    { id: "izumo", n: "出云", side: "jp", x: 62, y: 64 },
+    { id: "bizen", n: "备前", side: "jp", x: 70, y: 64 },
+    { id: "omi", n: "近江", side: "jp", x: 76, y: 56 },
+    { id: "echizen", n: "越前", side: "jp", x: 70, y: 48 },
+    { id: "kaga", n: "加贺", side: "jp", x: 72, y: 40 },
+    { id: "mino", n: "美浓", side: "jp", x: 76, y: 48 },
+    { id: "mikawa", n: "三河", side: "jp", x: 82, y: 54 },
+    { id: "hitachi", n: "常陆", side: "jp", x: 90, y: 34 },
   ];
   const ROADS = [
     ["chengdu", "hanzhong"], ["hanzhong", "chang_an"], ["chang_an", "luoyang"], ["luoyang", "xuchang"],
     ["luoyang", "ye"], ["xuchang", "xuzhou"], ["xuchang", "jingzhou"], ["jingzhou", "chaisang"],
     ["chaisang", "jianye"], ["jianye", "xuzhou"], ["chengdu", "jingzhou"],
+    ["tianshui", "hanzhong"], ["tianshui", "chang_an"],
+    ["baidicheng", "chengdu"], ["baidicheng", "jiangling"], ["jiangling", "jingzhou"],
+    ["shangyong", "hanzhong"], ["shangyong", "jingzhou"],
+    ["wancheng", "luoyang"], ["wancheng", "xuchang"], ["wancheng", "jingzhou"],
+    ["runan", "xuchang"], ["xiapi", "xuzhou"],
+    ["shouchun", "xuzhou"], ["shouchun", "hefei"], ["hefei", "jianye"],
+    ["wuchang", "chaisang"], ["wuchang", "jianye"],
     ["satsuma", "aki"], ["aki", "kyoto"], ["kyoto", "osaka"], ["kyoto", "owari"], ["osaka", "owari"],
     ["owari", "kai"], ["owari", "sunpu"], ["kai", "sunpu"], ["sunpu", "odawara"], ["kai", "echigo"],
     ["echigo", "oushu"], ["odawara", "oushu"],
+    ["higo", "satsuma"], ["bungo", "satsuma"], ["bungo", "izumo"], ["izumo", "aki"],
+    ["bizen", "aki"], ["bizen", "osaka"],
+    ["omi", "kyoto"], ["omi", "owari"], ["echizen", "kyoto"], ["echizen", "kaga"], ["kaga", "echigo"],
+    ["mino", "owari"], ["mino", "omi"], ["mikawa", "owari"], ["mikawa", "sunpu"],
+    ["hitachi", "odawara"], ["hitachi", "oushu"],
     ["jianye", "tsushima"], ["xuzhou", "tsushima"], ["tsushima", "satsuma"],
   ];
   function cityDef(id) { return CITIES.find(c => c.id === id); }
@@ -3812,6 +3845,26 @@
     sunpu: { n: "东海道远征", icon: "🗺", mode: "conquest" },
     chaisang: { n: "江东水军演武", icon: "🏆", mode: "cup" },
     echigo: { n: "越后军神殿", icon: "🏆", mode: "cup" },
+    tianshui: { n: "天水论箭台", icon: "🏯", mode: "duel" },
+    baidicheng: { n: "白帝连营", icon: "🔥", mode: "gauntlet" },
+    shangyong: { n: "上庸孟达垒", icon: "🗼", mode: "tower" },
+    jiangling: { n: "江陵水寨", icon: "🤝", mode: "duo" },
+    wancheng: { n: "宛城伏兵阵", icon: "🛡", mode: "teamBattle" },
+    runan: { n: "汝南屯田营", icon: "🗺", mode: "conquest" },
+    xiapi: { n: "下邳辕门赛", icon: "🏆", mode: "cup" },
+    shouchun: { n: "寿春校武场", icon: "🏯", mode: "duel" },
+    hefei: { n: "合肥连胜阵", icon: "🔥", mode: "gauntlet" },
+    wuchang: { n: "武昌钓台", icon: "🗼", mode: "tower" },
+    higo: { n: "肥后武馆", icon: "🤝", mode: "duo" },
+    bungo: { n: "丰后铳阵", icon: "🛡", mode: "teamBattle" },
+    izumo: { n: "出云远征队", icon: "🗺", mode: "conquest" },
+    bizen: { n: "备前刀会", icon: "🏆", mode: "cup" },
+    omi: { n: "近江论战场", icon: "🏯", mode: "duel" },
+    echizen: { n: "越前一乘谷", icon: "🔥", mode: "gauntlet" },
+    kaga: { n: "加贺一向塔", icon: "🗼", mode: "tower" },
+    mino: { n: "美浓斋藤馆", icon: "🤝", mode: "duo" },
+    mikawa: { n: "三河武士团", icon: "🛡", mode: "teamBattle" },
+    hitachi: { n: "常陆远征所", icon: "🗺", mode: "conquest" },
   };
   // 集市折扣：对马岛黑市常驻八折；行脚商队奇遇触发后临时持续至 discountUntilDay
   function shopDiscountActive() {
@@ -3831,7 +3884,9 @@
   }
   function cityMarketStalls(m) {
     const rnd = seededRand(hashStr(m.curCity + "|" + m.day + "|" + ((Campaign.meta && Campaign.meta.createdAt) || 0)));
-    return Array.from({ length: 4 }, () => {
+    // 名声达「略有耳闻」（第 1 阶）起，声名远播招来更多行商，货摊数 4→5
+    const n = Campaign.fameTierIndex(m.fame || 0) >= 1 ? 5 : 4;
+    return Array.from({ length: n }, () => {
       const type = Armory.TYPES[Math.floor(rnd() * Armory.TYPES.length)];
       const total = Armory.RARITIES.reduce((s, r) => s + r.weight, 0);
       let x = rnd() * total, rar = "normal";
@@ -4040,13 +4095,18 @@
       if (changed) this.save();
       return m;
     },
-    // 名声四阶：无名之辈 → 小有名气 → 威震一方 → 名满天下；数值上限 9999，阶梯拉宽以放缓晋升节奏
+    // 名声九阶：数值上限 9999，各阶对应行动力上限/历练/武道会/集市/悬赏/铁匠铺渐进解锁（见 recalcApMax 与各处 fameTierIndex 判定）
     FAME_MAX: 9999,
     FAME_TIERS: [
       { n: "无名之辈", min: 0 },
+      { n: "略有耳闻", min: 150 },
       { n: "小有名气", min: 500 },
-      { n: "威震一方", min: 2000 },
-      { n: "名满天下", min: 5000 },
+      { n: "声名初显", min: 1200 },
+      { n: "威震一方", min: 2200 },
+      { n: "名动一国", min: 3500 },
+      { n: "威名远播", min: 5000 },
+      { n: "名满天下", min: 7000 },
+      { n: "威加四海", min: 9000 },
     ],
     fameTierIndex(fame) {
       let idx = 0;
@@ -4055,22 +4115,27 @@
     },
     fameTierName(fame) { return this.FAME_TIERS[this.fameTierIndex(fame)].n; },
     fameLabel(fame) { return `${this.fameTierName(fame)}（${fame || 0}）`; },
-    // 增加名声；跨阶时提示，并重算行动力上限
+    // 名动一国（第 5 阶）解锁时：眼线渐广，每城悬赏榜永久 +1 条空缺（仅触发一次，直接补进当前各城悬赏列表）
+    BOUNTY_BONUS_TIER: 5,
+    // 增加名声；跨阶时提示，重算行动力上限，并在特定阶梯触发一次性福利
     addFame(n) {
       const m = this.mapState(); if (!m || !n) return;
       const before = this.fameTierIndex(m.fame || 0);
       m.fame = Math.min(this.FAME_MAX, (m.fame || 0) + n);
       const after = this.fameTierIndex(m.fame);
       this.recalcApMax();
+      if (after >= this.BOUNTY_BONUS_TIER && before < this.BOUNTY_BONUS_TIER && m.bounties) {
+        Object.keys(m.bounties).forEach(cid => m.bounties[cid].push(genBounty(cid, m.assign, m.appeared)));
+      }
       this.save();
       if (after > before) {
         toast(`🎉 名声跨入「${this.FAME_TIERS[after].n}」！行动力上限提升，天下事更多了`);
       }
     },
-    // 行动力上限 = 1 + 名声阶梯 + 武道会首冠(+1) + 已装备的唯一奇珍(each +1)，封顶 6
+    // 行动力上限 = 1 + 名声阶梯/2（向下取整） + 武道会首冠(+1) + 已装备的唯一奇珍(each +1)，封顶 6
     recalcApMax() {
       const m = this.mapState(); if (!m) return;
-      let cap = 1 + this.fameTierIndex(m.fame || 0);
+      let cap = 1 + Math.floor(this.fameTierIndex(m.fame || 0) / 2);
       if (m.cupWon) cap++;
       cap += Armory.itemsOf("hero").filter(i => i.apBonus).length;
       cap = Math.min(6, cap);
@@ -4298,6 +4363,10 @@
   /* ============================================================
    *  天下游历：地图主界面——移动/天数/行动力/宿营、当前城池行动、本地武将名录
    * ============================================================ */
+  // 风格化陆地剪影（viewBox 0~100，与城池坐标同一相对坐标系），非精确测绘，仅取意接近真实海岸轮廓
+  const CHINA_LAND_PATH = "M18,18 L30,16 L40,20 L44,26 L42,32 L46,36 L44,42 L48,48 L44,52 L46,58 L40,62 L42,66 L34,70 L24,72 L14,68 L6,60 L4,50 L8,42 L4,34 L8,26 Z";
+  const JAPAN_LAND_PATH = "M90,18 L94,26 L92,34 L90,42 L88,50 L84,56 L80,62 L74,68 L70,74 L68,80 L66,86 L58,88 L54,84 L50,78 L52,70 L56,62 L60,54 L62,46 L66,38 L68,30 L70,22 L74,16 L82,14 Z";
+  const MapZoom = { scale: 1, x: 0, y: 0 };
   const MapUI = {
     open() {
       const m = Campaign.ensureMap();   // 旧版本存档自动补建地图状态，保证"继续游戏"总能进入
@@ -4331,6 +4400,7 @@
         </div>
       </div>`;
       this.bind(m);
+      this.bindZoom($(".map-svg-box"));
     },
     svgHtml(m) {
       const lines = ROADS.map(([a, b]) => {
@@ -4344,7 +4414,18 @@
           <span class="mcity-dot"></span><span class="mcity-name">${c.n}</span>
         </div>`;
       }).join("");
-      return `<svg class="map-lines" viewBox="0 0 100 100" preserveAspectRatio="none">${lines}</svg>${dots}`;
+      return `<div class="map-zoom-layer">
+        <svg class="map-lines" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <path class="map-land cn" d="${CHINA_LAND_PATH}"/>
+          <path class="map-land jp" d="${JAPAN_LAND_PATH}"/>
+          ${lines}
+        </svg>
+        ${dots}
+      </div>
+      <div class="map-zoom-ctl">
+        <button id="map-zoom-in" type="button">＋</button>
+        <button id="map-zoom-out" type="button">－</button>
+      </div>`;
     },
     heroCardHtml(m) {
       const c = RPG.char, hg = RPG.heroGeneral();
@@ -4398,6 +4479,82 @@
       const campBtn = $("#map-camp"); if (campBtn) campBtn.onclick = () => this.camp();
       const charBtn = $("#map-char"); if (charBtn) charBtn.onclick = () => RPG.open();
     },
+    // 地图缩放/拖动：鼠标拖拽、触控拖拽、双指捏合缩放、滚轮缩放、右上角 +/- 按钮；缩放状态跨渲染持久（MapZoom 为模块级变量）
+    applyZoom(box) {
+      const layer = box.querySelector(".map-zoom-layer");
+      if (layer) layer.style.transform = `translate(${MapZoom.x}px,${MapZoom.y}px) scale(${MapZoom.scale})`;
+    },
+    clampZoomState(box) {
+      MapZoom.scale = Math.min(3, Math.max(1, MapZoom.scale));
+      const rect = box.getBoundingClientRect();
+      const maxX = (MapZoom.scale - 1) * rect.width / 2 + 40;
+      const maxY = (MapZoom.scale - 1) * rect.height / 2 + 40;
+      MapZoom.x = Math.min(maxX, Math.max(-maxX, MapZoom.x));
+      MapZoom.y = Math.min(maxY, Math.max(-maxY, MapZoom.y));
+    },
+    bindZoom(box) {
+      if (!box) return;
+      this.applyZoom(box);
+      // 注：不使用 setPointerCapture——它会让 click 事件的目标被劫持到 box 本身，
+      // 导致捏合/拖拽绑定后城池点击彻底失效；改为在 document 上临时挂 move/up 监听，手势结束即摘除
+      const pointers = new Map();
+      let dragging = false, moved = false, lastX = 0, lastY = 0, pinchDist = 0, pinchScale = 1;
+      const onMove = e => {
+        if (!pointers.has(e.pointerId)) return;
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pointers.size === 2) {
+          const pts = [...pointers.values()];
+          const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+          if (pinchDist > 0) { MapZoom.scale = pinchScale * dist / pinchDist; this.clampZoomState(box); this.applyZoom(box); }
+          return;
+        }
+        if (dragging) {
+          const dx = e.clientX - lastX, dy = e.clientY - lastY;
+          if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+          MapZoom.x += dx; MapZoom.y += dy;
+          lastX = e.clientX; lastY = e.clientY;
+          this.clampZoomState(box);
+          this.applyZoom(box);
+        }
+      };
+      const onUp = e => {
+        pointers.delete(e.pointerId);
+        if (pointers.size < 2) pinchDist = 0;
+        if (pointers.size === 0 && dragging) {
+          dragging = false;
+          if (moved) { box._justDragged = true; setTimeout(() => { box._justDragged = false; }, 60); }
+        }
+        if (pointers.size === 0) {
+          document.removeEventListener("pointermove", onMove);
+          document.removeEventListener("pointerup", onUp);
+          document.removeEventListener("pointercancel", onUp);
+        }
+      };
+      box.onpointerdown = e => {
+        if (e.target.closest(".map-zoom-ctl")) return;
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+        document.addEventListener("pointercancel", onUp);
+        if (pointers.size === 1) { dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY; }
+        else if (pointers.size === 2) {
+          dragging = false;
+          const pts = [...pointers.values()];
+          pinchDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+          pinchScale = MapZoom.scale;
+        }
+      };
+      box.onwheel = e => {
+        e.preventDefault();
+        MapZoom.scale += e.deltaY < 0 ? 0.15 : -0.15;
+        this.clampZoomState(box);
+        this.applyZoom(box);
+      };
+      box.addEventListener("click", e => { if (box._justDragged) { e.stopPropagation(); e.preventDefault(); } }, true);
+      const zoomStep = d => { MapZoom.scale += d; if (MapZoom.scale <= 1.001) { MapZoom.x = 0; MapZoom.y = 0; } this.clampZoomState(box); this.applyZoom(box); };
+      const inBtn = $("#map-zoom-in"); if (inBtn) inBtn.onclick = () => zoomStep(0.4);
+      const outBtn = $("#map-zoom-out"); if (outBtn) outBtn.onclick = () => zoomStep(-0.4);
+    },
     /* ---- 集市：每城每（游戏）日一批本地货摊，价格按城市行情浮动；已购摊位当日售罄 ---- */
     openMarket() {
       const m = Campaign.mapState();
@@ -4437,14 +4594,17 @@
       const m = Campaign.mapState();
       const c = cityDef(m.curCity);
       const specialty = Armory.TYPES[hashStr(m.curCity) % Armory.TYPES.length];
+      // 名声达「名满天下」（第 7 阶）起，铁匠铺待你如上宾，专精类锻造再减免
+      const highFame = Campaign.fameTierIndex(m.fame || 0) >= 7;
+      const specMat = highFame ? 4 : 5, specGold = highFame ? 20 : 30;
       openOverlay(`<div class="result-card detail-card">
         <h1>⚒️ ${c.n}铁匠铺</h1>
-        <div class="wdesc">本铺专精<b style="color:var(--cn-gold)">${specialty.icon}${specialty.n}</b>：锻${specialty.n}只需材料 5 + 30 金（其余类型 6 + 40 金）· 💰 现有 ${Bond.gold()} 金</div>
+        <div class="wdesc">本铺专精<b style="color:var(--cn-gold)">${specialty.icon}${specialty.n}</b>：锻${specialty.n}只需材料 ${specMat} + ${specGold} 金（其余类型 6 + 40 金）${highFame ? '<br>⭐ 声望崇高，本铺特惠加码' : ''} · 💰 现有 ${Bond.gold()} 金</div>
         <div class="buff-list">
           ${Armory.TYPES.map(type => {
             const isSpec = type.k === specialty.k;
             const mat = Armory.data.materials[type.k] || 0, pity = Armory.data.pity[type.k] || 0;
-            const matCost = isSpec ? 5 : Armory.FORGE_COST, goldCost = isSpec ? 30 : Armory.FORGE_GOLD;
+            const matCost = isSpec ? specMat : Armory.FORGE_COST, goldCost = isSpec ? specGold : Armory.FORGE_GOLD;
             return `<button class="buff-btn smith-forge ${isSpec ? 'active' : ''}" data-type="${type.k}" ${mat < matCost ? "disabled" : ""}>
               <span class="bi">${type.icon}</span>
               <span class="bt"><b>${type.n}${isSpec ? ' ★本铺专精' : ''}</b><small>材料 ${mat}/${matCost} · ${goldCost}金 · 保底 ${pity}/${Armory.FORGE_PITY}</small></span>
@@ -4455,7 +4615,7 @@
       $$(".smith-forge").forEach(b => b.onclick = () => {
         const typeK = b.dataset.type;
         const isSpec = typeK === specialty.k;
-        if (Armory.forge(typeK, isSpec ? { matCost: 5, goldCost: 30 } : undefined)) this.openForge();
+        if (Armory.forge(typeK, isSpec ? { matCost: specMat, goldCost: specGold } : undefined)) this.openForge();
       });
       $("#forge-close").onclick = () => { closeOverlay(); this.render(); };
     },
@@ -4493,7 +4653,7 @@
         $("#fac-cancel").onclick = closeOverlay;
         return;
       }
-      if (fac.mode === "cup" && Campaign.fameTierIndex(m.fame || 0) < 2) { toast("声望不足，需达到「威震一方」名声阶梯才能报名天下第一武道会"); return; }
+      if (fac.mode === "cup" && Campaign.fameTierIndex(m.fame || 0) < RPG.CUP_FAME_TIER) { toast(`声望不足，需达到「${Campaign.FAME_TIERS[RPG.CUP_FAME_TIER].n}」名声阶梯才能报名天下第一武道会`); return; }
       if (m.ap <= 0) { toast("今日行动力已耗尽，请先宿营恢复"); return; }
       m.activeFacility = fac.mode; Campaign.save();
       const fn = { gauntlet: () => RPG.gauntlet(), tower: () => RPG.tower(), duo: () => RPG.duo(), teamBattle: () => RPG.teamBattle(), conquest: () => RPG.conquest(), cup: () => RPG.joinCup(32) }[fac.mode];
