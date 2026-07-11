@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607120110";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607120732";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -1356,9 +1356,16 @@
       $("#twr-up").onclick = advance;
       $("#twr-down").onclick = () => { clearTimeout(timer); closeOverlay(); this.floor++; this.finish(null); };
     },
-    // 每 5 层：三选一机缘
+    // 每 5 层：三选一机缘。角色扮演模式下（this.rpg 为真）六维类机缘（体力/武力/统帅/智力/政治/魅力永久+7 或+16）
+    // 若对应维度的主角六维基础值（不含装备加成）已达 110 上限，则不再进入候选池，避免选项本身就在诱导"继续加"一个已封顶的维度；
+    // 「疗养生息」不涉及任何维度增长，始终可选。若候选不足 3 项（如多数维度已封顶）则回退为全量 BUFFS，保证界面仍有三个选项可选。
+    // 小游戏自由试玩（无持久角色，this.rpg 为假）不受此限制。
     offerBuffs(healed) {
-      const opts = this.BUFFS.slice();
+      let opts = this.BUFFS.slice();
+      if (this.rpg && RPG.char) {
+        const eligible = opts.filter(o => o.k === "heal" || RPG.eff(RPG.char, o.k) < 110);
+        if (eligible.length >= 3) opts = eligible;
+      }
       shuffle(opts);
       const three = opts.slice(0, 3);
       openOverlay(`<div class="result-card">
@@ -3064,12 +3071,14 @@
       regenBonus: { label: "气血回复", icon: "💗", unit: "" },
       guardBonus: { label: "护体", icon: "🛡️", unit: "%" },
       stamRegenBonus: { label: "气盛", icon: "⚡", unit: "" },
+      apBonus: { label: "行动力上限", icon: "🚩", unit: "点" },
     },
     CURIO_VALS: {
       critBonus: [2, 4, 7, 12],
       regenBonus: [1, 3, 5, 8],
       guardBonus: [3, 6, 10, 16],
       stamRegenBonus: [2, 4, 8, 13],
+      apBonus: [1, 1, 1, 1],   // 不随稀有度浮动，任意稀有度佩戴皆固定 +1 行动力上限
     },
     TEMPLATES: {
       weapon: [
@@ -3161,7 +3170,7 @@
         { n: "云龙披风", intro: "云龙纹样的锦缎披风，气势恢宏。" },
       ],
       curio: [
-        { n: "传国玉玺", intro: "得之者得天命加身，气势逼人。", effect: "critBonus" },
+        { n: "传国玉玺", intro: "得之者得天命加身，号令四方，行动更无阻碍。", effect: "apBonus" },
         { n: "随侯珠", intro: "灵蛇衔珠相报，光华养神固本。", effect: "ti" },
         { n: "和氏璧", intro: "稀世美玉，握之心神安定，气血自生。", effect: "regenBonus" },
         { n: "勾玉", intro: "沟通神灵的古老玉饰，气息绵长。", effect: "stamRegenBonus" },
@@ -3169,7 +3178,7 @@
         { n: "南蛮令", intro: "孟获信物，持之如猛虎添翼，愈战愈勇。", effect: "guardBonus" },
         { n: "不老丹方", intro: "方士所炼丹方，强身固体。", effect: "ti" },
         { n: "定军神符", intro: "军中祈福神符，佑主将屹立不倒。", effect: "guardBonus" },
-        { n: "九鼎", intro: "象征天下九州的重器，稳如泰山。", effect: "guardBonus" },
+        { n: "九鼎", intro: "象征天下九州的重器，坐拥九鼎，行走四方皆如履平地。", effect: "apBonus" },
         { n: "河图洛书", intro: "上古神秘图谶，蕴含天地至理，气息不绝。", effect: "stamRegenBonus" },
         { n: "麒麟令", intro: "瑞兽麒麟所化令牌，护佑军心，士气如虹。", effect: "critBonus" },
         { n: "太极图", intro: "阴阳调和之图，静心凝神，固本培元。", effect: "ti" },
@@ -3218,14 +3227,16 @@
         bonus = t.bonusOverride ? t.bonusOverride[rIdx] : this.rollBonus(rarityK);
       }
       const item = { uid: this.data.nextUid++, type: typeK, tid: t.n, name: t.n, icon: type.icon, intro: t.intro, rarity: rarityK, stat, bonus, equippedBy: null, identified: true };
+      // 行动力上限奇珍：无论抽到哪档稀有度，只要佩戴即生效（由 Campaign.recalcApMax 读取 apBonus 字段计数，不叠加数值只计佩戴与否）
+      if (stat === "apBonus") item.apBonus = 1;
       if (!this.data.discovered.includes(t.n)) this.data.discovered.push(t.n);
       return item;
     },
 
-    // 唯一奇珍：全地图各仅一件，装备后额外 +1 行动力上限（由 Campaign.recalcApMax 读取 apBonus 字段）
+    // 唯一奇珍：全地图各仅一件，纯粹的高稀有度专属装备，不再附带行动力上限加成（该效果已转移至常规奇珍池的「传国玉玺」「九鼎」）
     UNIQUE_TREASURES: {
-      chitu: { n: "赤兔·千里神驹", type: "mount", stat: "tong", intro: "人中吕布马中赤兔，日行千里，唯此一骑——佩之统帅超群，行动力上限 +1。" },
-      senriGeta: { n: "千里靴", type: "attire", stat: "mei", intro: "踏遍天下路不知疲，唯此一双——佩之魅力超群，行动力上限 +1。" },
+      chitu: { n: "赤兔·千里神驹", type: "mount", stat: "tong", intro: "人中吕布马中赤兔，日行千里，唯此一骑——佩之统帅超群。" },
+      senriGeta: { n: "千里靴", type: "attire", stat: "mei", intro: "踏遍天下路不知疲，唯此一双——佩之魅力超群。" },
     },
     makeUniqueTreasure(key) {
       const t = this.UNIQUE_TREASURES[key];
@@ -3233,7 +3244,7 @@
       const item = {
         uid: this.data.nextUid++, type: t.type, tid: t.n, name: t.n, icon: type.icon, intro: t.intro,
         rarity: "legend", stat: t.stat, bonus: this.RARITIES[this.RARITIES.length - 1].bonus,
-        apBonus: 1, equippedBy: null, identified: true,
+        equippedBy: null, identified: true,
       };
       if (!this.data.discovered.includes(t.n)) this.data.discovered.push(t.n);
       return item;
@@ -3297,11 +3308,16 @@
       this.data.items.filter(i => i.equippedBy === owner && i.type === item.type).forEach(i => i.equippedBy = null);
       item.equippedBy = owner; this.save();
       AudioSystem.sfx.select();
+      // 主角换装可能涉及行动力奇珍（apBonus 类奇珍/唯一奇珍）的增减，即时重算行动力上限
+      if (owner === "hero" && typeof Campaign !== "undefined") { Campaign.recalcApMax(); Campaign.save(); }
       return true;
     },
     unequip(uid) {
       const item = this.data.items.find(i => i.uid === uid); if (!item) return false;
-      item.equippedBy = null; this.save(); return true;
+      const wasHero = item.equippedBy === "hero";
+      item.equippedBy = null; this.save();
+      if (wasHero && typeof Campaign !== "undefined") { Campaign.recalcApMax(); Campaign.save(); }
+      return true;
     },
     statBonus(owner) {
       const out = {};
@@ -4238,8 +4254,9 @@
     let kind;
     if (enemyLocal.length && roll < 0.15) kind = "assassin";
     else {
+      // 车轮令（gauntlet）反馈过于密集，权重由 40/20/20/20 调整为 35/15/25/25，压低车轮令占比，向登塔令/双雄令匀出空间
       const r2 = enemyLocal.length ? (roll - 0.15) / 0.85 : roll;
-      kind = r2 < 0.4 ? "duel" : r2 < 0.6 ? "gauntlet" : r2 < 0.8 ? "tower" : "duo";
+      kind = r2 < 0.35 ? "duel" : r2 < 0.5 ? "gauntlet" : r2 < 0.75 ? "tower" : "duo";
     }
     const uid = cityId + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     if (kind === "assassin") {
@@ -4458,7 +4475,7 @@
         toast(`🎉 名声跨入「${this.FAME_TIERS[after].n}」！行动力上限提升，天下事更多了`);
       }
     },
-    // 行动力上限 = 1 + 名声阶梯/2（向下取整） + 武道会首冠(+1) + 已装备的唯一奇珍(each +1)，封顶 6
+    // 行动力上限 = 1 + 名声阶梯/2（向下取整） + 武道会首冠(+1) + 已装备的行动力奇珍(传国玉玺/九鼎二选一，+1)，封顶 6
     recalcApMax() {
       const m = this.mapState(); if (!m) return;
       let cap = 1 + Math.floor(this.fameTierIndex(m.fame || 0) / 2);
@@ -4695,6 +4712,7 @@
   const JAPAN_LAND_PATH = "M90,18 L94,26 L92,34 L90,42 L88,50 L84,56 L80,62 L74,68 L70,74 L68,80 L66,86 L58,88 L54,84 L50,78 L52,70 L56,62 L60,54 L62,46 L66,38 L68,30 L70,22 L74,16 L82,14 Z";
   const MapZoom = { scale: 1, x: 0, y: 0 };
   const MapUI = {
+    BORDER_WAR_WIN_BONUS: 1000,   // 己方边境战获胜的特殊犒赏（不小于1000，无论亲征与否）
     open() {
       const m = Campaign.ensureMap();   // 旧版本存档自动补建地图状态，保证"继续游戏"总能进入
       if (!m || !RPG.char) { showScreen("home"); return; }
@@ -5236,9 +5254,10 @@
         }
         const winnerSide = ib >= rosterB.length ? sideA : sideB;
         const capturedCity = this.applyBorderWarOutcome(m, edge, winnerSide);
+        const bonusHtml = winnerSide === heroSide ? `<br>🏆 己方大捷，边境犒赏 <b style="color:#b8860b">+${Bond.addGold(this.BORDER_WAR_WIN_BONUS)}</b> 金（现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : "";
         openOverlay(`<div class="result-card detail-card">
           <h1>⚔️ 边境战报</h1>
-          <div class="wdesc">${cityName(a)} vs ${cityName(b)}：<b style="color:var(--cn-red)">${sideName(winnerSide)}</b>获胜，夺取【${cityName(capturedCity)}】</div>
+          <div class="wdesc">${cityName(a)} vs ${cityName(b)}：<b style="color:var(--cn-red)">${sideName(winnerSide)}</b>获胜，夺取【${cityName(capturedCity)}】${bonusHtml}</div>
           <div class="btns"><button class="btn-primary" id="bw-close">知道了</button></div>
         </div>`);
         $("#bw-close").onclick = () => { closeOverlay(); this.render(); };
@@ -5265,6 +5284,7 @@
           const c = RPG.char;
           const heroAlive = result.mySurvivors.some(g => g.id === -1);
           const goldGain = result.playerWon ? Bond.addGold(30 + result.kills * 5) : Bond.addGold(10);
+          const bonusGold = result.playerWon ? Bond.addGold(this.BORDER_WAR_WIN_BONUS) : 0;
           if (result.playerWon) Campaign.addFame(20);
           const exp = result.kills * 15 + (result.playerWon ? 60 : 15);
           c.exp += exp;
@@ -5272,7 +5292,7 @@
           while (c.exp >= RPG.expNeed(c.level)) { c.exp -= RPG.expNeed(c.level); c.level++; c.points += 1; lvUp++; }
           RPG.save();
           const heroHtml = `<div class="mc-sect">🎖️ 你的战果</div>
-            <div class="wdesc">${heroAlive ? '全身而退' : '力战倒下（阵中负伤）'}，本方战场斩获 <b style="color:var(--cn-red)">${result.kills}</b> 员${result.playerWon ? `，己方 ${sideName(heroSide)} 全线告捷！夺取【${cityName(capturedCity)}】，名声 <b style="color:var(--cn-red)">+20</b>` : '，惜未能扭转战局。'}<br>获得经验 <b style="color:var(--cn-red)">+${exp}</b>${Bond.goldLine(goldGain)}${lvUp ? `<br>🎉 升级 ${lvUp} 级！` : ''}</div>`;
+            <div class="wdesc">${heroAlive ? '全身而退' : '力战倒下（阵中负伤）'}，本方战场斩获 <b style="color:var(--cn-red)">${result.kills}</b> 员${result.playerWon ? `，己方 ${sideName(heroSide)} 全线告捷！夺取【${cityName(capturedCity)}】，名声 <b style="color:var(--cn-red)">+20</b>` : '，惜未能扭转战局。'}<br>获得经验 <b style="color:var(--cn-red)">+${exp}</b>${Bond.goldLine(goldGain)}${bonusGold ? `<br>🏆 边境犒赏 <b style="color:#b8860b">+${bonusGold}</b> 金（现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : ''}${lvUp ? `<br>🎉 升级 ${lvUp} 级！` : ''}</div>`;
           openOverlay(`<div class="result-card detail-card">
             <h1>⚔️ 边境战报</h1>
             <div class="wdesc">${cityName(a)} vs ${cityName(b)}：<b style="color:var(--cn-red)">${sideName(winnerSide)}</b>获胜，夺取【${cityName(capturedCity)}】</div>
