@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607120732";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607120810";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -1363,7 +1363,9 @@
     offerBuffs(healed) {
       let opts = this.BUFFS.slice();
       if (this.rpg && RPG.char) {
-        const eligible = opts.filter(o => o.k === "heal" || RPG.eff(RPG.char, o.k) < 110);
+        // 不只排除已封顶的维度，连"当前值+该机缘固定加成量"会超过 110 上限的也一并排除（如 109 距上限仅 1 点，
+        // 但该机缘固定 +7，109+7=116 会突破上限，同样不应作为选项出现）
+        const eligible = opts.filter(o => o.k === "heal" || RPG.eff(RPG.char, o.k) + (o.k === "ti" ? 16 : 7) <= 110);
         if (eligible.length >= 3) opts = eligible;
       }
       shuffle(opts);
@@ -3170,7 +3172,7 @@
         { n: "云龙披风", intro: "云龙纹样的锦缎披风，气势恢宏。" },
       ],
       curio: [
-        { n: "传国玉玺", intro: "得之者得天命加身，号令四方，行动更无阻碍。", effect: "apBonus" },
+        { n: "传国玉玺", intro: "得之者得天命加身，号令四方——传说品阶行动力上限+1，其余品阶暴击率略增。", effect: "critBonus", legendEffect: "apBonus" },
         { n: "随侯珠", intro: "灵蛇衔珠相报，光华养神固本。", effect: "ti" },
         { n: "和氏璧", intro: "稀世美玉，握之心神安定，气血自生。", effect: "regenBonus" },
         { n: "勾玉", intro: "沟通神灵的古老玉饰，气息绵长。", effect: "stamRegenBonus" },
@@ -3178,7 +3180,7 @@
         { n: "南蛮令", intro: "孟获信物，持之如猛虎添翼，愈战愈勇。", effect: "guardBonus" },
         { n: "不老丹方", intro: "方士所炼丹方，强身固体。", effect: "ti" },
         { n: "定军神符", intro: "军中祈福神符，佑主将屹立不倒。", effect: "guardBonus" },
-        { n: "九鼎", intro: "象征天下九州的重器，坐拥九鼎，行走四方皆如履平地。", effect: "apBonus" },
+        { n: "九鼎", intro: "象征天下九州的重器，坐拥九鼎——传说品阶行动力上限+1，其余品阶护体略增。", effect: "guardBonus", legendEffect: "apBonus" },
         { n: "河图洛书", intro: "上古神秘图谶，蕴含天地至理，气息不绝。", effect: "stamRegenBonus" },
         { n: "麒麟令", intro: "瑞兽麒麟所化令牌，护佑军心，士气如虹。", effect: "critBonus" },
         { n: "太极图", intro: "阴阳调和之图，静心凝神，固本培元。", effect: "ti" },
@@ -3217,8 +3219,15 @@
       const rIdx = this.RARITIES.findIndex(r => r.k === rarityK);
       let stat, bonus;
       if (typeK === "curio") {
-        stat = t.effect || "ti";
-        bonus = t.bonusOverride ? t.bonusOverride[rIdx] : (stat === "ti" ? this.rollBonus(rarityK) : this.curioVals(stat)[rIdx]);
+        // legendEffect：部分奇珍模板（如传国玉玺/九鼎）仅在生成为传说品阶时才切换为专属效果（如行动力上限），
+        // 其余品阶仍走该模板的常规 effect 按稀有度正常浮动，避免低阶版本也获得等同传说的特殊效果
+        if (t.legendEffect && rarityK === "legend") {
+          stat = t.legendEffect;
+          bonus = 1;
+        } else {
+          stat = t.effect || "ti";
+          bonus = t.bonusOverride ? t.bonusOverride[rIdx] : (stat === "ti" ? this.rollBonus(rarityK) : this.curioVals(stat)[rIdx]);
+        }
       } else if (typeK === "book") {
         stat = t.stat || "zhi";   // 每部典籍按其性质固定加智力或政治，不再随机
         bonus = t.bonusOverride ? t.bonusOverride[rIdx] : this.rollBonus(rarityK);
@@ -3227,7 +3236,7 @@
         bonus = t.bonusOverride ? t.bonusOverride[rIdx] : this.rollBonus(rarityK);
       }
       const item = { uid: this.data.nextUid++, type: typeK, tid: t.n, name: t.n, icon: type.icon, intro: t.intro, rarity: rarityK, stat, bonus, equippedBy: null, identified: true };
-      // 行动力上限奇珍：无论抽到哪档稀有度，只要佩戴即生效（由 Campaign.recalcApMax 读取 apBonus 字段计数，不叠加数值只计佩戴与否）
+      // 行动力上限奇珍：effect 结算为 apBonus 时（传国玉玺/九鼎仅传说品阶如此）佩戴即生效，由 Campaign.recalcApMax 读取 apBonus 字段计数
       if (stat === "apBonus") item.apBonus = 1;
       if (!this.data.discovered.includes(t.n)) this.data.discovered.push(t.n);
       return item;
@@ -3991,15 +4000,15 @@
       let lvUp = 0;
       while (c.exp >= this.expNeed(c.level)) { c.exp -= this.expNeed(c.level); c.level++; c.points += 1; lvUp++; }
       this.save();
-      // 名声：按名次浮动；首次夺冠额外永久 +1 行动力上限（武道会终极奖励），并计入"天下无双"终局条件
+      // 名声：按名次浮动；首次夺冠计入"天下无双"终局条件（不再额外贡献行动力上限）
       const isChamp = placement.label === "夺冠";
       const fameGain = isChamp ? 60 : /半决赛|决赛|四强/.test(placement.label) ? 30 : 12;
       Campaign.addFame(fameGain);
       let champHtml = "";
       const m = Campaign.mapState();
       if (isChamp && m && !m.cupWon) {
-        m.cupWon = true; Campaign.recalcApMax(); Campaign.save();
-        champHtml = `<br>🏆 天下第一武道会首冠！行动力上限永久 <b style="color:var(--cn-red)">+1</b>`;
+        m.cupWon = true; Campaign.save();
+        champHtml = `<br>🏆 天下第一武道会首冠！`;
         champHtml += checkEnding();
       }
       const bg = c.side === 'cn' ? 'linear-gradient(135deg,var(--cn-red),#7a1420)' : 'linear-gradient(135deg,var(--jp-indigo),#141e3c)';
@@ -4475,11 +4484,11 @@
         toast(`🎉 名声跨入「${this.FAME_TIERS[after].n}」！行动力上限提升，天下事更多了`);
       }
     },
-    // 行动力上限 = 1 + 名声阶梯/2（向下取整） + 武道会首冠(+1) + 已装备的行动力奇珍(传国玉玺/九鼎二选一，+1)，封顶 6
+    // 行动力上限 = 1 + 名声阶梯/2（向下取整） + 已装备的行动力奇珍(传国玉玺/九鼎二选一，+1)，封顶 6
+    // 武道会首冠不再贡献行动力上限（m.cupWon 标记仍保留，供"天下无双"终局条件判定使用）
     recalcApMax() {
       const m = this.mapState(); if (!m) return;
       let cap = 1 + Math.floor(this.fameTierIndex(m.fame || 0) / 2);
-      if (m.cupWon) cap++;
       cap += Armory.itemsOf("hero").filter(i => i.apBonus).length;
       cap = Math.min(6, cap);
       const delta = cap - m.apMax;
@@ -5347,7 +5356,9 @@
       return { id: -3000 - i, name: "轮空", title: "", intro: "", side: "cn", ti: 10, wu: 10, tong: 10, zhi: 10, zheng: 10, mei: 10 };
     },
     runTournament(m, pool, joining) {
-      let others = pool.slice(); shuffle(others);
+      // 除主角外的参赛席位不再随机抽取，改为按总评分从高到低挑选已现身武将中排名靠前者，
+      // 使武将大会真正汇聚"当下天下最强的一批人物"而非随缘凑数
+      let others = pool.slice().sort((a, b) => ratingScore(b) - ratingScore(a));
       others = others.slice(0, joining ? 31 : 32);
       let i = 0;
       while (others.length < (joining ? 31 : 32)) others.push(this.byeFighter(i++));
