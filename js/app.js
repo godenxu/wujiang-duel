@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607120810";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607142142";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -2969,6 +2969,7 @@
         this.dismiss(replaceId);
       }
       this.data.team.push(g.id); this.save();
+      if (typeof Estate !== "undefined") Estate.onRecruit(g.id);   // 掌柜入队即自动卸任（队伍随主角云游）
       AudioSystem.sfx.victory();
       toast(`🎉 ${g.name} 加入了你的团队！${replacedName ? `（顶替了 ${replacedName}）` : ''}${cost ? `（-${cost}金，余 ${this.gold()}）` : "（生死之交，分文不取）"}`);
       return true;
@@ -4173,6 +4174,170 @@
     mikawa: { n: "三河武士团", icon: "🛡", mode: "teamBattle" },
     hitachi: { n: "常陆远征所", icon: "🗺", mode: "conquest" },
   };
+  /* ============================================================
+   *  城市产业（城市经营一期）：每城一处可置办产业，收益按天懒结算、须本人到城收取；
+   *  友谊满上限的武将可委任为掌柜提升收益；城池被敌方攻占则产业查封（停产且不可收取/变卖），
+   *  己方夺回后自动恢复。数据全存战役层（m.estate），新开局重置。
+   * ============================================================ */
+  const ESTATE_TYPES = {
+    tavern: { n: "酒馆", icon: "🍶", cost: 1200, rate: 35, desc: "迎来送往，日进斗金而安稳" },
+    ranch: { n: "马场", icon: "🐎", cost: 1600, rate: 48, desc: "牧养良驹，收益丰厚" },
+    mine: { n: "矿山", icon: "⛏️", cost: 800, rate: 18, desc: "凿石采矿，金币收益微薄，但每满 5 天额外积攒 1 份本城铁匠铺专精材料" },
+    farm: { n: "农庄", icon: "🌾", cost: 800, rate: 25, desc: "春种秋收，细水长流" },
+    caravan: { n: "商队", icon: "🚢", cost: 2000, rate: 60, desc: "行商四方，收益最高，但收取时随行情浮动（六成～一倍四）" },
+  };
+  // 各城产业类型（风味设定：西凉/甲斐产马、汉中/石见有矿、天府/浓尾产粮、丝路/堺港通商……）
+  const CITY_ESTATE = {
+    luoyang: "tavern", jianye: "tavern", xuchang: "tavern", jingzhou: "tavern",
+    tianshui: "ranch", ye: "ranch", wancheng: "ranch", xiapi: "ranch",
+    hanzhong: "mine", baidicheng: "mine", shangyong: "mine", hefei: "mine",
+    chengdu: "farm", runan: "farm", jiangling: "farm", shouchun: "farm",
+    chang_an: "caravan", xuzhou: "caravan", chaisang: "caravan", wuchang: "caravan",
+    kyoto: "tavern", omi: "tavern", sunpu: "tavern", bizen: "tavern",
+    kai: "ranch", echigo: "ranch", oushu: "ranch", mino: "ranch",
+    izumo: "mine", satsuma: "mine", kaga: "mine", echizen: "mine",
+    owari: "farm", hitachi: "farm", higo: "farm", aki: "farm",
+    osaka: "caravan", odawara: "caravan", bungo: "caravan", mikawa: "caravan",
+  };
+  const Estate = {
+    ACCRUE_CAP_DAYS: 15,     // 待收积攒上限（天）：满仓后停止累计，逼你规划巡视路线
+    MAT_PENDING_CAP: 3,      // 矿山待收材料上限
+    SELL_FACTOR: 0.5,        // 变卖回收比例
+    MANAGER_BONUS_MAX: 50,   // 掌柜收益加成封顶（%）
+    all(m) { if (!m.estate) m.estate = {}; return m.estate; },
+    get(m, cityId) { return this.all(m)[cityId] || null; },
+    typeOf(cityId) { return ESTATE_TYPES[CITY_ESTATE[cityId]] || null; },
+    sealed(m, cityId) { return cityOwnerSide(m, cityId) !== RPG.char.side; },
+    // 掌柜收益加成百分比：(智力+政治)/4（取装备后数值），封顶 50%
+    managerBonus(gid) {
+      const g = gid != null ? DB.get(gid) : null;
+      if (!g) return 0;
+      const gg = Armory.geared(g, g.id);
+      return Math.min(this.MANAGER_BONUS_MAX, Math.round((gg.zhi + gg.zheng) / 4));
+    },
+    dailyRate(m, cityId) {
+      const est = this.get(m, cityId);
+      if (!est) return 0;
+      return Math.round(ESTATE_TYPES[est.type].rate * (1 + this.managerBonus(est.manager) / 100));
+    },
+    // 懒结算：按距上次结算的天数计入待收；被敌方占据期间颗粒无收（天数照样翻篇）。
+    // 边境战易主一瞬由 applyBorderWarOutcome 先行调用本函数，保证易主前的天数不漏记、易主后不多记
+    accrue(m, cityId) {
+      const est = this.get(m, cityId);
+      if (!est) return;
+      const days = Math.max(0, m.day - est.lastDay);
+      est.lastDay = m.day;
+      if (days <= 0 || this.sealed(m, cityId)) return;
+      const rate = this.dailyRate(m, cityId);
+      est.pending = Math.min(rate * this.ACCRUE_CAP_DAYS, (est.pending || 0) + rate * days);
+      if (est.type === "mine") {
+        est.matCarry = (est.matCarry || 0) + days;
+        const gain = Math.floor(est.matCarry / 5);
+        est.matCarry -= gain * 5;
+        est.matPending = Math.min(this.MAT_PENDING_CAP, (est.matPending || 0) + gain);
+      }
+    },
+    accrueAll(m) { Object.keys(this.all(m)).forEach(cid => this.accrue(m, cid)); },
+    // 地图左栏总览：名下产业数与待收总额（顺带把各处账目结算到今天）
+    overview(m) {
+      this.accrueAll(m);
+      Campaign.save();
+      const ests = Object.values(this.all(m));
+      if (!ests.length) return null;
+      return { count: ests.length, pending: ests.reduce((s, e) => s + (e.pending || 0), 0) };
+    },
+    buy(m, cityId) {
+      const c = cityDef(cityId);
+      const t = this.typeOf(cityId);
+      if (!c || !t || this.get(m, cityId)) return false;
+      if (this.sealed(m, cityId)) { toast(`敌占之城无法置业，待己方夺回再来`); return false; }
+      if (m.ap <= 0) { toast(`今日行动力已耗尽，请先宿营`); return false; }
+      if (!Bond.spend(t.cost)) { toast(`金币不足（置办${t.n}需 ${t.cost} 金）`); return false; }
+      m.ap--;
+      this.all(m)[cityId] = { type: CITY_ESTATE[cityId], lastDay: m.day, pending: 0, manager: null };
+      Campaign.save();
+      AudioSystem.sfx.victory();
+      toast(`${t.icon} 置办${cityName(cityId)}${t.n}成功！此后每日进账，记得常回来收取`);
+      return true;
+    },
+    collect(m, cityId) {
+      const est = this.get(m, cityId);
+      if (!est) return null;
+      if (this.sealed(m, cityId)) { toast(`产业已被查封，夺回城池方可收取`); return null; }
+      this.accrue(m, cityId);
+      let gold = est.pending || 0;
+      let fluxTxt = "";
+      if (est.type === "caravan" && gold > 0) {
+        const f = 0.6 + Math.random() * 0.8;
+        gold = Math.round(gold * f);
+        fluxTxt = f >= 1.15 ? "（行情大好）" : f <= 0.85 ? "（行情惨淡）" : "";
+      }
+      const mats = est.matPending || 0;
+      if (gold <= 0 && mats <= 0) { Campaign.save(); toast(`尚无进账，改日再来`); return null; }
+      est.pending = 0;
+      est.matPending = 0;
+      const gained = Bond.addGold(gold, "产业收益");
+      let matTxt = "";
+      if (mats > 0) {
+        const matType = Armory.TYPES[hashStr(cityId) % Armory.TYPES.length];
+        Armory.dropMaterial(matType.k, mats);
+        matTxt = `，${matType.n}材料 +${mats}`;
+      }
+      Campaign.save();
+      AudioSystem.sfx.victory();
+      toast(`💰 收取${ESTATE_TYPES[est.type].n}进账 ${gained} 金${fluxTxt}${matTxt}`);
+      return { gold: gained, mats };
+    },
+    sell(m, cityId) {
+      const est = this.get(m, cityId);
+      if (!est) return false;
+      if (this.sealed(m, cityId)) { toast(`产业已被查封，无法变卖`); return false; }
+      this.accrue(m, cityId);
+      const refund = Math.round(ESTATE_TYPES[est.type].cost * this.SELL_FACTOR) + (est.pending || 0);
+      delete this.all(m)[cityId];
+      Bond.addGold(refund, "变卖产业");
+      Campaign.save();
+      toast(`💸 变卖${cityName(cityId)}产业，回收 ${refund} 金（含未收账款）`);
+      return true;
+    },
+    // 掌柜候选：已现身、友谊满上限、不在团队、未在别处任掌柜（敌我阵营皆可——毕竟是过命的交情）
+    eligibleManagers(m) {
+      const taken = new Set(Object.values(this.all(m)).map(e => e.manager).filter(v => v != null));
+      return DB.list.filter(g => m.appeared.includes(g.id) && Bond.pts(g.id) >= Bond.MAX_FRIEND
+        && !Bond.inTeam(g.id) && !taken.has(g.id));
+    },
+    appoint(m, cityId, gid) {
+      const est = this.get(m, cityId);
+      if (!est) return false;
+      this.accrue(m, cityId);   // 先按旧掌柜费率结清，再换人生效
+      est.manager = gid;
+      m.assign[gid] = cityId;   // 掌柜走马上任，常驻本城打理产业（不再随宿营云游）
+      Campaign.save();
+      const g = DB.get(gid);
+      toast(`🤝 ${g.name} 出任${cityName(cityId)}${ESTATE_TYPES[est.type].n}掌柜，收益 +${this.managerBonus(gid)}%`);
+      return true;
+    },
+    dismissManager(m, cityId) {
+      const est = this.get(m, cityId);
+      if (!est || est.manager == null) return;
+      this.accrue(m, cityId);
+      est.manager = null;
+      Campaign.save();
+    },
+    // 掌柜被招募入队后自动卸任（队伍随主角云游，无法再驻店）
+    onRecruit(gid) {
+      const m = typeof Campaign !== "undefined" && Campaign.mapState();
+      if (!m) return;
+      Object.keys(this.all(m)).forEach(cid => {
+        const est = this.all(m)[cid];
+        if (est.manager === gid) { this.accrue(m, cid); est.manager = null; }
+      });
+      Campaign.save();
+    },
+    managerIds(m) {
+      return new Set(Object.values(this.all(m)).map(e => e.manager).filter(v => v != null));
+    },
+  };
   // 集市折扣：对马岛黑市常驻八折；行脚商队奇遇触发后临时持续至 discountUntilDay
   function shopDiscountActive() {
     const m = typeof Campaign !== "undefined" && Campaign.mapState();
@@ -4406,7 +4571,7 @@
           day: 1, ap: 1, apMax: 1, curCity: null, assign, appeared, nextAppearDay: 6,
           fame: 0, bounties, activeBounty: null,
           uniqueOwned: { chitu: false, senriGeta: false }, rivalsDefeated: [], cupWon: false, ending: false,
-          cityOwner: initCityOwner(), statPenalty: {}, statGrowth: {}, activeAssassin: null,
+          cityOwner: initCityOwner(), statPenalty: {}, statGrowth: {}, activeAssassin: null, estate: {},
         },
       };
       this.save();
@@ -4444,6 +4609,7 @@
       if (!m.statPenalty) { m.statPenalty = {}; changed = true; }
       if (!m.statGrowth) { m.statGrowth = {}; changed = true; }
       if (m.activeAssassin === undefined) { m.activeAssassin = null; changed = true; }
+      if (!m.estate) { m.estate = {}; changed = true; }
       if (changed) this.save();
       return m;
     },
@@ -4742,6 +4908,7 @@
         <div class="map-bottom">
           <div class="map-info-col">
             ${this.heroCardHtml(m)}
+            ${this.estateOverviewHtml(m)}
             ${this.localGeneralsHtml(m)}
           </div>
           <div class="map-city-panel">
@@ -4794,6 +4961,12 @@
         </div>
       </div>`;
     },
+    // 名下产业总览：有产业才显示，顺带把各处账目懒结算到今天
+    estateOverviewHtml(m) {
+      const o = Estate.overview(m);
+      if (!o) return "";
+      return `<div class="mc-sect">🏪 名下产业<small>${o.count} 处 · 待收 ${o.pending} 金</small></div>`;
+    },
     // 本地武将：原「游戏信息区域」（天数/行动力/金币/名声已上移顶栏状态条，等级已移入角色资料卡）腾出的位置，
     // 每行 3 个更紧凑；「全部武将」改为与「角色详情」同风格的大按钮，置于名录下方
     localGeneralsHtml(m) {
@@ -4822,6 +4995,7 @@
           <button class="menu-btn" id="map-train" ${(m.ap <= 0 || trainLocked) ? "disabled" : ""}><span class="mi">${trainLocked ? '🔒' : '🏋️'}</span><span>历练<small>${trainLocked ? `声望达「${Campaign.FAME_TIERS[RPG.TRAIN_FAME_TIER].n}」解锁` : '随机切磋练级 · 耗 1⚡'}</small></span></button>
           <button class="menu-btn" id="map-shop"><span class="mi">🏪</span><span>集市<small>本地货摊每日上新 · ${factorTxt}</small></span></button>
           <button class="menu-btn" id="map-forge"><span class="mi">⚒️</span><span>铁匠铺<small>专精${smithType.n}锻造 · 有减免</small></span></button>
+          ${this.estateBtnHtml(m)}
           ${fac ? `<button class="menu-btn" id="map-facility" ${m.ap <= 0 ? "disabled" : ""}><span class="mi">${fac.icon}</span><span>${fac.n}<small>设施挑战扬名 · 耗 1⚡</small></span></button>` : ""}
           <button class="menu-btn" id="map-camp"><span class="mi">🏕️</span><span>宿营<small>推进一天 · 行动力回满</small></span></button>
         </div>
@@ -4831,6 +5005,19 @@
           <div class="mcb-reward">赏 ${b.rewardGold} 金 · 名声 +${b.rewardFame}</div>
         </button>`).join("")}</div>` : ""}`;
     },
+    // 产业按钮三态：未置办（含敌占不可置办）/ 已置办待收 / 已置办被查封
+    estateBtnHtml(m) {
+      const t = Estate.typeOf(m.curCity);
+      if (!t) return "";
+      const est = Estate.get(m, m.curCity);
+      const sealed = Estate.sealed(m, m.curCity);
+      if (!est) {
+        return `<button class="menu-btn" id="map-estate" ${(m.ap <= 0 || sealed) ? "disabled" : ""}><span class="mi">${t.icon}</span><span>置办${t.n}<small>${sealed ? "敌占之城无法置业" : `${t.cost} 金 · 日进约 ${t.rate} 金 · 耗 1⚡`}</small></span></button>`;
+      }
+      Estate.accrue(m, m.curCity);
+      Campaign.save();
+      return `<button class="menu-btn" id="map-estate"><span class="mi">${t.icon}</span><span>${t.n}产业<small>${sealed ? "⛔ 已被查封 · 夺回城池后恢复" : `待收 ${est.pending || 0} 金${est.matPending ? ` · 材料 ${est.matPending} 份` : ""}`}</small></span></button>`;
+    },
     bind(m) {
       $$(".map-city").forEach(el => el.onclick = () => this.moveTo(el.dataset.id));
       $$(".mc-gen").forEach(el => el.onclick = () => { const g = DB.get(+el.dataset.id); if (g) showDetail(g); });
@@ -4839,6 +5026,7 @@
       const shopBtn = $("#map-shop"); if (shopBtn) shopBtn.onclick = () => this.openMarket();
       const forgeBtn = $("#map-forge"); if (forgeBtn) forgeBtn.onclick = () => this.openForge();
       const facBtn = $("#map-facility"); if (facBtn) facBtn.onclick = () => this.openFacility();
+      const estBtn = $("#map-estate"); if (estBtn) estBtn.onclick = () => this.openEstate();
       const campBtn = $("#map-camp"); if (campBtn) campBtn.onclick = () => this.camp();
       const charBtn = $("#map-char"); if (charBtn) charBtn.onclick = () => RPG.open();
       const allGenBtn = $("#map-all-gens"); if (allGenBtn) allGenBtn.onclick = () => AllGenUI.open();
@@ -4995,6 +5183,67 @@
         if (Armory.forge(typeK, isSpec ? { matCost: specMat, goldCost: specGold } : undefined)) this.openForge();
       });
       $("#forge-close").onclick = () => { closeOverlay(); this.render(); };
+    },
+    /* ---- 产业面板：置办 / 收取 / 委任掌柜 / 变卖（城市经营一期） ---- */
+    openEstate() {
+      const m = Campaign.mapState();
+      const cityId = m.curCity;
+      const t = Estate.typeOf(cityId);
+      if (!t) return;
+      const est = Estate.get(m, cityId);
+      // 未置办：置办确认页
+      if (!est) {
+        if (Estate.sealed(m, cityId)) { toast(`敌占之城无法置业，待己方夺回再来`); return; }
+        openOverlay(`<div class="result-card detail-card">
+          <h1>${t.icon} 置办${cityName(cityId)}${t.n}</h1>
+          <div class="wdesc">${t.desc}。<br>置办价 <b style="color:#b8860b">${t.cost}</b> 金（现有 ${Bond.gold()} 金），日进约 <b style="color:#b8860b">${t.rate}</b> 金，须本人到城收取；最多积攒 ${Estate.ACCRUE_CAP_DAYS} 天。<br><small>⚠️ 城池若被敌方攻占，产业将被查封停产，直至己方夺回。</small></div>
+          <div class="btns">
+            <button class="btn-primary" id="est-buy" ${m.ap <= 0 ? "disabled" : ""}>置办（耗 1⚡）</button>
+            <button class="btn-ghost" id="est-close">再想想</button>
+          </div>
+        </div>`);
+        $("#est-buy").onclick = () => { if (Estate.buy(m, cityId)) { closeOverlay(); this.render(); } };
+        $("#est-close").onclick = () => closeOverlay();
+        return;
+      }
+      // 已置办：经营面板
+      Estate.accrue(m, cityId);
+      Campaign.save();
+      const sealed = Estate.sealed(m, cityId);
+      const mgr = est.manager != null ? DB.get(est.manager) : null;
+      const bonus = Estate.managerBonus(est.manager);
+      const rate = Estate.dailyRate(m, cityId);
+      const matType = Armory.TYPES[hashStr(cityId) % Armory.TYPES.length];
+      const canCollect = !sealed && ((est.pending || 0) > 0 || (est.matPending || 0) > 0);
+      openOverlay(`<div class="result-card detail-card">
+        <h1>${t.icon} ${cityName(cityId)} · ${t.n}</h1>
+        ${sealed ? `<div class="wdesc" style="color:var(--cn-red)"><b>⛔ 产业已被敌方查封</b>——停产且不可收取/变卖，待己方夺回此城自动恢复。</div>` : ""}
+        <div class="wdesc">日进 <b style="color:#b8860b">${rate}</b> 金${mgr ? `（含掌柜加成 +${bonus}%）` : ""} · 待收 <b style="color:#b8860b">${est.pending || 0}</b> 金（上限 ${rate * Estate.ACCRUE_CAP_DAYS}）${est.type === "mine" ? `<br>⛏️ 待收${matType.n}材料 <b>${est.matPending || 0}</b> 份（每满 5 天 +1，上限 ${Estate.MAT_PENDING_CAP}）` : ""}${est.type === "caravan" ? `<br>🚢 商队行情：收取时浮动六成～一倍四` : ""}<br>🤝 掌柜：${mgr ? `<b>${mgr.name}</b>（收益 +${bonus}%）` : "空缺（可委任友谊满上限的武将，按其智力+政治提升收益）"}</div>
+        <div class="btns">
+          <button class="btn-primary" id="est-collect" ${canCollect ? "" : "disabled"}>💰 收取进账</button>
+          <button class="btn-ghost" id="est-mgr">${mgr ? "更换掌柜" : "委任掌柜"}</button>
+          ${mgr ? `<button class="btn-ghost" id="est-mgr-out">解任掌柜</button>` : ""}
+          <button class="btn-ghost" id="est-sell" ${sealed ? "disabled" : ""}>变卖（回收 ${Math.round(t.cost * Estate.SELL_FACTOR)} 金+未收账款）</button>
+          <button class="btn-ghost" id="est-close">离开</button>
+        </div>
+      </div>`);
+      $("#est-collect").onclick = () => { if (Estate.collect(m, cityId)) { closeOverlay(); this.render(); } };
+      $("#est-mgr").onclick = () => this.openEstateManagerPicker(m, cityId);
+      const outBtn = $("#est-mgr-out");
+      if (outBtn) outBtn.onclick = () => { Estate.dismissManager(m, cityId); toast(`掌柜已卸任归乡`); this.openEstate(); };
+      $("#est-sell").onclick = () => { if (Estate.sell(m, cityId)) { closeOverlay(); this.render(); } };
+      $("#est-close").onclick = () => { closeOverlay(); this.render(); };
+    },
+    openEstateManagerPicker(m, cityId) {
+      const cands = Estate.eligibleManagers(m).sort((a, b) => Estate.managerBonus(b.id) - Estate.managerBonus(a.id));
+      openOverlay(`<div class="result-card detail-card">
+        <h1>🤝 委任掌柜</h1>
+        <div class="wdesc">从<b>友谊满上限（${Bond.MAX_FRIEND}）</b>且不在团队中的武将里遴选，掌柜将常驻本城打理产业；收益加成 =（智力+政治）÷4，封顶 +${Estate.MANAGER_BONUS_MAX}%。</div>
+        ${cands.length ? `<div class="menu" style="max-height:40vh;overflow-y:auto">${cands.map(g => `<button class="menu-btn est-mgr-cand" data-id="${g.id}"><span class="mi">${g.side === "cn" ? "🇨🇳" : "🇯🇵"}</span><span>${g.name}<small>智${g.zhi} 政${g.zheng} · 收益 +${Estate.managerBonus(g.id)}%</small></span></button>`).join("")}</div>` : `<div class="wdesc">暂无人选——先与武将处出满上限的交情吧（赠礼/拜访/切磋皆可积累友谊）。</div>`}
+        <div class="btns"><button class="btn-ghost" id="est-mgr-back">返回</button></div>
+      </div>`);
+      $$(".est-mgr-cand").forEach(el => el.onclick = () => { Estate.appoint(m, cityId, +el.dataset.id); this.openEstate(); });
+      $("#est-mgr-back").onclick = () => this.openEstate();
     },
     acceptBounty(cityId, uid) {
       const m = Campaign.mapState();
@@ -5185,7 +5434,9 @@
     // 已现身的武将每次宿营有小概率自行迁往同阵营的相邻城池（不含对马岛海路），令天下版图持续流动
     wanderGenerals(m) {
       let count = 0;
+      const managed = Estate.managerIds(m);   // 掌柜常驻店面，不参与云游
       m.appeared.forEach(gid => {
+        if (managed.has(gid)) return;
         if (Math.random() >= 0.03) return;
         const g = DB.get(gid), cur = m.assign[gid];
         if (!g || !cur) return;
@@ -5234,8 +5485,11 @@
       const sideA = cityOwnerSide(m, a);
       const capturedCity = sideA === winnerSide ? b : a;
       const loserSide = winnerSide === "cn" ? "jp" : "cn";
+      // 易主前先把该城产业账目结算到今天：占领前的天数照常入账，占领期间懒结算自然颗粒无收
+      Estate.accrue(m, capturedCity);
       m.cityOwner[capturedCity] = winnerSide;
-      DB.list.filter(g => m.assign[g.id] === capturedCity && g.side === loserSide).forEach(g => {
+      const managed = Estate.managerIds(m);
+      DB.list.filter(g => m.assign[g.id] === capturedCity && g.side === loserSide && !managed.has(g.id)).forEach(g => {
         const opts = adjCities(capturedCity).filter(id => cityOwnerSide(m, id) === loserSide);
         if (opts.length) m.assign[g.id] = opts[randInt(0, opts.length - 1)];
       });
