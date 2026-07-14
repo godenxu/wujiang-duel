@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607142142";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607142218";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -3718,7 +3718,7 @@
       }
       // 天下擂台/双人比武等设施挑战：胜利额外记一笔名声（duo 也经此结算通道）
       if (m && (m.activeFacility === "duel" || m.activeFacility === "duo")) {
-        if (heroWon) { Campaign.addFame(8); extraHtml += `<br>🏯 设施挑战获胜，名声 <b style="color:var(--cn-red)">+8</b>`; }
+        if (heroWon) { Campaign.addFame(8); Prosper.add(m, m.curCity, 1); extraHtml += `<br>🏯 设施挑战获胜，名声 <b style="color:var(--cn-red)">+8</b>`; }
         m.activeFacility = null; Campaign.save();
       }
       // 切磋：胜利增进友谊，落败不加（每名武将每游戏日限一次，见 bond-spar 绑定处）；
@@ -3749,6 +3749,19 @@
           ? `<br>🗡️ 刺杀得手！${opp.name} ${dim[1]} <b style="color:var(--cn-red)">-${amt}</b>，名声 <b style="color:var(--cn-red)">+15</b>`
           : `<br>🗡️ 刺杀失手，反被重创！你的 ${dim[1]} <b style="color:var(--cn-red)">-${amt}</b>`;
         m.activeAssassin = null; Campaign.save();
+      }
+      // 产业劫掠应战：胜则威慑之下追回双倍进账，败则只保住一半；矿山材料不为强人所图，无论胜负均送回宝物库
+      if (m && m.activeEstateRaid) {
+        const r = m.activeEstateRaid;
+        m.activeEstateRaid = null;
+        const got = Bond.addGold(heroWon ? r.gold * 2 : Math.round(r.gold * 0.5), "产业进账");
+        if (heroWon) Campaign.addFame(5);
+        let raidMatTxt = "";
+        if (r.mats) { const mt = Estate.deliverMats(r.cityId, r.mats); raidMatTxt = `，${mt.n}材料 +${r.mats}`; }
+        extraHtml += heroWon
+          ? `<br>🗡️ 击退强人！追回双倍进账 <b style="color:#b8860b">+${got}</b> 金${raidMatTxt}，名声 <b style="color:var(--cn-red)">+5</b>`
+          : `<br>🗡️ 不敌强人，进账被夺大半，只保住 <b style="color:#b8860b">${got}</b> 金${raidMatTxt}`;
+        Campaign.save();
       }
       // 威名榜：击败八大高手记录战绩，凑齐后与武道会夺冠一并达成"天下无双"终局
       if (heroWon) extraHtml += checkRivalDefeat(opp);
@@ -3816,7 +3829,7 @@
         bountyHtml = "<br>" + (streak >= ab.need ? completeBountyReward(ab) : `📋 悬赏未达成：${ab.desc}（本次连胜 ${streak}，仍保留在城池悬赏榜）`);
         m.activeBounty = null; Campaign.save();
       }
-      if (m && m.activeFacility === "gauntlet" && allCleared) { Campaign.addFame(10); bountyHtml += `<br>🏯 设施挑战全清，名声 <b style="color:var(--cn-red)">+10</b>`; }
+      if (m && m.activeFacility === "gauntlet" && allCleared) { Campaign.addFame(10); Prosper.add(m, m.curCity, 1); bountyHtml += `<br>🏯 设施挑战全清，名声 <b style="color:var(--cn-red)">+10</b>`; }
       if (m && m.activeFacility === "gauntlet") { m.activeFacility = null; Campaign.save(); }
       this.grantExp(exp, "车轮大战 · 连胜 " + streak,
         `连斩 <b style="color:var(--cn-red)">${streak}</b> 员${allCleared ? '，横扫群雄！' : (killer ? '，终被 ' + killer.name + ' 所阻。' : '。')}${bountyHtml}`,
@@ -3886,6 +3899,7 @@
       let fameHtml = "";
       if (sideWon) {
         const facilityBonus = (m && m.activeFacility === "war") ? 15 : 0;
+        if (facilityBonus) Prosper.add(m, m.curCity, 1);
         Campaign.addFame(15 + facilityBonus);
         fameHtml = `<br>名声 <b style="color:var(--cn-red)">+${15 + facilityBonus}</b>`;
       }
@@ -3916,6 +3930,7 @@
       let fameHtml = "";
       if (won) {
         const facilityBonus = (m && m.activeFacility === "teamBattle") ? 15 : 0;
+        if (facilityBonus) Prosper.add(m, m.curCity, 1);
         Campaign.addFame(15 + facilityBonus);
         fameHtml = `<br>名声 <b style="color:var(--cn-red)">+${15 + facilityBonus}</b>`;
       }
@@ -3947,6 +3962,7 @@
       let fameHtml = "";
       if (won) {
         const facilityBonus = (m && m.activeFacility === "conquest") ? 25 : 0;
+        if (facilityBonus) Prosper.add(m, m.curCity, 1);
         Campaign.addFame(50 + facilityBonus);
         fameHtml = `<br>名声 <b style="color:var(--cn-red)">+${50 + facilityBonus}</b>`;
       }
@@ -4199,6 +4215,31 @@
     owari: "farm", hitachi: "farm", higo: "farm", aki: "farm",
     osaka: "caravan", odawara: "caravan", bungo: "caravan", mikawa: "caravan",
   };
+  /* 城市繁荣度（城市经营二期）：每城 1~5 星，初始按城市地位分档，主角在该城的活动（设施挑战获胜、
+   * 完成悬赏、置办产业、己方边境战夺城）积累繁荣点，每满 5 点升 1 星；影响产业收益倍率（0.9~1.3）、
+   * 集市摊位数（≥4星 +1）与铁匠铺专精工钱（≥4星 再降三成）。数据存战役层 m.prosper。 */
+  const PROSPER_INIT_HIGH = ["luoyang", "xuchang", "chengdu", "jianye", "kyoto", "osaka", "owari", "sunpu"];
+  const PROSPER_INIT_LOW = ["baidicheng", "shangyong", "oushu", "higo", "hitachi"];
+  const Prosper = {
+    MAX: 5,
+    STEP: 5,   // 每积 5 点繁荣升 1 星
+    state(m) { if (!m.prosper) m.prosper = {}; return m.prosper; },
+    initLv(cityId) { return PROSPER_INIT_HIGH.includes(cityId) ? 3 : PROSPER_INIT_LOW.includes(cityId) ? 1 : 2; },
+    lv(m, cityId) { const s = this.state(m)[cityId]; return s ? s.lv : this.initLv(cityId); },
+    stars(m, cityId) { return "★".repeat(this.lv(m, cityId)); },
+    mult(m, cityId) { return 0.8 + 0.1 * this.lv(m, cityId); },
+    add(m, cityId, pts) {
+      const st = this.state(m)[cityId] || (this.state(m)[cityId] = { lv: this.initLv(cityId), pts: 0 });
+      if (st.lv >= this.MAX) return;
+      st.pts += pts;
+      while (st.pts >= this.STEP && st.lv < this.MAX) {
+        st.pts -= this.STEP;
+        st.lv++;
+        toast(`🏙️ 你的作为令${cityName(cityId)}日渐繁荣，升至 ${"★".repeat(st.lv)}！`);
+      }
+      Campaign.save();
+    },
+  };
   const Estate = {
     ACCRUE_CAP_DAYS: 15,     // 待收积攒上限（天）：满仓后停止累计，逼你规划巡视路线
     MAT_PENDING_CAP: 3,      // 矿山待收材料上限
@@ -4218,9 +4259,11 @@
     dailyRate(m, cityId) {
       const est = this.get(m, cityId);
       if (!est) return 0;
-      return Math.round(ESTATE_TYPES[est.type].rate * (1 + this.managerBonus(est.manager) / 100));
+      return Math.round(ESTATE_TYPES[est.type].rate * (1 + this.managerBonus(est.manager) / 100) * Prosper.mult(m, cityId));
     },
-    // 懒结算：按距上次结算的天数计入待收；被敌方占据期间颗粒无收（天数照样翻篇）。
+    // 懒结算：按距上次结算的天数计入；被敌方占据期间颗粒无收（天数照样翻篇）。
+    // 有掌柜时金币由掌柜逐日代收直接入账（不进待收、不受 15 天积攒上限，商队行情按整段一次判定），
+    // 矿山材料不在代收之列，仍须本人到城收取。
     // 边境战易主一瞬由 applyBorderWarOutcome 先行调用本函数，保证易主前的天数不漏记、易主后不多记
     accrue(m, cityId) {
       const est = this.get(m, cityId);
@@ -4229,7 +4272,16 @@
       est.lastDay = m.day;
       if (days <= 0 || this.sealed(m, cityId)) return;
       const rate = this.dailyRate(m, cityId);
-      est.pending = Math.min(rate * this.ACCRUE_CAP_DAYS, (est.pending || 0) + rate * days);
+      if (est.manager != null) {
+        let gold = rate * days;
+        if (est.type === "caravan") gold = Math.round(gold * (0.6 + Math.random() * 0.8));
+        if (gold > 0) {
+          Bond.addGold(gold, "掌柜代收");
+          est.banked = (est.banked || 0) + gold;
+        }
+      } else {
+        est.pending = Math.min(rate * this.ACCRUE_CAP_DAYS, (est.pending || 0) + rate * days);
+      }
       if (est.type === "mine") {
         est.matCarry = (est.matCarry || 0) + days;
         const gain = Math.floor(est.matCarry / 5);
@@ -4255,12 +4307,15 @@
       if (!Bond.spend(t.cost)) { toast(`金币不足（置办${t.n}需 ${t.cost} 金）`); return false; }
       m.ap--;
       this.all(m)[cityId] = { type: CITY_ESTATE[cityId], lastDay: m.day, pending: 0, manager: null };
+      Prosper.add(m, cityId, 2);   // 置业兴市，繁荣 +2
       Campaign.save();
       AudioSystem.sfx.victory();
       toast(`${t.icon} 置办${cityName(cityId)}${t.n}成功！此后每日进账，记得常回来收取`);
       return true;
     },
-    collect(m, cityId) {
+    // 亲自收取：goldMult 供经营事件（大市翻倍等）放大金币；矿山材料一并交割。
+    // 商队行情浮动在此处一次性判定（掌柜代收的部分则在 accrue 里按整段判定）
+    collect(m, cityId, goldMult, notePrefix) {
       const est = this.get(m, cityId);
       if (!est) return null;
       if (this.sealed(m, cityId)) { toast(`产业已被查封，夺回城池方可收取`); return null; }
@@ -4272,6 +4327,7 @@
         gold = Math.round(gold * f);
         fluxTxt = f >= 1.15 ? "（行情大好）" : f <= 0.85 ? "（行情惨淡）" : "";
       }
+      gold = Math.round(gold * (goldMult || 1));
       const mats = est.matPending || 0;
       if (gold <= 0 && mats <= 0) { Campaign.save(); toast(`尚无进账，改日再来`); return null; }
       est.pending = 0;
@@ -4279,14 +4335,32 @@
       const gained = Bond.addGold(gold, "产业收益");
       let matTxt = "";
       if (mats > 0) {
-        const matType = Armory.TYPES[hashStr(cityId) % Armory.TYPES.length];
-        Armory.dropMaterial(matType.k, mats);
-        matTxt = `，${matType.n}材料 +${mats}`;
+        const mt = this.deliverMats(cityId, mats);
+        matTxt = `，${mt.n}材料 +${mats}`;
       }
       Campaign.save();
       AudioSystem.sfx.victory();
-      toast(`💰 收取${ESTATE_TYPES[est.type].n}进账 ${gained} 金${fluxTxt}${matTxt}`);
+      toast(`${notePrefix || ""}💰 收取${ESTATE_TYPES[est.type].n}进账 ${gained} 金${fluxTxt}${matTxt}`);
       return { gold: gained, mats };
+    },
+    // 矿山材料入库（与本城铁匠铺专精同类型）
+    deliverMats(cityId, n) {
+      const matType = Armory.TYPES[hashStr(cityId) % Armory.TYPES.length];
+      Armory.dropMaterial(matType.k, n);
+      return matType;
+    },
+    // 强人劫掠：把这笔待收连同材料"押在路上"——立即清空账面并返回没收额，由应战/破财结局决定实得
+    seizeForRaid(m, cityId) {
+      const est = this.get(m, cityId);
+      if (!est) return null;
+      this.accrue(m, cityId);
+      let gold = est.pending || 0;
+      if (est.type === "caravan" && gold > 0) gold = Math.round(gold * (0.6 + Math.random() * 0.8));
+      const mats = est.matPending || 0;
+      est.pending = 0;
+      est.matPending = 0;
+      Campaign.save();
+      return { gold, mats };
     },
     sell(m, cityId) {
       const est = this.get(m, cityId);
@@ -4356,8 +4430,8 @@
   }
   function cityMarketStalls(m) {
     const rnd = seededRand(hashStr(m.curCity + "|" + m.day + "|" + ((Campaign.meta && Campaign.meta.createdAt) || 0)));
-    // 名声达「略有耳闻」（第 1 阶）起，声名远播招来更多行商，货摊数 4→5
-    const n = Campaign.fameTierIndex(m.fame || 0) >= 1 ? 5 : 4;
+    // 名声达「略有耳闻」（第 1 阶）起，声名远播招来更多行商，货摊数 4→5；城市繁荣 ≥4 星再 +1 摊
+    const n = (Campaign.fameTierIndex(m.fame || 0) >= 1 ? 5 : 4) + (Prosper.lv(m, m.curCity) >= 4 ? 1 : 0);
     return Array.from({ length: n }, () => {
       const type = Armory.TYPES[Math.floor(rnd() * Armory.TYPES.length)];
       const total = Armory.RARITIES.reduce((s, r) => s + r.weight, 0);
@@ -4486,6 +4560,7 @@
     const goldGain = Bond.addGold(ab.rewardGold);
     Campaign.addFame(ab.rewardFame);
     const m = Campaign.mapState();
+    if (m) Prosper.add(m, ab.cityId, 1);   // 为地方除害，繁荣 +1
     let uniqueHtml = "";
     if (ab.legendary && m && !m.uniqueOwned.senriGeta) {
       const item = Armory.makeUniqueTreasure("senriGeta");
@@ -4571,7 +4646,7 @@
           day: 1, ap: 1, apMax: 1, curCity: null, assign, appeared, nextAppearDay: 6,
           fame: 0, bounties, activeBounty: null,
           uniqueOwned: { chitu: false, senriGeta: false }, rivalsDefeated: [], cupWon: false, ending: false,
-          cityOwner: initCityOwner(), statPenalty: {}, statGrowth: {}, activeAssassin: null, estate: {},
+          cityOwner: initCityOwner(), statPenalty: {}, statGrowth: {}, activeAssassin: null, estate: {}, prosper: {}, activeEstateRaid: null,
         },
       };
       this.save();
@@ -4610,6 +4685,8 @@
       if (!m.statGrowth) { m.statGrowth = {}; changed = true; }
       if (m.activeAssassin === undefined) { m.activeAssassin = null; changed = true; }
       if (!m.estate) { m.estate = {}; changed = true; }
+      if (!m.prosper) { m.prosper = {}; changed = true; }
+      if (m.activeEstateRaid === undefined) { m.activeEstateRaid = null; changed = true; }
       if (changed) this.save();
       return m;
     },
@@ -4976,6 +5053,7 @@
         <div class="mc-roster narrow triple">${appearedHere.map(g => `<button class="mc-gen ${g.side}" data-id="${g.id}">
           <span class="mcg-name">${g.name}</span>
         </button>`).join("") || '<div class="empty" style="grid-column:1/-1;width:100%;padding:14px 4px;white-space:normal;">这座城暂无现身的武将，游历天下终会遇见他们。</div>'}</div>
+        <button class="cup-go allgen-btn" id="map-visit-all">🚶 一键拜访</button>
         <button class="cup-go allgen-btn" id="map-all-gens">🌐 全部武将</button>`;
     },
     cityPanelHtml(m) {
@@ -4988,7 +5066,7 @@
       const smithType = Armory.TYPES[hashStr(m.curCity) % Armory.TYPES.length];
       const trainLocked = Campaign.fameTierIndex(m.fame || 0) < RPG.TRAIN_FAME_TIER;
       return `<div class="mc-head">
-          <span>📍 ${c.n}${isSea ? '<small>海路中转站</small>' : ''}</span>
+          <span>📍 ${c.n} <small style="color:var(--cn-gold);letter-spacing:1px">${Prosper.stars(m, m.curCity)}</small>${isSea ? '<small>海路中转站</small>' : ''}</span>
           <span class="mc-head-stats">⚡<b>${m.ap}</b>/${m.apMax} · 💰<b>${Bond.gold()}</b></span>
         </div>
         <div class="menu map-menu">
@@ -5016,7 +5094,12 @@
       }
       Estate.accrue(m, m.curCity);
       Campaign.save();
-      return `<button class="menu-btn" id="map-estate"><span class="mi">${t.icon}</span><span>${t.n}产业<small>${sealed ? "⛔ 已被查封 · 夺回城池后恢复" : `待收 ${est.pending || 0} 金${est.matPending ? ` · 材料 ${est.matPending} 份` : ""}`}</small></span></button>`;
+      const parts = [];
+      if (est.manager != null) parts.push(`掌柜代收中·日进 ${Estate.dailyRate(m, m.curCity)} 金`);
+      if (est.pending) parts.push(`待收 ${est.pending} 金`);
+      if (est.matPending) parts.push(`材料 ${est.matPending} 份`);
+      if (!parts.length) parts.push(`日进 ${Estate.dailyRate(m, m.curCity)} 金`);
+      return `<button class="menu-btn" id="map-estate"><span class="mi">${t.icon}</span><span>${t.n}产业<small>${sealed ? "⛔ 已被查封 · 夺回城池后恢复" : parts.join(" · ")}</small></span></button>`;
     },
     bind(m) {
       $$(".map-city").forEach(el => el.onclick = () => this.moveTo(el.dataset.id));
@@ -5030,6 +5113,7 @@
       const campBtn = $("#map-camp"); if (campBtn) campBtn.onclick = () => this.camp();
       const charBtn = $("#map-char"); if (charBtn) charBtn.onclick = () => RPG.open();
       const allGenBtn = $("#map-all-gens"); if (allGenBtn) allGenBtn.onclick = () => AllGenUI.open();
+      const visitAllBtn = $("#map-visit-all"); if (visitAllBtn) visitAllBtn.onclick = () => this.oneClickVisit();
     },
     // 地图缩放/拖动：鼠标拖拽、触控拖拽、双指捏合缩放、滚轮缩放、右上角 +/- 按钮；缩放状态跨渲染持久（MapZoom 为模块级变量）
     applyZoom(box) {
@@ -5159,12 +5243,14 @@
       const m = Campaign.mapState();
       const c = cityDef(m.curCity);
       const specialty = Armory.TYPES[hashStr(m.curCity) % Armory.TYPES.length];
-      // 名声达「名满天下」（第 7 阶）起，铁匠铺待你如上宾，专精类锻造再减免
+      // 名声达「名满天下」（第 7 阶）起，铁匠铺待你如上宾，专精类锻造再减免；城市繁荣 ≥4 星专精工钱再降三成
       const highFame = Campaign.fameTierIndex(m.fame || 0) >= 7;
-      const specMat = highFame ? 4 : 5, specGold = highFame ? 20 : 30;
+      const prosperous = Prosper.lv(m, m.curCity) >= 4;
+      const specMat = highFame ? 4 : 5;
+      const specGold = Math.round((highFame ? 20 : 30) * (prosperous ? 0.7 : 1));
       openOverlay(`<div class="result-card detail-card">
         <h1>⚒️ ${c.n}铁匠铺</h1>
-        <div class="wdesc">本铺专精<b style="color:var(--cn-gold)">${specialty.icon}${specialty.n}</b>：锻${specialty.n}只需材料 ${specMat} + ${specGold} 金（其余类型 6 + 40 金）${highFame ? '<br>⭐ 声望崇高，本铺特惠加码' : ''} · 💰 现有 ${Bond.gold()} 金</div>
+        <div class="wdesc">本铺专精<b style="color:var(--cn-gold)">${specialty.icon}${specialty.n}</b>：锻${specialty.n}只需材料 ${specMat} + ${specGold} 金（其余类型 6 + 40 金）${highFame ? '<br>⭐ 声望崇高，本铺特惠加码' : ''}${prosperous ? '<br>🏙️ 市面繁荣（★4+），专精工钱再降三成' : ''} · 💰 现有 ${Bond.gold()} 金</div>
         <div class="buff-list">
           ${Armory.TYPES.map(type => {
             const isSpec = type.k === specialty.k;
@@ -5218,7 +5304,7 @@
       openOverlay(`<div class="result-card detail-card">
         <h1>${t.icon} ${cityName(cityId)} · ${t.n}</h1>
         ${sealed ? `<div class="wdesc" style="color:var(--cn-red)"><b>⛔ 产业已被敌方查封</b>——停产且不可收取/变卖，待己方夺回此城自动恢复。</div>` : ""}
-        <div class="wdesc">日进 <b style="color:#b8860b">${rate}</b> 金${mgr ? `（含掌柜加成 +${bonus}%）` : ""} · 待收 <b style="color:#b8860b">${est.pending || 0}</b> 金（上限 ${rate * Estate.ACCRUE_CAP_DAYS}）${est.type === "mine" ? `<br>⛏️ 待收${matType.n}材料 <b>${est.matPending || 0}</b> 份（每满 5 天 +1，上限 ${Estate.MAT_PENDING_CAP}）` : ""}${est.type === "caravan" ? `<br>🚢 商队行情：收取时浮动六成～一倍四` : ""}<br>🤝 掌柜：${mgr ? `<b>${mgr.name}</b>（收益 +${bonus}%）` : "空缺（可委任友谊满上限的武将，按其智力+政治提升收益）"}</div>
+        <div class="wdesc">日进 <b style="color:#b8860b">${rate}</b> 金（繁荣 ${Prosper.stars(m, cityId)} ×${Prosper.mult(m, cityId).toFixed(1)}${mgr ? `，掌柜 +${bonus}%` : ""}） · 待收 <b style="color:#b8860b">${est.pending || 0}</b> 金${est.manager != null ? `<br>🤝 掌柜逐日代收金币直接入账（累计已代收 <b style="color:#b8860b">${est.banked || 0}</b> 金），材料仍须本人收取` : `（上限 ${rate * Estate.ACCRUE_CAP_DAYS}）`}${est.type === "mine" ? `<br>⛏️ 待收${matType.n}材料 <b>${est.matPending || 0}</b> 份（每满 5 天 +1，上限 ${Estate.MAT_PENDING_CAP}）` : ""}${est.type === "caravan" ? `<br>🚢 商队行情：收取时浮动六成～一倍四` : ""}<br>🤝 掌柜：${mgr ? `<b>${mgr.name}</b>（收益 +${bonus}%）` : "空缺（可委任友谊满上限的武将，按其智力+政治提升收益，并逐日代收金币）"}</div>
         <div class="btns">
           <button class="btn-primary" id="est-collect" ${canCollect ? "" : "disabled"}>💰 收取进账</button>
           <button class="btn-ghost" id="est-mgr">${mgr ? "更换掌柜" : "委任掌柜"}</button>
@@ -5227,7 +5313,7 @@
           <button class="btn-ghost" id="est-close">离开</button>
         </div>
       </div>`);
-      $("#est-collect").onclick = () => { if (Estate.collect(m, cityId)) { closeOverlay(); this.render(); } };
+      $("#est-collect").onclick = () => { closeOverlay(); this.collectEstate(cityId); };
       $("#est-mgr").onclick = () => this.openEstateManagerPicker(m, cityId);
       const outBtn = $("#est-mgr-out");
       if (outBtn) outBtn.onclick = () => { Estate.dismissManager(m, cityId); toast(`掌柜已卸任归乡`); this.openEstate(); };
@@ -5244,6 +5330,95 @@
       </div>`);
       $$(".est-mgr-cand").forEach(el => el.onclick = () => { Estate.appoint(m, cityId, +el.dataset.id); this.openEstate(); });
       $("#est-mgr-back").onclick = () => this.openEstate();
+    },
+    // 亲自收取进账：小概率触发经营事件（强人劫掠/大市/贵客临门），否则照常结算。
+    // 掌柜代收的金币走 Estate.accrue 静默入账，不经此处、不触发事件
+    collectEstate(cityId) {
+      const m = Campaign.mapState();
+      const est = Estate.get(m, cityId);
+      if (!est) return;
+      if (Estate.sealed(m, cityId)) { toast(`产业已被查封，夺回城池方可收取`); return; }
+      Estate.accrue(m, cityId);
+      Campaign.save();
+      const goldPending = est.pending || 0, mats = est.matPending || 0;
+      if (goldPending <= 0 && mats <= 0) { toast(`尚无进账，改日再来`); return; }
+      const roll = Math.random();
+      // 事件按固定区间判定：[0,0.12) 强人劫掠（农庄安稳无此虞，命中也照常结算）、[0.12,0.22) 大市、
+      // [0.22,0.32) 贵客临门（酒馆特有）；其余照常
+      if (goldPending > 0 && est.type !== "farm" && roll < 0.12) { this.estateRaid(m, cityId); return; }
+      // 大市（10%）：金币收益翻倍
+      if (goldPending > 0 && roll >= 0.12 && roll < 0.22) { Estate.collect(m, cityId, 2, `📈 恰逢大市，收益翻倍！`); this.render(); return; }
+      // 贵客临门（10%，酒馆特有）：随机一位已现身武将造访，友谊大增
+      if (goldPending > 0 && est.type === "tavern" && roll >= 0.22 && roll < 0.32) {
+        const cands = DB.list.filter(g => m.appeared.includes(g.id) && g.side === RPG.char.side);
+        if (cands.length) {
+          const g = cands[randInt(0, cands.length - 1)];
+          const add = Bond.addF(g.id, 10);
+          Bond.save();
+          Estate.collect(m, cityId, 1, add > 0 ? `🎉 贵客【${g.name}】临门畅饮，友谊 +${add}！` : `🎉 贵客【${g.name}】临门畅饮（友谊已至上限）！`);
+          this.render();
+          return;
+        }
+      }
+      Estate.collect(m, cityId, 1);
+      this.render();
+    },
+    // 强人劫掠：先把这笔进账"押在路上"，应战（经典单挑，结算走 RPG.onBattleEnd 的 activeEstateRaid 通道：
+    // 胜追回双倍、败只保住一半）或破财消灾（保住七成）；材料不为强人所图，两种结局都会送回宝物库
+    estateRaid(m, cityId) {
+      const seized = Estate.seizeForRaid(m, cityId);
+      const raider = this.makeRaider();
+      openOverlay(`<div class="result-card">
+        <h1>🗡️ 强人劫掠！</h1>
+        <div class="winner-av" style="background:linear-gradient(135deg,#3a3a3a,#141414)">${avatarChar(raider.name)}</div>
+        <div class="wname">${raider.name}</div>
+        <div class="wdesc">收账归途，强人拦路抢夺这笔 <b style="color:#b8860b">${seized.gold}</b> 金进账！<br>应战获胜可威慑追回<b>双倍</b>，落败只保得一半；破财消灾则保住七成。</div>
+        <div class="btns">
+          <button class="btn-primary" id="er-fight">应战</button>
+          <button class="btn-ghost" id="er-pay">破财消灾（保住七成）</button>
+        </div>
+      </div>`);
+      $("#er-fight").onclick = () => {
+        closeOverlay();
+        m.activeEstateRaid = { cityId, gold: seized.gold, mats: seized.mats };
+        Campaign.save();
+        startClassicBattle(RPG.heroGeneral(), raider, false, true);
+      };
+      $("#er-pay").onclick = () => {
+        closeOverlay();
+        const kept = Bond.addGold(Math.round(seized.gold * 0.7), "破财消灾");
+        let matTxt = "";
+        if (seized.mats) { const mt = Estate.deliverMats(cityId, seized.mats); matTxt = `，${mt.n}材料 +${seized.mats}`; }
+        Campaign.save();
+        toast(`💸 破财消灾，保住 ${kept} 金${matTxt}`);
+        this.render();
+      };
+    },
+    // 劫道强人：实力贴着主角当前水平上下浮动，可胜但不可轻敌；阵营取敌方仅为配色，不入武将图鉴
+    makeRaider() {
+      const names = ["黑风寨主", "断刀浪人", "野盗头目", "山道剑客", "流亡枪豪"];
+      const hg = RPG.heroGeneral();
+      const g = { id: -77, name: names[randInt(0, names.length - 1)], side: RPG.char.side === "cn" ? "jp" : "cn" };
+      DIMS.forEach(([k]) => { g[k] = Math.max(40, Math.min(110, hg[k] - randInt(0, 12) + randInt(0, 8))); });
+      return g;
+    },
+    // 一键拜访：本城所有可拜访（己方阵营、友谊未满、今日未访）的已现身武将一次访遍，汇总提示
+    oneClickVisit() {
+      const m = Campaign.mapState();
+      const today = Bond.dayKey();
+      if (!Bond.data.visitDay) Bond.data.visitDay = {};
+      const targets = DB.list.filter(g => m.assign[g.id] === m.curCity && m.appeared.includes(g.id)
+        && g.side === RPG.char.side && Bond.pts(g.id) < Bond.MAX_FRIEND && Bond.data.visitDay[g.id] !== today);
+      if (!targets.length) { toast(`本城暂无可拜访的武将（敌将不可访，或今日均已拜访/友谊已满）`); return; }
+      const lines = targets.map(g => {
+        Bond.data.visitDay[g.id] = today;
+        const add = Bond.addF(g.id, randInt(1, 2));
+        return `${g.name} +${add}`;
+      });
+      Bond.save();
+      AudioSystem.sfx.select();
+      const shown = lines.slice(0, 8).join("、");
+      toast(`🚶 一键拜访 ${targets.length} 位武将：${shown}${lines.length > 8 ? ` 等 ${lines.length} 位` : ""}`);
     },
     acceptBounty(cityId, uid) {
       const m = Campaign.mapState();
@@ -5496,6 +5671,7 @@
       const garrisonPool = DB.list.filter(g => g.side === winnerSide && m.appeared.includes(g.id) && m.assign[g.id] !== capturedCity);
       shuffle(garrisonPool);
       garrisonPool.slice(0, randInt(2, 4)).forEach(g => { m.assign[g.id] = capturedCity; });
+      if (winnerSide === RPG.char.side) Prosper.add(m, capturedCity, 2);   // 己方光复/开拓此城，百废俱兴
       Campaign.save();
       return capturedCity;
     },
