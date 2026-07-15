@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607152126";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607152219";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -4541,8 +4541,8 @@
       };
     }
     if (kind === "tower") {
-      const need = legendary ? 20 : [5, 8, 12][randInt(0, 2)];
-      // 登塔难度随层数陡增，奖赏按层数二次方加码：5层150金/17名声 · 8层258金/24 · 12层458金/48 · 20层1050金/120
+      const need = [5, 10, 15, 20][randInt(0, 3)];
+      // 登塔难度随层数陡增，奖赏按层数二次方加码：5层150金/11名声 · 10层350金/34 · 15层650金/71 · 20层1050金/120
       return {
         uid, kind: "tower", need, legendary,
         desc: `登塔令：百人斩攀至第 ${need} 层`,
@@ -5591,15 +5591,15 @@
       m.day++; m.ap = m.apMax;
       m.marketSold = {};   // 新的一天，各城集市重新上货
       const wandered = this.wanderGenerals(m);
-      // 悬赏轮换：每次宿营约 20% 概率，随机一城随机一条悬赏静默换新——榜单不再一成不变；
-      // 已接取中的悬赏结算按接取时的快照进行，不受轮换影响
-      if (m.bounties && Math.random() < 0.2) {
-        const cids = Object.keys(m.bounties).filter(cid => (m.bounties[cid] || []).length);
-        if (cids.length) {
-          const cid = cids[randInt(0, cids.length - 1)];
+      // 悬赏轮换：每次宿营，每座城的每一条悬赏各自独立 50% 概率静默换新——榜单不再一成不变；
+      // 已接取中的悬赏结算按接取时写入 m.activeBounty 的独立快照进行，不受轮换影响
+      if (m.bounties) {
+        Object.keys(m.bounties).forEach(cid => {
           const list = m.bounties[cid];
-          list[randInt(0, list.length - 1)] = genBounty(cid, m.assign, m.appeared, RPG.char && RPG.char.side);
-        }
+          list.forEach((b, idx) => {
+            if (Math.random() < 0.5) list[idx] = genBounty(cid, m.assign, m.appeared, RPG.char && RPG.char.side);
+          });
+        });
       }
       Campaign.save();
       AudioSystem.sfx.victory();
