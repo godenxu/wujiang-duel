@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607142218";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607152126";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -142,8 +142,9 @@
     closeOverlay();
     // 宝物库（仓库/商店/锻造）挂在角色扮演主页或天下地图之下，退出应回到发起它的那一层（而非直接回首页）
     if ($("#screen-armory").classList.contains("active") && RPG.char) { goHome(); return; }
-    // 全部武将名录固定挂在天下地图之下
+    // 全部武将名录/全部城市总览固定挂在天下地图之下
     if ($("#screen-allgen").classList.contains("active")) { MapUI.open(); return; }
+    if ($("#screen-allcity").classList.contains("active")) { MapUI.open(); return; }
     // 角色扮演主页现为天下地图之下的角色详情页，退出固定回到地图（若尚未开局才回首页）
     if ($("#screen-rpg").classList.contains("active")) {
       if (RPG.char && Campaign.meta && Campaign.meta.active) { MapUI.open(); return; }
@@ -4541,11 +4542,12 @@
     }
     if (kind === "tower") {
       const need = legendary ? 20 : [5, 8, 12][randInt(0, 2)];
+      // 登塔难度随层数陡增，奖赏按层数二次方加码：5层150金/17名声 · 8层258金/24 · 12层458金/48 · 20层1050金/120
       return {
         uid, kind: "tower", need, legendary,
         desc: `登塔令：百人斩攀至第 ${need} 层`,
-        rewardGold: 55 + need * 10,
-        rewardFame: legendary ? 35 : 6 + need,
+        rewardGold: 50 + need * 10 + need * need * 2,
+        rewardFame: need + Math.round(need * need / 4),
       };
     }
     return {
@@ -5053,8 +5055,7 @@
         <div class="mc-roster narrow triple">${appearedHere.map(g => `<button class="mc-gen ${g.side}" data-id="${g.id}">
           <span class="mcg-name">${g.name}</span>
         </button>`).join("") || '<div class="empty" style="grid-column:1/-1;width:100%;padding:14px 4px;white-space:normal;">这座城暂无现身的武将，游历天下终会遇见他们。</div>'}</div>
-        <button class="cup-go allgen-btn" id="map-visit-all">🚶 一键拜访</button>
-        <button class="cup-go allgen-btn" id="map-all-gens">🌐 全部武将</button>`;
+        <button class="cup-go allgen-btn" id="map-visit-all">🚶 一键拜访</button>`;
     },
     cityPanelHtml(m) {
       const c = cityDef(m.curCity);
@@ -5113,6 +5114,7 @@
       const campBtn = $("#map-camp"); if (campBtn) campBtn.onclick = () => this.camp();
       const charBtn = $("#map-char"); if (charBtn) charBtn.onclick = () => RPG.open();
       const allGenBtn = $("#map-all-gens"); if (allGenBtn) allGenBtn.onclick = () => AllGenUI.open();
+      const allCityBtn = $("#map-all-cities"); if (allCityBtn) allCityBtn.onclick = () => AllCityUI.open();
       const visitAllBtn = $("#map-visit-all"); if (visitAllBtn) visitAllBtn.onclick = () => this.oneClickVisit();
     },
     // 地图缩放/拖动：鼠标拖拽、触控拖拽、双指捏合缩放、滚轮缩放、右上角 +/- 按钮；缩放状态跨渲染持久（MapZoom 为模块级变量）
@@ -5589,6 +5591,16 @@
       m.day++; m.ap = m.apMax;
       m.marketSold = {};   // 新的一天，各城集市重新上货
       const wandered = this.wanderGenerals(m);
+      // 悬赏轮换：每次宿营约 20% 概率，随机一城随机一条悬赏静默换新——榜单不再一成不变；
+      // 已接取中的悬赏结算按接取时的快照进行，不受轮换影响
+      if (m.bounties && Math.random() < 0.2) {
+        const cids = Object.keys(m.bounties).filter(cid => (m.bounties[cid] || []).length);
+        if (cids.length) {
+          const cid = cids[randInt(0, cids.length - 1)];
+          const list = m.bounties[cid];
+          list[randInt(0, list.length - 1)] = genBounty(cid, m.assign, m.appeared, RPG.char && RPG.char.side);
+        }
+      }
       Campaign.save();
       AudioSystem.sfx.victory();
       // 武将大会、月末边境战、敌营夜袭均会另起弹窗/战斗流程，各自负责后续渲染，故提前返回避免与常规宿营提示叠加
@@ -5950,6 +5962,103 @@
       $$("#allgen-list tbody tr").forEach(tr => {
         tr.onclick = () => { const g = DB.get(+tr.dataset.id); if (g) showDetail(g, { readonly: true }); };
       });
+    },
+  };
+
+  /* 全部城市总览：与「全部武将」同风格的只读表格（挂在天下地图之下），
+   * 行点击弹出该城详情（归属/繁荣/设施/专精/行情/产业/本地武将/悬赏/相邻城池） */
+  const AllCityUI = {
+    sort: { key: "name", dir: 1 },
+    open() { this.render(); showScreen("allcity"); },
+    sortBy(key) {
+      if (this.sort.key === key) this.sort.dir *= -1;
+      else this.sort = { key, dir: key === "name" ? 1 : -1 };
+      this.render();
+    },
+    rowData(m, c) {
+      const owner = cityOwnerSide(m, c.id);
+      const locals = DB.list.filter(g => m.assign[g.id] === c.id);
+      const appeared = locals.filter(g => m.appeared.includes(g.id));
+      const est = Estate.get(m, c.id);
+      const eType = Estate.typeOf(c.id);
+      let estTxt = "—";
+      if (eType) {
+        if (!est) estTxt = `未置办`;
+        else if (Estate.sealed(m, c.id)) estTxt = `${eType.icon}查封`;
+        else estTxt = `${eType.icon}${est.pending ? `待收${est.pending}` : est.manager != null ? "代收中" : "已置办"}`;
+      }
+      const fac = CITY_FACILITY[c.id];
+      return {
+        c, owner, prosper: Prosper.lv(m, c.id),
+        facName: fac ? fac.n : "—",
+        smith: Armory.TYPES[hashStr(c.id) % Armory.TYPES.length].n,
+        estTxt, appeared: appeared.length, total: locals.length,
+        bounty: ((m.bounties && m.bounties[c.id]) || []).length,
+      };
+    },
+    render() {
+      const m = Campaign.mapState();
+      const list = $("#allcity-list");
+      if (!m) { list.innerHTML = '<div class="empty">尚未开局</div>'; return; }
+      const rows = CITIES.map(c => this.rowData(m, c));
+      const { key, dir } = this.sort;
+      rows.sort((a, b) => {
+        if (key === "name") return a.c.n.localeCompare(b.c.n, "zh") * dir;
+        if (key === "owner") return a.owner.localeCompare(b.owner) * dir;
+        return ((a[key] || 0) - (b[key] || 0)) * dir;
+      });
+      const arrow = k => key === k ? (dir > 0 ? " ▲" : " ▼") : "";
+      const th = (k, label) => `<th data-sort="${k}" class="${key === k ? 'sorted' : ''}">${label}${arrow(k)}</th>`;
+      const head = `<tr>${th("name", "城市")}${th("owner", "归属")}${th("prosper", "繁荣")}<th>特色设施</th><th>铁匠专精</th><th>产业</th>${th("appeared", "武将")}${th("bounty", "悬赏")}</tr>`;
+      const body = rows.map(r => `<tr data-id="${r.c.id}">
+          <td class="dt-name ${r.owner}"><span class="dt-dot"></span>${r.c.id === m.curCity ? "📍" : ""}${r.c.n}</td>
+          <td class="num">${r.c.side === "sea" ? "🌊" : ""}${sideName(r.owner)}</td>
+          <td class="num" style="color:var(--cn-gold)">${"★".repeat(r.prosper)}</td>
+          <td class="allgen-city">${r.facName}</td>
+          <td class="allgen-city">${r.smith}</td>
+          <td class="allgen-city">${r.estTxt}</td>
+          <td class="num">${r.appeared}/${r.total}</td>
+          <td class="num">${r.bounty}</td>
+        </tr>`).join("");
+      list.innerHTML = `<table class="db-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+      $$("#allcity-list th[data-sort]").forEach(h => h.onclick = () => this.sortBy(h.dataset.sort));
+      $$("#allcity-list tbody tr").forEach(tr => { tr.onclick = () => this.showCity(tr.dataset.id); });
+    },
+    showCity(cityId) {
+      const m = Campaign.mapState();
+      const c = cityDef(cityId);
+      if (!m || !c) return;
+      const r = this.rowData(m, c);
+      const est = Estate.get(m, cityId);
+      const eType = Estate.typeOf(cityId);
+      const factor = cityPriceFactor(cityId);
+      const factorTxt = factor <= 0.85 ? "黑市八折" : factor < 1 ? "行情便宜" : factor > 1.1 ? "行情偏贵" : "价格公道";
+      const appearedNames = DB.list.filter(g => m.assign[g.id] === cityId && m.appeared.includes(g.id))
+        .map(g => `<span class="dt-name ${g.side}" style="margin-right:8px">${g.name}</span>`).join("") || "暂无现身武将";
+      const bounties = (m.bounties && m.bounties[cityId]) || [];
+      let estHtml = "—（海路中转站无产业）";
+      if (eType) {
+        if (!est) estHtml = `${eType.icon}${eType.n} · 未置办（${eType.cost} 金，日进约 ${eType.rate} 金）`;
+        else if (Estate.sealed(m, cityId)) estHtml = `${eType.icon}${eType.n} · <b style="color:var(--cn-red)">⛔ 已被查封</b>`;
+        else {
+          const mgr = est.manager != null ? DB.get(est.manager) : null;
+          estHtml = `${eType.icon}${eType.n} · 日进 ${Estate.dailyRate(m, cityId)} 金 · 待收 ${est.pending || 0} 金${mgr ? ` · 掌柜 ${mgr.name}（累计代收 ${est.banked || 0}）` : ""}`;
+        }
+      }
+      openOverlay(`<div class="result-card detail-card">
+        <h1>📍 ${c.n} <small style="color:var(--cn-gold)">${"★".repeat(r.prosper)}</small></h1>
+        <div class="wdesc">
+          🚩 归属：<b>${sideName(r.owner)}</b>${c.side === "sea" ? "（海路中转站）" : ""} ${cityId === m.curCity ? " · 你正在此城" : ""}<br>
+          ${r.facName !== "—" ? `🏯 特色设施：${r.facName}<br>` : ""}
+          ⚒️ 铁匠专精：${r.smith} · 🏪 集市：${factorTxt}<br>
+          🏠 产业：${estHtml}<br>
+          🚶 本地已现身武将（${r.appeared}/${r.total}）：${appearedNames}<br>
+          📋 悬赏（${bounties.length}）：${bounties.map(b => `${b.legendary ? "⭐" : ""}${b.desc}`).join("；") || "暂无"}<br>
+          🛣️ 相邻城池：${adjCities(cityId).map(id => cityName(id)).join("、")}
+        </div>
+        <div class="btns"><button class="btn-primary" id="ac-close">知道了</button></div>
+      </div>`);
+      $("#ac-close").onclick = () => closeOverlay();
     },
   };
 
