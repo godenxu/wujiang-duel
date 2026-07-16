@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607162225";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607162329";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -5354,13 +5354,17 @@
           <span>📍 ${c.n} <small style="color:var(--cn-gold);letter-spacing:1px">${Prosper.stars(m, m.curCity)}</small>${isSea ? '<small>海路中转站</small>' : ''}</span>
           <span class="mc-head-stats">⚡<b>${m.ap}</b>/${m.apMax} · 💰<b>${Bond.gold()}</b></span>
         </div>
-        <div class="menu map-menu">
-          <button class="menu-btn" id="map-train" ${(m.ap <= 0 || trainLocked) ? "disabled" : ""}><span class="mi">${trainLocked ? '🔒' : '🏋️'}</span><span>历练<small>${trainLocked ? `声望达「${Campaign.FAME_TIERS[RPG.TRAIN_FAME_TIER].n}」解锁` : '随机切磋练级 · 耗 1⚡'}</small></span></button>
+        <div class="menu map-menu map-menu-free">
           <button class="menu-btn" id="map-shop"><span class="mi">🏪</span><span>集市<small>本地货摊每日上新 · ${factorTxt}</small></span></button>
           <button class="menu-btn" id="map-forge"><span class="mi">⚒️</span><span>铁匠铺<small>专精${smithType.n}锻造 · 有减免</small></span></button>
           ${this.estateBtnHtml(m)}
           ${this.buildBtnHtml(m)}
+          ${this.guardBtnHtml(m)}
+          ${this.postBtnHtml(m)}
           ${this.rescueBtnHtml(m)}
+        </div>
+        <div class="menu map-menu map-menu-ap">
+          <button class="menu-btn" id="map-train" ${(m.ap <= 0 || trainLocked) ? "disabled" : ""}><span class="mi">${trainLocked ? '🔒' : '🏋️'}</span><span>历练<small>${trainLocked ? `声望达「${Campaign.FAME_TIERS[RPG.TRAIN_FAME_TIER].n}」解锁` : '随机切磋练级 · 耗 1⚡'}</small></span></button>
           ${fac ? `<button class="menu-btn" id="map-facility" ${m.ap <= 0 ? "disabled" : ""}><span class="mi">${fac.icon}</span><span>${fac.n}<small>设施挑战扬名 · 耗 1⚡</small></span></button>` : ""}
           <button class="menu-btn" id="map-camp"><span class="mi">🏕️</span><span>宿营<small>推进一天 · 行动力回满</small></span></button>
         </div>
@@ -5391,7 +5395,7 @@
       if (est.pending) parts.push(`待收 ${est.pending} 金`);
       if (est.matPending) parts.push(`材料 ${est.matPending} 份`);
       if (!parts.length) parts.push(`日进 ${Estate.dailyRate(m, m.curCity)} 金`);
-      return `<button class="menu-btn" id="map-estate"><span class="mi">${t.icon}</span><span>${Estate.lvName(m, m.curCity)}产业<small>${sealed ? "⛔ 已被查封 · 夺回城池后恢复" : parts.join(" · ")}</small></span></button>`;
+      return `<button class="menu-btn" id="map-estate"><span class="mi">${t.icon}</span><span>${Estate.lvName(m, m.curCity)}<small>${sealed ? "⛔ 已被查封 · 夺回城池后恢复" : parts.join(" · ")}</small></span></button>`;
     },
     // 城建按钮：显示本城已修建筑概览（敌占城市仍可入内查看，面板内不可捐修）
     buildBtnHtml(m) {
@@ -5408,6 +5412,18 @@
       if (!capt.length) return "";
       return `<button class="menu-btn" id="map-rescue"><span class="mi">⛓️</span><span>牢狱营救<small>${capt.map(g => g.name).join("、")} 被囚于此</small></span></button>`;
     },
+    // 守将按钮：己方城池（非海路中转）可委任守将，独立于城建按钮
+    guardBtnHtml(m) {
+      if (cityOwnerSide(m, m.curCity) !== RPG.char.side || cityDef(m.curCity).side === "sea") return "";
+      const guard = Guard.of(m, m.curCity);
+      return `<button class="menu-btn" id="map-guard"><span class="mi">🛡️</span><span>守将<small>${guard ? `${guard.name} 驻守 · 六维+${Guard.STAT_BONUS}` : "空缺 · 可委任驻守"}</small></span></button>`;
+    },
+    // 驿站快马按钮：本城已建驿站（≥1级）才显示，独立于城建按钮
+    postBtnHtml(m) {
+      if (Buildings.lv(m, m.curCity, "post") < 1) return "";
+      const n = Buildings.postDests(m).length;
+      return `<button class="menu-btn" id="map-post"><span class="mi">🏇</span><span>驿站快马<small>${n ? `可达 ${n} 城` : "尚无可达之处"}</small></span></button>`;
+    },
     bind(m) {
       $$(".map-city").forEach(el => el.onclick = () => this.moveTo(el.dataset.id));
       $$(".mc-gen").forEach(el => el.onclick = () => { const g = DB.get(+el.dataset.id); if (g) showDetail(g); });
@@ -5418,6 +5434,8 @@
       const facBtn = $("#map-facility"); if (facBtn) facBtn.onclick = () => this.openFacility();
       const estBtn = $("#map-estate"); if (estBtn) estBtn.onclick = () => this.openEstate();
       const buildBtn = $("#map-build"); if (buildBtn) buildBtn.onclick = () => this.openBuild();
+      const guardBtn = $("#map-guard"); if (guardBtn) guardBtn.onclick = () => this.openGuard();
+      const postBtn = $("#map-post"); if (postBtn) postBtn.onclick = () => this.openPostTravel(m);
       const rescueBtn = $("#map-rescue"); if (rescueBtn) rescueBtn.onclick = () => this.openRescue();
       const campBtn = $("#map-camp"); if (campBtn) campBtn.onclick = () => this.camp();
       const charBtn = $("#map-char"); if (charBtn) charBtn.onclick = () => RPG.open();
@@ -5665,7 +5683,7 @@
       $$(".est-mgr-cand").forEach(el => el.onclick = () => { Estate.appoint(m, cityId, +el.dataset.id); this.openEstate(); });
       $("#est-mgr-back").onclick = () => this.openEstate();
     },
-    /* ---- 城建面板：本城三种公共建筑的捐修/升级，附守将委任与驿站快马 ---- */
+    /* ---- 城建面板：本城三种公共建筑的捐修/升级 ---- */
     openBuild() {
       const m = Campaign.mapState();
       const cityId = m.curCity;
@@ -5686,28 +5704,33 @@
           <span>${bt.icon} <b>${bt.n}</b>${lv > 0 ? ` <b style="color:var(--cn-gold)">${lv} 级</b> · ${bt.eff[lv - 1]}` : " · 未建"}<br><small>${bt.desc}${lv < Buildings.MAX_LV ? `（下一级：${bt.eff[lv]}）` : ""}</small></span>${action}
         </div>`;
       }).join("");
-      const guard = Guard.of(m, cityId);
-      const ownCity = cityOwnerSide(m, cityId) === RPG.char.side && cityDef(cityId).side !== "sea";
-      const guardHtml = ownCity ? `<div class="mc-sect">🛡️ 守将</div>
-        <div class="wdesc" style="text-align:left">${guard ? `<b>${guard.name}</b> 驻城死守——边境战报必上阵且六维 +${Guard.STAT_BONUS}，不随宿营云游` : "空缺——可委任一位友谊满上限的己方武将驻守，边境战报中必上阵且六维 +" + Guard.STAT_BONUS}<br><small>⚠️ 城破之日守将将被俘下狱，须付赎金或劫牢营救（己方夺回此城亦会放人）。</small></div>
-        <div class="btns" style="margin-top:4px">
-          <button class="btn-ghost" id="bld-guard">${guard ? "更换守将" : "委任守将"}</button>
-          ${guard ? `<button class="btn-ghost" id="bld-guard-out">解任守将</button>` : ""}
-        </div>` : "";
-      const dests = Buildings.postDests(m);
-      const postHtml = dests.length ? `<button class="btn-primary" id="bld-post" ${m.ap <= 0 ? "disabled" : ""}>🏇 驿站快马（1⚡）</button>` : "";
       openOverlay(`<div class="result-card detail-card">
         <h1>🏗️ ${cityName(cityId)} · 城建</h1>
         ${sealed ? `<div class="wdesc" style="color:var(--cn-red)">⛔ 此城现为敌占——建筑为敌所用（城墙助其守城），夺回后原级保留、即刻为你效力。</div>` : `<div class="wdesc"><small>捐修花金币与本城专精材料（${matType.n}），不耗行动力，且每级 +2 繁荣点。</small></div>`}
         ${rows}
-        ${guardHtml}
-        <div class="btns">${postHtml}<button class="btn-ghost" id="bld-close">离开</button></div>
+        <div class="btns"><button class="btn-ghost" id="bld-close">离开</button></div>
       </div>`);
       $$(".bld-up").forEach(b => b.onclick = () => { if (Buildings.build(m, cityId, b.dataset.t)) this.openBuild(); });
-      const gBtn = $("#bld-guard"); if (gBtn) gBtn.onclick = () => this.openGuardPicker(m, cityId);
-      const gOut = $("#bld-guard-out"); if (gOut) gOut.onclick = () => { Guard.dismiss(m, cityId); toast(`守将已解任归乡`); this.openBuild(); };
-      const pBtn = $("#bld-post"); if (pBtn) pBtn.onclick = () => this.openPostTravel(m);
       $("#bld-close").onclick = () => { closeOverlay(); this.render(); };
+    },
+    /* ---- 守将面板：委任/更换/解任，独立于城建按钮 ---- */
+    openGuard() {
+      const m = Campaign.mapState();
+      const cityId = m.curCity;
+      if (cityOwnerSide(m, cityId) !== RPG.char.side || cityDef(cityId).side === "sea") return;
+      const guard = Guard.of(m, cityId);
+      openOverlay(`<div class="result-card detail-card">
+        <h1>🛡️ ${cityName(cityId)} · 守将</h1>
+        <div class="wdesc">${guard ? `<b>${guard.name}</b> 驻城死守——边境战报必上阵且六维 +${Guard.STAT_BONUS}，不随宿营云游` : "空缺——可委任一位友谊满上限的己方武将驻守，边境战报中必上阵且六维 +" + Guard.STAT_BONUS}<br><small>⚠️ 城破之日守将将被俘下狱，须付赎金或劫牢营救（己方夺回此城亦会放人）。</small></div>
+        <div class="btns">
+          <button class="btn-primary" id="grd-manage">${guard ? "更换守将" : "委任守将"}</button>
+          ${guard ? `<button class="btn-ghost" id="grd-out">解任守将</button>` : ""}
+          <button class="btn-ghost" id="grd-close">离开</button>
+        </div>
+      </div>`);
+      $("#grd-manage").onclick = () => this.openGuardPicker(m, cityId);
+      const outBtn = $("#grd-out"); if (outBtn) outBtn.onclick = () => { Guard.dismiss(m, cityId); toast(`守将已解任归乡`); this.openGuard(); };
+      $("#grd-close").onclick = () => { closeOverlay(); this.render(); };
     },
     openGuardPicker(m, cityId) {
       const cands = Guard.eligible(m).sort((a, b) => ratingScore(b) - ratingScore(a));
@@ -5717,19 +5740,33 @@
         ${cands.length ? `<div class="menu" style="max-height:40vh;overflow-y:auto">${cands.map(g => `<button class="menu-btn grd-cand" data-id="${g.id}"><span class="mi">🛡️</span><span>${g.name}<small>评分 ${ratingScore(g)}</small></span></button>`).join("")}</div>` : `<div class="wdesc">暂无人选——守将须是友谊满上限、且不在团队/不任掌柜的己方武将。</div>`}
         <div class="btns"><button class="btn-ghost" id="grd-back">返回</button></div>
       </div>`);
-      $$(".grd-cand").forEach(el => el.onclick = () => { Guard.appoint(m, cityId, +el.dataset.id); this.openBuild(); });
-      $("#grd-back").onclick = () => this.openBuild();
+      $$(".grd-cand").forEach(el => el.onclick = () => { Guard.appoint(m, cityId, +el.dataset.id); this.openGuard(); });
+      $("#grd-back").onclick = () => this.openGuard();
     },
+    /* ---- 驿站快马面板：独立于城建按钮；也可由地图直接点击已通驿的远方城市触发（见 confirmPostTravel） ---- */
     openPostTravel(m) {
       const dests = Buildings.postDests(m).sort((a, b) => a.cost - b.cost);
       openOverlay(`<div class="result-card detail-card">
         <h1>🏇 驿站快马</h1>
         <div class="wdesc">快马直达任一建有驿站的己方城市：不论多远只耗 <b>1⚡</b>，驿费按路程计（本城驿站等级越高越省），一路官道无奇遇、无风浪。💰 现有 ${Bond.gold()} 金</div>
-        ${dests.length ? `<div class="menu" style="max-height:40vh;overflow-y:auto">${dests.map(d => `<button class="menu-btn post-dest" data-id="${d.id}" ${Bond.gold() < d.cost ? "disabled" : ""}><span class="mi">🏇</span><span>${d.n}<small>驿费 ${d.cost} 金</small></span></button>`).join("")}</div>` : `<div class="wdesc">尚无可达之处——对方城市也须归属己方且建有驿站。</div>`}
+        ${dests.length ? `<div class="menu post-dest-list" style="max-height:40vh;overflow-y:auto">${dests.map(d => `<button class="menu-btn post-dest" data-id="${d.id}" ${Bond.gold() < d.cost ? "disabled" : ""}><span class="mi">🏇</span><span>${d.n}<small>驿费 ${d.cost} 金</small></span></button>`).join("")}</div>` : `<div class="wdesc">尚无可达之处——对方城市也须归属己方且建有驿站。</div>`}
         <div class="btns"><button class="btn-ghost" id="post-back">返回</button></div>
       </div>`);
       $$(".post-dest").forEach(el => el.onclick = () => this.postTravel(m, el.dataset.id));
-      $("#post-back").onclick = () => this.openBuild();
+      $("#post-back").onclick = () => { closeOverlay(); this.render(); };
+    },
+    // 地图直接点击远方城市：若与当前城池均已建驿站（即在 postDests 名单内），弹确认框走驿传而非报错
+    confirmPostTravel(m, dest) {
+      openOverlay(`<div class="result-card detail-card">
+        <h1>🏇 驿站快马</h1>
+        <div class="wdesc">${cityName(m.curCity)} 与 <b>${dest.n}</b> 均建有驿站，可快马直达：不论多远只耗 <b>1⚡</b>，驿费 <b style="color:#b8860b">${dest.cost}</b> 金（现有 ${Bond.gold()} 金），一路官道无奇遇、无风浪。</div>
+        <div class="btns">
+          <button class="btn-primary" id="pt-go" ${(m.ap <= 0 || Bond.gold() < dest.cost) ? "disabled" : ""}>快马前往</button>
+          <button class="btn-ghost" id="pt-cancel">取消</button>
+        </div>
+      </div>`);
+      $("#pt-go").onclick = () => this.postTravel(m, dest.id);
+      $("#pt-cancel").onclick = () => closeOverlay();
     },
     postTravel(m, destId) {
       const dest = Buildings.postDests(m).find(d => d.id === destId);
@@ -5928,7 +5965,12 @@
     moveTo(id) {
       const m = Campaign.mapState();
       if (id === m.curCity) return;
-      if (!adjCities(m.curCity).includes(id)) { toast(`距离太远，需先移动到相邻城池`); return; }
+      if (!adjCities(m.curCity).includes(id)) {
+        // 非相邻城池：若两地均已建驿站（在 postDests 名单内），弹确认框走驿传，而非直接报错
+        const dest = Buildings.postDests(m).find(d => d.id === id);
+        if (dest) { this.confirmPostTravel(m, dest); return; }
+        toast(`距离太远，需先移动到相邻城池`); return;
+      }
       if (m.ap <= 0) { toast(`今日行动力已耗尽，请先宿营`); return; }
       m.ap--;
       const isSea = m.curCity === "tsushima" || id === "tsushima";
