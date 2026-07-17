@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607172122";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607172246";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -162,11 +162,15 @@
     showScreen("home");
   }
 
-  /* ---------------- 弹窗 ---------------- */
+  /* ---------------- 弹窗 ----------------
+   * modal:true 的弹窗点击遮罩不关闭——凡是「战斗流程正在 await 玩家选择」的弹窗（回魂丹、
+   * 出战询问、战报回调、竞猜、夜袭、边境战等）必须走 modal，否则误触遮罩会把按钮连同
+   * Promise 的唯一出路一起关掉，战斗循环从此挂死 */
   const overlay = $("#overlay");
-  function openOverlay(html) { $("#overlay-content").innerHTML = html; overlay.classList.add("show"); }
-  function closeOverlay() { overlay.classList.remove("show"); }
-  overlay.addEventListener("click", e => { if (e.target === overlay) closeOverlay(); });
+  let overlayModal = false;
+  function openOverlay(html, opts) { $("#overlay-content").innerHTML = html; overlay.classList.add("show"); overlayModal = !!(opts && opts.modal); }
+  function closeOverlay() { overlay.classList.remove("show"); overlayModal = false; }
+  overlay.addEventListener("click", e => { if (e.target === overlay && !overlayModal) closeOverlay(); });
 
   /* ---------------- 雷达图 (SVG) ---------------- */
   function radarSVG(g, size = 200) {
@@ -841,7 +845,7 @@
         <div class="btns">
           <button class="btn-primary" id="rv-yes">💊 服回魂丹</button>
           <button class="btn-ghost" id="rv-no">认输</button>
-        </div></div>`);
+        </div></div>`, { modal: true });
       $("#rv-yes").onclick = () => {
         closeOverlay();
         if (!Bond.spend(cost)) { res(false); return; }
@@ -1466,7 +1470,7 @@
             <button class="btn-primary" id="war-ask-join">亲自应战</button>
             <button class="btn-ghost" id="war-ask-skip">自动观战</button>
           </div>
-        </div>`);
+        </div>`, { modal: true });
         $("#war-ask-join").onclick = () => { closeOverlay(); this._askResolve = null; resolve(true); };
         $("#war-ask-skip").onclick = () => { closeOverlay(); this._askResolve = null; resolve(false); };
       });
@@ -1527,8 +1531,8 @@
         ? "详情模式：每一阵都将进入经典单挑画面亲历厮杀（可调速/中途返回）"
         : "点击「开战」，让两军百将随机捉对厮杀";
     },
-    // opts.customRoster: {cn:[...], jp:[...]} 由调用方给定固定参战名单时（如边境阵营大战，只取已现身武将、
-    // 双方等量），跳过默认的「全库200员+规模挑选」建军逻辑，改直接以给定名单为准（仍套用下方统一的主角强制上阵逻辑）；
+    // opts.customRoster: {cn:[...], jp:[...]} 由调用方给定固定参战名单时（通用能力，暂无内置玩法使用），
+    // 跳过默认的「全库200员+规模挑选」建军逻辑，改直接以给定名单为准（仍套用下方统一的主角强制上阵逻辑）；
     // opts.onDone(result) 提供时，战报改由调用方接管展示（不再走默认的 RPG.onWarResult / 自由试玩战报弹窗）
     async start(hero, opts = {}) {
       if (this.running) return;
@@ -1703,7 +1707,7 @@
       this.gen++;
       const myGen = this.gen;
       this.playerSide = side;
-      this.delegated = false;
+      this.delegated = !!opts.observe;   // observe：主角未上场的纯观战——「己方」全程由 AI 代打（边境战主角未被抽中时）
       this.picking = null;
       this.activeUnit = null;
       this.running = true;
@@ -2034,7 +2038,7 @@
         openOverlay(`<div class="result-card">
           <h1>${playerWon ? "大捷" : "败退"}</h1>
           <div class="wdesc">你方存活 <b>${mineAlive}</b>/${mineTotal} 将，敌方存活 <b>${theirAlive}</b>/${theirTotal} 将。<br>本场击杀敌将 <b style="color:var(--cn-red)">${this.kills.player}</b> 员。</div>
-          <div class="btns"><button class="btn-primary" id="tw-cont">回到战局</button></div></div>`);
+          <div class="btns"><button class="btn-primary" id="tw-cont">回到战局</button></div></div>`, { modal: true });
         $("#tw-cont").onclick = () => { closeOverlay(); cb(res); };
         return;
       }
@@ -2704,7 +2708,7 @@
             <div class="btns">
               <button class="btn-primary" id="pred-next" disabled>确定</button>
               ${r === 0 ? '<button class="btn-ghost" id="pred-skip">跳过竞猜</button>' : ''}
-            </div></div>`);
+            </div></div>`, { modal: true });
           const sel = new Array(n).fill(-1);
           $$(".pred-side").forEach(b => b.onclick = () => {
             const m = +b.dataset.m, s = +b.dataset.s;
@@ -4794,7 +4798,7 @@
       const st = this.state(m); if (!st) return null;
       const base = DB.get(st.id); if (!base) return null;
       const gg = Armory.geared(base, base.id);
-      const boost = Math.max(0, Math.round((RPG.char.level - 1) * 1.5) + st.wins * 4);
+      const boost = Math.min(25, Math.max(0, Math.round((RPG.char.level - 1) * 0.6) + st.wins * 2));
       if (!boost) return gg;
       const gg2 = clone(gg);
       DIMS.forEach(([k]) => { gg2[k] += boost; });
@@ -4841,7 +4845,7 @@
         <div class="wname">${nm}</div>
         <div class="wdesc">【${nm}】率众踏营叫阵，摆明了不死不休！唯有应战。</div>
         <div class="btns"><button class="btn-primary" id="nem-fight">应战</button></div>
-      </div>`);
+      </div>`, { modal: true });
       $("#nem-fight").onclick = () => { closeOverlay(); this.duel(m); };
       return true;
     },
@@ -5533,10 +5537,10 @@
           <span class="mc-head-stats">⚡<b>${m.ap}</b>/${m.apMax} · 💰<b>${Bond.gold()}</b></span>
         </div>
         <div class="menu map-menu map-menu-free">
-          <button class="menu-btn" id="map-shop"><span class="mi">🏪</span><span>集市<small>本地货摊每日上新 · ${factorTxt}</small></span></button>
           <button class="menu-btn" id="map-forge"><span class="mi">⚒️</span><span>铁匠铺<small>专精${smithType.n}锻造 · 有减免</small></span></button>
-          ${this.estateBtnHtml(m)}
+          <button class="menu-btn" id="map-shop"><span class="mi">🏪</span><span>集市<small>本地货摊每日上新 · ${factorTxt}</small></span></button>
           ${this.buildBtnHtml(m)}
+          ${this.estateBtnHtml(m)}
           ${this.guardBtnHtml(m)}
           ${this.postBtnHtml(m)}
           ${this.rescueBtnHtml(m)}
@@ -6161,7 +6165,7 @@
           <div class="wname">${nm}</div>
           <div class="wdesc">【${nm}】果然候在半道，拦住去路，摆明了不死不休！唯有应战。</div>
           <div class="btns"><button class="btn-primary" id="nem-fight">应战</button></div>
-        </div>`);
+        </div>`, { modal: true });
         $("#nem-fight").onclick = () => { closeOverlay(); Nemesis.duel(m); };
         return;
       }
@@ -6307,8 +6311,18 @@
       } else {
         msg = `🏕️ 宿营一夜，行动力已恢复（第 ${m.day} 天）`;
       }
-      const extra = [aiNews, nemNews].filter(Boolean).join("｜");
-      toast(extra ? `${msg}｜${extra}` : msg);
+      // 宿营夜报：有附加消息（敌境动向/宿敌风闻）时改用弹窗，点击任意处关闭——toast 稍纵即逝，来不及看
+      const extras = [aiNews, nemNews].filter(Boolean);
+      if (extras.length) {
+        openOverlay(`<div class="result-card">
+          <h1>🏕️ 宿营夜报</h1>
+          <div class="wdesc" style="text-align:left">${[msg, ...extras].map(s => `<div style="margin:6px 0">${s}</div>`).join("")}</div>
+          <div class="btns"><button class="btn-primary" id="camp-ok">知道了</button></div>
+        </div>`);
+        $("#camp-ok").onclick = () => closeOverlay();
+      } else {
+        toast(msg);
+      }
       this.render();
     },
     // 已现身的武将每次宿营有小概率自行迁往同阵营的相邻城池（不含对马岛海路），令天下版图持续流动
@@ -6328,10 +6342,9 @@
       });
       return count;
     },
-    // 月末边境阵营大战：owner 不同的相邻城池间，每月最多只爆发一场（随机挑一条边），
-    // 双方各出「已现身武将」中随机等量人马（不限本地武将）；若涉及主角所在阵营可选择率团队亲征——
-    // 亲征将真正进入阵营大战小游戏（screen-war）观战，而非直接出结果；胜方夺取败方该城；
-    // 返回 true 表示已接管本次宿营流程
+    // 月末边境大战：owner 不同的相邻城池间，每月最多只爆发一场（随机挑一条边），
+    // 双方各出「已现身武将」中随机等量人马（不限本地武将，每方至多 10 将），以组队大战（TeamBattle）开打；
+    // 胜方夺取败方该城；返回 true 表示已接管本次宿营流程
     checkBorderWar(m) {
       const edges = borderEdges(m).filter(([a, b]) => {
         const poolA = DB.list.filter(g => g.side === cityOwnerSide(m, a) && m.appeared.includes(g.id));
@@ -6347,9 +6360,9 @@
       const sideA = cityOwnerSide(m, a), sideB = cityOwnerSide(m, b);
       openOverlay(`<div class="result-card detail-card">
         <h1>⚔️ 边境战事</h1>
-        <div class="wdesc">边境爆发冲突：<b>${cityName(a)}（${sideName(sideA)}）</b> vs <b>${cityName(b)}（${sideName(sideB)}）</b>，两军以阵营大战方式厮杀，胜方夺取败方城池。</div>
+        <div class="wdesc">边境爆发冲突：<b>${cityName(a)}（${sideName(sideA)}）</b> vs <b>${cityName(b)}（${sideName(sideB)}）</b>，两军以组队大战方式厮杀，胜方夺取败方城池。</div>
         <div class="btns"><button class="btn-primary" id="bw-go">开战</button></div>
-      </div>`);
+      </div>`, { modal: true });
       $("#bw-go").onclick = () => { closeOverlay(); this.resolveBorderWar(m, edge); };
     },
     // 共用：胜方夺城，同时调整双方部署——败方原驻守此城的武将退守至己方相邻城池，
@@ -6384,7 +6397,8 @@
     },
     // 是否亲历此战不再询问，而由主角当前所在城池自动判定：站在交战两城之一（且归属己方）即视为亲历，
     // 队伍随之强制上阵；不在场则与其余已现身武将一视同仁，混入候选池随机抽点才会上场。
-    // 无论主角是否上阵，本场战事均通过阵营大战（War）小游戏可视化演出（快捷/自动模式），不再静默瞬间出结果。
+    // 战斗一律以组队大战（TeamBattle）演出：主角上阵（亲历或被抽中）即为可亲自指挥的组队大战，
+    // 未上阵则以 observe 观战模式全程 AI 自动演示，不再静默瞬间出结果。
     resolveBorderWar(m, edge) {
       const [a, b] = edge;
       const sideA = cityOwnerSide(m, a), sideB = cityOwnerSide(m, b);
@@ -6406,13 +6420,20 @@
       };
       poolA = guardFirst(poolA, a, sideA);
       poolB = guardFirst(poolB, b, sideB);
-      // 主角不在交战两城之一：与其余已现身武将一视同仁，混入本方候选池，抽中方可上场（无特殊礼遇、不带队伍）
-      if (!heroForced) {
-        const heroFighter = RPG.heroGeneral();
-        if (heroSide === sideA) { poolA.push(heroFighter); shuffle(poolA); }
-        else { poolB.push(heroFighter); shuffle(poolB); }
+      // 主角亲历：本人与队友强制排到本方阵前；未亲历：混入本方候选池听凭抽点（无特殊礼遇、不带队伍）
+      const heroFighter = RPG.heroGeneral();
+      const heroPool = heroSide === sideA ? poolA : poolB;
+      if (heroForced) {
+        const mates = Bond.teamGenerals().filter(g => g.side === heroSide).map(clone);
+        const ids = new Set(mates.map(g => g.id));
+        const rest = heroPool.filter(g => !ids.has(g.id));
+        heroPool.length = 0;
+        heroPool.push(heroFighter, ...mates, ...rest);
+      } else {
+        heroPool.push(heroFighter);
+        shuffle(heroPool);
       }
-      const count = Math.min(poolA.length, poolB.length);
+      const count = Math.min(poolA.length, poolB.length, 10);   // 组队大战每方至多 10 将
       // 城墙守备：本城一方全员六维 +2×城墙等级（攻守对称——敌占城市的城墙同样为敌所用）；主角自身战力已由 heroGeneral() 精算好，不叠加
       const wallA = Buildings.lv(m, a, "wall") * 2, wallB = Buildings.lv(m, b, "wall") * 2;
       const statBuff = (g, plus) => {
@@ -6424,29 +6445,32 @@
       };
       const rosterA = poolA.slice(0, count).map(g => statBuff(g, wallA));
       const rosterB = poolB.slice(0, count).map(g => statBuff(g, wallB));
-      const cnRoster = sideA === "cn" ? rosterA : rosterB;
-      const jpRoster = sideA === "cn" ? rosterB : rosterA;
+      const myRoster = heroSide === sideA ? rosterA : rosterB;
+      const foeRoster = heroSide === sideA ? rosterB : rosterA;
+      const heroIn = myRoster.some(g => g.id === -1);
 
-      War.mode = "fast"; War.syncModeBtns();
-      showScreen("war");
-      War.start(heroForced ? RPG.heroGeneral() : null, {
-        customRoster: { cn: cnRoster, jp: jpRoster },
-        onDone: (result) => {
-          const winnerSide = result.cnWin ? "cn" : "jp";
+      TeamBattle.begin(myRoster, heroSide, {
+        exact: true,
+        enemies: foeRoster,
+        rpg: true,            // 返回键归属战役层（回天下地图而非首页）
+        observe: !heroIn,     // 主角未被抽中：己方全程 AI 代打，纯观战
+        onDone: (res) => {
+          const winnerSide = res.playerWon ? heroSide : (heroSide === "cn" ? "jp" : "cn");
           const capturedCity = this.applyBorderWarOutcome(m, edge, winnerSide);
           let heroHtml;
-          if (heroForced) {
+          if (heroIn) {
             const c = RPG.char;
-            const goldGain = result.heroSideWon ? Bond.addGold(30 + result.heroKills * 5) : Bond.addGold(10);
-            const bonusGold = result.heroSideWon ? Bond.addGold(this.BORDER_WAR_WIN_BONUS) : 0;
-            if (result.heroSideWon) Campaign.addFame(20);
-            const exp = result.heroKills * 15 + (result.heroSideWon ? 60 : 15);
+            const heroAlive = res.mySurvivors.some(g => g.id === -1);
+            const goldGain = res.playerWon ? Bond.addGold(30 + res.kills * 4) : Bond.addGold(10);
+            const bonusGold = res.playerWon ? Bond.addGold(this.BORDER_WAR_WIN_BONUS) : 0;
+            if (res.playerWon) Campaign.addFame(20);
+            const exp = res.kills * 12 + (res.playerWon ? 60 : 15);
             c.exp += exp;
             let lvUp = 0;
             while (c.exp >= RPG.expNeed(c.level)) { c.exp -= RPG.expNeed(c.level); c.level++; c.points += 1; lvUp++; }
             RPG.save();
             heroHtml = `<div class="mc-sect">🎖️ 你的战果</div>
-              <div class="wdesc">${result.heroAlive ? '全身而退' : '力战倒下（阵中负伤）'}，你亲手斩获 <b style="color:var(--cn-red)">${result.heroKills}</b> 员${result.heroSideWon ? `，己方 ${sideName(heroSide)} 全线告捷！夺取【${cityName(capturedCity)}】，名声 <b style="color:var(--cn-red)">+20</b>` : '，惜未能扭转战局。'}<br>获得经验 <b style="color:var(--cn-red)">+${exp}</b>${Bond.goldLine(goldGain)}${bonusGold ? `<br>🏆 边境犒赏 <b style="color:#b8860b">+${bonusGold}</b> 金（现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : ''}${lvUp ? `<br>🎉 升级 ${lvUp} 级！` : ''}</div>`;
+              <div class="wdesc">${heroAlive ? '全身而退' : '力战倒下（阵中负伤）'}，你方共歼敌将 <b style="color:var(--cn-red)">${res.kills}</b> 员${res.playerWon ? `，己方 ${sideName(heroSide)} 全线告捷！夺取【${cityName(capturedCity)}】，名声 <b style="color:var(--cn-red)">+20</b>` : '，惜未能扭转战局。'}<br>获得经验 <b style="color:var(--cn-red)">+${exp}</b>${Bond.goldLine(goldGain)}${bonusGold ? `<br>🏆 边境犒赏 <b style="color:#b8860b">+${bonusGold}</b> 金（现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : ''}${lvUp ? `<br>🎉 升级 ${lvUp} 级！` : ''}</div>`;
           } else {
             const bonusHtml = winnerSide === heroSide ? `<br>🏆 己方大捷，边境犒赏 <b style="color:#b8860b">+${Bond.addGold(this.BORDER_WAR_WIN_BONUS)}</b> 金（现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : "";
             heroHtml = `<div class="wdesc">${bonusHtml || "本场未见你的身影，前线战报照常传回。"}</div>`;
@@ -6455,14 +6479,11 @@
             <h1>⚔️ 边境战报</h1>
             <div class="wdesc">${cityName(a)} vs ${cityName(b)}：<b style="color:var(--cn-red)">${sideName(winnerSide)}</b>获胜，夺取【${cityName(capturedCity)}】</div>
             ${heroHtml}
-            <div class="btns"><button class="btn-primary" id="bw-close">${heroForced ? "返回天下地图" : "知道了"}</button></div>
-          </div>`);
+            <div class="btns"><button class="btn-primary" id="bw-close">${heroIn ? "返回天下地图" : "知道了"}</button></div>
+          </div>`, { modal: true });
           $("#bw-close").onclick = () => { closeOverlay(); this.render(); showScreen("map"); };
         },
       });
-      // War.start 内部按 hero 参数决定 this.rpg（供硬件返回键判定归属层），主角未亲历时 hero 传 null 会
-      // 使其判为「非角色扮演」而误回首页；此处在同步调用返回后强制改回 true，确保返回键始终回天下地图
-      War.rpg = true;
     },
     // 宿营夜袭：若当前城池本地武将中有敌方阵营成员，有 15% 概率被其中一人偷袭，
     // 复用与「刺杀」完全相同的结算通道（m.activeAssassin）——主角获胜则对方六维受创，落败则己方受创
@@ -6476,7 +6497,7 @@
         <div class="wname">${attacker.name}</div>
         <div class="wdesc">敌方武将潜入营帐，欲取你性命！唯有应战。</div>
         <div class="btns"><button class="btn-primary" id="ambush-fight">应战</button></div>
-      </div>`);
+      </div>`, { modal: true });
       $("#ambush-fight").onclick = () => {
         closeOverlay();
         m.activeAssassin = attacker.id; Campaign.save();

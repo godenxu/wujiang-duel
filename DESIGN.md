@@ -141,6 +141,13 @@
   - **城池功能区再排**：`.map-menu-free/.map-menu-ap` 3 列改 2 列；「历练」按钮从 ap 行移除（`RPG.train` 函数与「再历练」链路保留，但地图无入口——练级动线归拢到切磋/悬赏/设施/边境战）；ap 行现为 [特色设施]→宿营。
   - **宿敌系统（`Nemesis` 模块，存 `m.nemesis={id,wins,nemesisWins,ambush,finaleDone}` + `m.activeNemesis`/`m.nemesisChallenge`）**：结缘双通道——`onBattleEnd` 主角首败于敌方阵营真实武将（id≥0）即指定，或名声达「声名初显」后每次宿营 8% 兜底随缘指定；战力 `buffedOpponent` = 真实数值 + 全维 `round((主角Lv-1)×1.5)+wins×4`（仅本场，不写 statGrowth）；宿营寻衅 15% 三选一（拦路标记→`moveTo` 强制应战 / 抢先夺走本城一条悬赏 / 踏营下战书→`checkCampChallenge` 接管宿营流程尾段）；对决走 `m.activeNemesis` 结算通道——胜 +20 名声、80+wins×20 金，满 3 胜「恩怨了结」再 +80 名声与 `guaranteedItem("legend")`，`finaleDone` 后停止寻衅；地图左栏角色卡下新增宿敌卡（战绩/进度/下战书按钮，耗 1⚡）。`Campaign.reset`/`ensureMap` 补三字段。
   - **验证**：Playwright 8+12 项断言全过——日进列存在且可排序、对马→肥后直达（避风暴窗口）、历练按钮移除、free/ap 两行均 2 列、医馆新描述、边境战亲历（建业）进 War 界面且战报含个人战果、不亲历（洛阳）同样进 War 界面且战报为简报版、战后回地图、极弱主角刺杀必败自动结缘宿敌（id 精确匹配）、2 胜后下战书第 3 胜触发恩怨了结（finaleDone/wins=3、传说宝物入库）。回归：第十九轮 14 项（2 项断言按新规范更新）、第十八轮 11 项全过（18b 边境冒烟已被本轮 20b 取代）。
+- **边境战组队化、宿营夜报、宿敌降幅与弹窗防误触等五项（第二十一轮）**（已完成）：
+  - **城池按钮对换**：free 行顺序调整为 铁匠铺→集市→城建→产业→守将→驿站快马→牢狱营救（集市/铁匠铺对换、产业/城建对换，纯模板行序调整）。
+  - **边境战改组队大战（`resolveBorderWar` 再重写，替代上一轮的 War 快捷模式）**：名单构建/守将+3/城墙±2×lv/亲历判定全部沿用，但每方收紧至 10 将上限，改经 `TeamBattle.begin(myRoster, heroSide, { exact, enemies, rpg, observe, onDone })` 开打——亲历时主角+队友手动排到本方阵前（原先靠 `War.start` 的强制上阵逻辑，TeamBattle 无此逻辑故在 roster 构建时自排）；未亲历时主角混入候选池，**被抽中即为可亲自指挥的组队大战**，未抽中则走新增的 `opts.observe`（`begin` 内 `delegated` 开局即置真，己方全程 AI 代打、AI 挑唆单挑以旁观模式自动演出）。战报个人战果字段改用 TeamBattle 回传的 `{playerWon, mySurvivors, kills}`（`kills` 为己方总歼敌数，经验 kills×12、胜 30+kills×4 金）；夺城结算 `applyBorderWarOutcome` 原样复用。上一轮的 `War.rpg=true` 补丁与 `showScreen("war")` 随 War 路径退役（`customRoster` 保留为 War 的通用接口，暂无内置玩法使用）。
+  - **宿营夜报**：`camp()` 尾段有附加消息（敌境风闻/宿敌风闻）时不再挤进一条 toast，改弹「🏕️ 宿营夜报」卡片逐条列出（非 modal——点遮罩任意处或「知道了」即关）；无附加消息仍走 toast。
+  - **宿敌降幅**：`buffedOpponent` 加成由 `round((Lv-1)×1.5)+wins×4` 降为 `round((Lv-1)×0.6)+wins×2`，另设 25 上限。
+  - **弹窗 modal 机制（修复单挑卡死）**：病灶——`#overlay` 的遮罩点击监听无条件 `closeOverlay()`，而「回魂丹/认输」确认框是战斗循环 `await` 的 Promise（`maybeRevive`），误触遮罩把按钮连同 Promise 唯一出路一起销毁，战斗永久挂死只能杀 APP。`openOverlay(html, {modal:true})` 新增第二参数，modal 弹窗遮罩点击不关闭；已 modal 化：回魂丹确认、War「亲自应战/自动观战」询问（同为 await 的 Promise）、TeamBattle onDone 战果卡（漏点会丢夺城结算回调）、世界杯竞猜表、宿营夜袭、宿敌拦路/踏营应战、边境战事开战与战报。
+  - **验证**：Playwright 22 项断言全过——按钮两组对换生效、宿营夜报弹窗出现且点击屏幕消失、宿敌公式源码校验、极弱主角倒地弹回魂丹后点遮罩弹窗仍在（modal 防误触）且认输正常结算（对方记 1 胜）、边境战事弹窗文案改「组队大战」、亲历（建业）进 teamwar 界面且主角在阵中出现行动面板、委托 AI 打完后战果卡 modal 防误触、战报含个人战果与「返回天下地图」、城池归属易主、不亲历（洛阳，己方 14 人池 r=0 洗牌主角必落选）进 teamwar 观战模式（无行动面板、AI 自动演完）、战报为「知道了」简报版、战后回地图。回归：test20b 12 项（边境战 A/B 断言按组队化更新）、test20 8 项、test19 14 项、test18 11 项全过。
 
 ## 〇、改造总目标
 
