@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607162329";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607172122";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -1885,6 +1885,20 @@
       const base = TEAM_TACTICS[key].base;
       const ok = Math.random() < schemeSuccess(caster, target, base);
       const ev = applyTeamScheme(caster, target, key, ok);
+      // 医馆驻城加成：主角带兵作战时，己方「安抚军心/驰援同袍」在本城（归属己方、建有医馆）额外恢复兵力
+      if (ev.ok && (key === "rally" || key === "reinforce") && this.rpg) {
+        const who = key === "reinforce" ? target : caster;
+        if (who.side === this.playerSide) {
+          const m = typeof Campaign !== "undefined" && Campaign.mapState();
+          const frac = m ? Buildings.troopHealBonus(m) : 0;
+          if (frac > 0) {
+            const before = who.troops;
+            who.troops = Math.min(who.maxTroops, who.troops + Math.round(who.maxTroops * frac));
+            const gained = who.troops - before;
+            if (gained > 0) ev.text += `（🏥 医馆额外 +${gained}）`;
+          }
+        }
+      }
       this.log(ev.text);
       this.checkRout(target);
     },
@@ -3467,7 +3481,12 @@
       const c = this.char;
       const g = { id: -1, name: c.name, side: c.side, title: `Lv.${c.level} 历练者`, intro: c.intro || "你亲手培养的武将。" };
       DIMS.forEach(([k]) => g[k] = this.eff(c, k));
-      return Armory.geared(g, "hero");
+      const gg = Armory.geared(g, "hero");
+      // 医馆驻城加成：单挑体力（气血）回复，与奇珍「气血回复」叠加；gg 必是本次调用新建的对象（g 未被共享），可直接改写
+      const m = typeof Campaign !== "undefined" && Campaign.mapState();
+      const hp = m && typeof Buildings !== "undefined" ? Buildings.hpRegenBonus(m) : 0;
+      if (hp) gg.regenBonus = (gg.regenBonus || 0) + hp;
+      return gg;
     },
     // 随机生成基线六维(最大不超过80) + 一笔由玩家自行分配的加点(最多30)
     rollStats() {
@@ -3707,6 +3726,8 @@
       // 悬赏「讨伐令」判定：命中目标即完成，未命中或落败则该次出征作废（悬赏仍保留在榜上可再次接取）
       let extraHtml = acadMult > 1 ? `<br>📚 书院研习，经验加成 +${Math.round((acadMult - 1) * 100)}%` : "";
       const m = Campaign.mapState();
+      // 宿敌结缘：主角首次败于任意一位敌方阵营武将，即与其结下宿敌之约（若尚无宿敌）
+      if (m && !heroWon) Nemesis.onHeroLoss(m, opp);
       if (m && m.activeBounty && m.activeBounty.kind === "duel") {
         const ab = m.activeBounty;
         extraHtml += (heroWon && opp.id === ab.targetId) ? "<br>" + completeBountyReward(ab) : `<br>📋 悬赏未达成：${ab.desc}（仍保留在城池悬赏榜）`;
@@ -3786,6 +3807,30 @@
           extraHtml += `<br>⛓️ 营救失手，只得暂退——他日再来劫牢`;
         }
         Campaign.save();
+      }
+      // 宿敌单挑结算：胜则记一场战绩，累计三胜触发「恩怨了结」终局（传说奇珍+大量名声）；败则宿敌又添一分优势
+      if (m && m.activeNemesis) {
+        m.activeNemesis = null;
+        const st = m.nemesis;
+        if (st) {
+          if (heroWon) {
+            st.wins++;
+            const goldGain2 = Bond.addGold(80 + st.wins * 20);
+            Campaign.addFame(20);
+            if (st.wins >= Nemesis.FINALE_WINS && !st.finaleDone) {
+              st.finaleDone = true;
+              const item = Armory.guaranteedItem("legend");
+              Campaign.addFame(80);
+              extraHtml += `<br>🏆 恩怨了结！你与【${DB.get(st.id).name}】的宿怨终告一段落，名声 <b style="color:var(--cn-red)">+100</b>，${Bond.goldLine(goldGain2)}<br>🎁 获得传说奇珍「${item.name}」（宝物库鉴宝后可用）！`;
+            } else {
+              extraHtml += `<br>⚔️ 力克宿敌【${DB.get(st.id).name}】！（${st.wins}/${Nemesis.FINALE_WINS}）名声 <b style="color:var(--cn-red)">+20</b>${Bond.goldLine(goldGain2)}`;
+            }
+          } else {
+            st.nemesisWins++;
+            extraHtml += `<br>⚔️ 不敌宿敌【${DB.get(st.id).name}】，此仇未报，他日再战！`;
+          }
+          Campaign.save();
+        }
       }
       // 威名榜：击败八大高手记录战绩，凑齐后与武道会夺冠一并达成"天下无双"终局
       if (heroWon) extraHtml += checkRivalDefeat(opp);
@@ -4142,7 +4187,7 @@
     ["omi", "kyoto"], ["omi", "owari"], ["echizen", "kyoto"], ["echizen", "kaga"], ["kaga", "echigo"],
     ["mino", "owari"], ["mino", "omi"], ["mikawa", "owari"], ["mikawa", "sunpu"],
     ["hitachi", "odawara"], ["hitachi", "oushu"],
-    ["jianye", "tsushima"], ["xuzhou", "tsushima"], ["tsushima", "satsuma"],
+    ["jianye", "tsushima"], ["xuzhou", "tsushima"], ["tsushima", "satsuma"], ["tsushima", "higo"],
   ];
   function cityDef(id) { return CITIES.find(c => c.id === id); }
   function cityName(id) { const c = cityDef(id); return c ? c.n : "？"; }
@@ -4301,6 +4346,12 @@
       const est = this.get(m, cityId);
       if (!est) return 0;
       return Math.round(ESTATE_TYPES[est.type].rate * this.LV_MULT[this.lvOf(est) - 1] * (1 + this.managerBonus(est.manager) / 100) * Prosper.mult(m, cityId));
+    },
+    // 敌营产业日进（无掌柜加成，行情/繁荣倍率照常）：供全部城市总览展示各城日产金额
+    npcDailyRate(m, cityId) {
+      const n = this.npcGet(m, cityId);
+      if (!n) return 0;
+      return Math.round(ESTATE_TYPES[CITY_ESTATE[cityId]].rate * this.LV_MULT[n.lv - 1] * Prosper.mult(m, cityId));
     },
     // 懒结算：按距上次结算的天数计入；被敌方占据期间颗粒无收（天数照样翻篇）。
     // 有掌柜时金币由掌柜逐日代收直接入账（不进待收、不受 15 天积攒上限，商队行情按整段一次判定），
@@ -4509,7 +4560,7 @@
    *  夺回后原级保留、即刻恢复。数据存战役层 m.builds。
    * ============================================================ */
   const BUILD_TYPES = {
-    hospital: { n: "医馆", icon: "🏥", desc: "郎中坐堂——在本城单挑倒地时，回魂丹按等级折价", eff: ["回魂丹 80 金", "回魂丹 65 金", "回魂丹 50 金"] },
+    hospital: { n: "医馆", icon: "🏥", desc: "郎中坐堂——本城回魂丹折价，单挑时体力（气血）每回合额外回复，带兵作战安抚军心/驰援同袍额外恢复兵力", eff: ["回魂丹80金 · 体力+2/回合 · 兵力+3%", "回魂丹65金 · 体力+4/回合 · 兵力+6%", "回魂丹50金 · 体力+6/回合 · 兵力+9%"] },
     academy: { n: "书院", icon: "📚", desc: "名士讲学——在本城进行的单挑（历练/切磋/悬赏/设施）经验加成", eff: ["经验 +10%", "经验 +20%", "经验 +30%"] },
     post: { n: "驿站", icon: "🏇", desc: "快马官道——与其他建有驿站的己方城市互通直达（不论多远只耗 1⚡，按路程收驿费，无奇遇无风浪）", eff: ["开通驿路", "驿费 -25%", "驿费 -50%"] },
     wall: { n: "城墙", icon: "🏯", desc: "高墙深垒——边境战报模拟中，本城一方全员六维获守备加成（攻守对称：敌占期间为敌所用）", eff: ["守备 +2", "守备 +4", "守备 +6"] },
@@ -4542,6 +4593,16 @@
     drillBonus(m) {
       if (!m || !m.curCity || this.sealed(m, m.curCity)) return 0;
       return this.lv(m, m.curCity, "drill") * 4;
+    },
+    // 医馆单挑体力恢复：所在城医馆每级 +2 点/回合体力回复（与奇珍「气血回复」叠加，见 engine.js endTurn）
+    hpRegenBonus(m) {
+      if (!m || !m.curCity || this.sealed(m, m.curCity)) return 0;
+      return this.lv(m, m.curCity, "hospital") * 2;
+    },
+    // 医馆带兵作战兵力恢复：安抚军心/驰援同袍类计策在本城额外恢复的兵力比例（每级 +3%）
+    troopHealBonus(m) {
+      if (!m || !m.curCity || this.sealed(m, m.curCity)) return 0;
+      return this.lv(m, m.curCity, "hospital") * 0.03;
     },
     build(m, cityId, type) {
       const cur = this.lv(m, cityId, type);
@@ -4689,6 +4750,100 @@
       }
       if (news.length) Campaign.save();
       return news.length ? `🏗️ 敌境风闻：${news.join("；")}` : "";
+    },
+  };
+  /* ============================================================
+   *  宿敌（天命之敌）：主角首次败于某位敌方阵营武将（刺杀反被所伤/宿营夜袭落败/边境战亲历落败等
+   *  任一场敌我对决）即与其结下宿敌之约（若久未败绩，名声达「声名初显」后每次宿营亦有小概率随缘指定）。
+   *  宿敌战力随主角等级、双方交手次数动态增强（战斗时临时结算，不写入其真实数据）；每隔数日可能主动
+   *  寻衅——拦路挑战 / 抢先领走本城一条悬赏 / 宿营踏营下战书。累计击败三次触发「恩怨了结」终局对决，
+   *  胜后获传说奇珍与大量名声；此后宿敌名号仍存，但不再主动寻衅。数据存战役层 m.nemesis。
+   * ============================================================ */
+  const Nemesis = {
+    FINALE_WINS: 3,          // 累计击败宿敌三次触发终局了结
+    EVENT_CHANCE: 0.15,      // 每次宿营触发一次主动寻衅事件的概率（宿敌存在且终局未了结时）
+    FALLBACK_FAME_TIER: 3,   // 兜底指定所需名声阶梯（声名初显）
+    FALLBACK_CHANCE: 0.08,   // 兜底指定：达标后每次宿营的随缘概率
+    state(m) { return m.nemesis || null; },
+    name(m) { const st = this.state(m); const g = st && DB.get(st.id); return g ? g.name : "？"; },
+    candidate(m) {
+      const pool = DB.list.filter(g => g.side !== RPG.char.side && m.appeared.includes(g.id));
+      return pool.length ? pool[randInt(0, pool.length - 1)] : null;
+    },
+    assign(m, gid, silent) {
+      m.nemesis = { id: gid, wins: 0, nemesisWins: 0, ambush: false, finaleDone: false };
+      Campaign.save();
+      if (!silent) toast(`⚔️ 你与【${DB.get(gid).name}】结下宿敌之约！从此天涯海角，终有一战。`);
+    },
+    // 首次败于敌方阵营武将：立即结为宿敌（若尚无宿敌）
+    onHeroLoss(m, opp) {
+      if (!m || m.nemesis || !opp || opp.side === RPG.char.side || opp.id < 0) return;
+      this.assign(m, opp.id);
+    },
+    // 兜底：迟迟未与敌将交手落败，但名声已达「声名初显」，随游历时间随缘指定一位
+    ensureFallback(m) {
+      if (m.nemesis) return;
+      if (Campaign.fameTierIndex(m.fame || 0) < this.FALLBACK_FAME_TIER) return;
+      if (Math.random() >= this.FALLBACK_CHANCE) return;
+      const g = this.candidate(m);
+      if (g) this.assign(m, g.id);
+    },
+    // 宿敌当前战力：在其真实数据（含装备）基础上，按主角等级与历次交手战绩临时叠加六维——
+    // 只在本场战斗中生效，不写入 statGrowth，不污染其在武将图鉴/其他玩法中的数值
+    buffedOpponent(m) {
+      const st = this.state(m); if (!st) return null;
+      const base = DB.get(st.id); if (!base) return null;
+      const gg = Armory.geared(base, base.id);
+      const boost = Math.max(0, Math.round((RPG.char.level - 1) * 1.5) + st.wins * 4);
+      if (!boost) return gg;
+      const gg2 = clone(gg);
+      DIMS.forEach(([k]) => { gg2[k] += boost; });
+      return gg2;
+    },
+    // 发起一场宿敌单挑：置位 m.activeNemesis 供 RPG.onBattleEnd 识别结算通道
+    duel(m) {
+      const opp = this.buffedOpponent(m); if (!opp) return;
+      m.activeNemesis = true; Campaign.save();
+      startClassicBattle(RPG.heroGeneral(), opp, false, true);
+    },
+    // 宿营主动寻衅：三选一——拦路挑战（下次移动触发）/ 抢先领走本城一条悬赏 / 当场踏营下战书
+    campEvent(m) {
+      this.ensureFallback(m);
+      const st = this.state(m);
+      if (!st || st.finaleDone) return "";
+      if (Math.random() >= this.EVENT_CHANCE) return "";
+      const roll = Math.random();
+      const nm = this.name(m);
+      if (roll < 0.34) {
+        st.ambush = true; Campaign.save();
+        return `⚔️ 宿敌风闻：【${nm}】似已察觉你的行踪，扬言拦路挑战——下次移动多加小心。`;
+      }
+      if (roll < 0.67) {
+        const list = m.bounties && m.bounties[m.curCity];
+        if (list && list.length) {
+          const idx = randInt(0, list.length - 1);
+          list[idx] = genBounty(m.curCity, m.assign, m.appeared, RPG.char.side);
+          Campaign.save();
+          return `⚔️ 宿敌风闻：【${nm}】抢先领走本城一条悬赏，扬长而去，榜单已为之一新。`;
+        }
+        return "";
+      }
+      m.nemesisChallenge = true; Campaign.save();
+      return `⚔️ 宿敌【${nm}】踏营叫阵！`;
+    },
+    // 宿营时若下了战书，camp() 流程结束后弹出应战确认（接管本次宿营后续流程）
+    checkCampChallenge(m) {
+      if (!m.nemesisChallenge) return false;
+      m.nemesisChallenge = false; Campaign.save();
+      const nm = this.name(m);
+      openOverlay(`<div class="result-card">
+        <h1>⚔️ 宿敌踏营</h1>
+        <div class="wname">${nm}</div>
+        <div class="wdesc">【${nm}】率众踏营叫阵，摆明了不死不休！唯有应战。</div>
+        <div class="btns"><button class="btn-primary" id="nem-fight">应战</button></div>
+      </div>`);
+      $("#nem-fight").onclick = () => { closeOverlay(); this.duel(m); };
+      return true;
     },
   };
   // 集市折扣：对马岛黑市常驻八折；行脚商队奇遇触发后临时持续至 discountUntilDay
@@ -4928,6 +5083,7 @@
           uniqueOwned: { chitu: false, senriGeta: false }, rivalsDefeated: [], cupWon: false, ending: false,
           cityOwner: initCityOwner(), statPenalty: {}, statGrowth: {}, activeAssassin: null, estate: {}, prosper: {}, activeEstateRaid: null,
           builds: {}, npcEstate: {}, guards: {}, captives: {}, activeRescue: null,
+          nemesis: null, activeNemesis: null, nemesisChallenge: false,
         },
       };
       this.save();
@@ -4973,6 +5129,9 @@
       if (!m.guards) { m.guards = {}; changed = true; }
       if (!m.captives) { m.captives = {}; changed = true; }
       if (m.activeRescue === undefined) { m.activeRescue = null; changed = true; }
+      if (m.nemesis === undefined) { m.nemesis = null; changed = true; }
+      if (m.activeNemesis === undefined) { m.activeNemesis = null; changed = true; }
+      if (m.nemesisChallenge === undefined) { m.nemesisChallenge = false; changed = true; }
       if (changed) this.save();
       return m;
     },
@@ -5271,6 +5430,7 @@
         <div class="map-bottom">
           <div class="map-info-col">
             ${this.heroCardHtml(m)}
+            ${this.nemesisHtml(m)}
             ${this.estateOverviewHtml(m)}
             ${this.localGeneralsHtml(m)}
           </div>
@@ -5324,6 +5484,25 @@
         </div>
       </div>`;
     },
+    // 宿敌：未结缘时不显示；结缘后常驻展示战绩与终局进度，未在应战/拦路等待中时可随时主动下战书
+    nemesisHtml(m) {
+      const st = m.nemesis;
+      if (!st) return "";
+      const g = DB.get(st.id);
+      if (!g) return "";
+      const progress = st.finaleDone ? "恩怨已了" : `${st.wins}/${Nemesis.FINALE_WINS}`;
+      const canChallenge = !st.ambush && m.ap > 0;
+      return `<div class="map-hero-card ${g.side}" style="margin-top:8px">
+        <div class="mh-av">${avatarChar(g.name)}</div>
+        <div class="mh-meta">
+          <div class="mh-name">⚔️ 宿敌·${g.name}</div>
+          <div class="mh-sub">战绩 ${st.wins}胜${st.nemesisWins}负 · ${progress}</div>
+        </div>
+        <div class="mh-action-col">
+          <button class="cup-go" id="map-nemesis" ${canChallenge ? "" : "disabled"}>${st.finaleDone ? "重温旧怨" : "🗡️ 下战书"}</button>
+        </div>
+      </div>`;
+    },
     // 名下产业总览：有产业才显示，顺带把各处账目懒结算到今天
     estateOverviewHtml(m) {
       const o = Estate.overview(m);
@@ -5349,7 +5528,6 @@
       const factor = cityPriceFactor(m.curCity);
       const factorTxt = factor <= 0.85 ? "黑市八折" : factor < 1 ? "行情便宜" : factor > 1.1 ? "行情偏贵" : "价格公道";
       const smithType = Armory.TYPES[hashStr(m.curCity) % Armory.TYPES.length];
-      const trainLocked = Campaign.fameTierIndex(m.fame || 0) < RPG.TRAIN_FAME_TIER;
       return `<div class="mc-head">
           <span>📍 ${c.n} <small style="color:var(--cn-gold);letter-spacing:1px">${Prosper.stars(m, m.curCity)}</small>${isSea ? '<small>海路中转站</small>' : ''}</span>
           <span class="mc-head-stats">⚡<b>${m.ap}</b>/${m.apMax} · 💰<b>${Bond.gold()}</b></span>
@@ -5364,7 +5542,6 @@
           ${this.rescueBtnHtml(m)}
         </div>
         <div class="menu map-menu map-menu-ap">
-          <button class="menu-btn" id="map-train" ${(m.ap <= 0 || trainLocked) ? "disabled" : ""}><span class="mi">${trainLocked ? '🔒' : '🏋️'}</span><span>历练<small>${trainLocked ? `声望达「${Campaign.FAME_TIERS[RPG.TRAIN_FAME_TIER].n}」解锁` : '随机切磋练级 · 耗 1⚡'}</small></span></button>
           ${fac ? `<button class="menu-btn" id="map-facility" ${m.ap <= 0 ? "disabled" : ""}><span class="mi">${fac.icon}</span><span>${fac.n}<small>设施挑战扬名 · 耗 1⚡</small></span></button>` : ""}
           <button class="menu-btn" id="map-camp"><span class="mi">🏕️</span><span>宿营<small>推进一天 · 行动力回满</small></span></button>
         </div>
@@ -5428,7 +5605,6 @@
       $$(".map-city").forEach(el => el.onclick = () => this.moveTo(el.dataset.id));
       $$(".mc-gen").forEach(el => el.onclick = () => { const g = DB.get(+el.dataset.id); if (g) showDetail(g); });
       $$(".mc-bounty").forEach(el => el.onclick = () => this.acceptBounty(m.curCity, el.dataset.uid));
-      const trainBtn = $("#map-train"); if (trainBtn) trainBtn.onclick = () => RPG.train();
       const shopBtn = $("#map-shop"); if (shopBtn) shopBtn.onclick = () => this.openMarket();
       const forgeBtn = $("#map-forge"); if (forgeBtn) forgeBtn.onclick = () => this.openForge();
       const facBtn = $("#map-facility"); if (facBtn) facBtn.onclick = () => this.openFacility();
@@ -5439,6 +5615,7 @@
       const rescueBtn = $("#map-rescue"); if (rescueBtn) rescueBtn.onclick = () => this.openRescue();
       const campBtn = $("#map-camp"); if (campBtn) campBtn.onclick = () => this.camp();
       const charBtn = $("#map-char"); if (charBtn) charBtn.onclick = () => RPG.open();
+      const nemBtn = $("#map-nemesis"); if (nemBtn) nemBtn.onclick = () => { if (spendAP()) Nemesis.duel(m); };
       const allGenBtn = $("#map-all-gens"); if (allGenBtn) allGenBtn.onclick = () => AllGenUI.open();
       const allCityBtn = $("#map-all-cities"); if (allCityBtn) allCityBtn.onclick = () => AllCityUI.open();
       const visitAllBtn = $("#map-visit-all"); if (visitAllBtn) visitAllBtn.onclick = () => this.oneClickVisit();
@@ -5972,6 +6149,22 @@
         toast(`距离太远，需先移动到相邻城池`); return;
       }
       if (m.ap <= 0) { toast(`今日行动力已耗尽，请先宿营`); return; }
+      // 宿敌拦路：上次宿营已扬言拦路挑战时，本次移动直接被截住，先应战再论（消耗行动力照常，仍抵达目的城）
+      if (m.nemesis && m.nemesis.ambush) {
+        m.nemesis.ambush = false;
+        m.ap--; m.curCity = id; Campaign.save();
+        Bond.data.team.forEach(gid => { m.assign[gid] = id; });
+        Campaign.save();
+        const nm = Nemesis.name(m);
+        openOverlay(`<div class="result-card">
+          <h1>⚔️ 宿敌拦路！</h1>
+          <div class="wname">${nm}</div>
+          <div class="wdesc">【${nm}】果然候在半道，拦住去路，摆明了不死不休！唯有应战。</div>
+          <div class="btns"><button class="btn-primary" id="nem-fight">应战</button></div>
+        </div>`);
+        $("#nem-fight").onclick = () => { closeOverlay(); Nemesis.duel(m); };
+        return;
+      }
       m.ap--;
       const isSea = m.curCity === "tsushima" || id === "tsushima";
       if (isSea && Math.random() < 0.2) { this.seaStorm(m); return; }
@@ -6086,6 +6279,7 @@
       m.marketSold = {};   // 新的一天，各城集市重新上货
       const wandered = this.wanderGenerals(m);
       const aiNews = AIDev.tick(m);   // 敌境自营：敌方城市随时间缓慢自行发展（城建/产业/繁荣）
+      const nemNews = Nemesis.campEvent(m);   // 宿敌主动寻衅：拦路挑战 / 抢先夺赏 / 踏营下战书（三选一，小概率）
       // 悬赏轮换：每次宿营，每座城的每一条悬赏各自独立 50% 概率静默换新——榜单不再一成不变；
       // 已接取中的悬赏结算按接取时写入 m.activeBounty 的独立快照进行，不受轮换影响
       if (m.bounties) {
@@ -6102,6 +6296,7 @@
       if (isTournamentDay(m.day) && this.checkTournament(m)) return;
       if (isMonthEnd(m.day) && this.checkBorderWar(m)) return;
       if (this.checkAmbush(m)) return;
+      if (Nemesis.checkCampChallenge(m)) return;
       const revealed = Campaign.checkAppearances();
       let msg;
       if (revealed.length) {
@@ -6112,7 +6307,8 @@
       } else {
         msg = `🏕️ 宿营一夜，行动力已恢复（第 ${m.day} 天）`;
       }
-      toast(aiNews ? `${msg}｜${aiNews}` : msg);
+      const extra = [aiNews, nemNews].filter(Boolean).join("｜");
+      toast(extra ? `${msg}｜${extra}` : msg);
       this.render();
     },
     // 已现身的武将每次宿营有小概率自行迁往同阵营的相邻城池（不含对马岛海路），令天下版图持续流动
@@ -6148,20 +6344,13 @@
     },
     openBorderWarPicker(m, edge) {
       const [a, b] = edge;
-      const heroSide = RPG.char.side;
       const sideA = cityOwnerSide(m, a), sideB = cityOwnerSide(m, b);
-      const involved = heroSide === sideA || heroSide === sideB;
-      if (!involved) { this.resolveBorderWar(m, edge, false); return; }
       openOverlay(`<div class="result-card detail-card">
         <h1>⚔️ 边境战事</h1>
         <div class="wdesc">边境爆发冲突：<b>${cityName(a)}（${sideName(sideA)}）</b> vs <b>${cityName(b)}（${sideName(sideB)}）</b>，两军以阵营大战方式厮杀，胜方夺取败方城池。</div>
-        <div class="btns">
-          <button class="btn-primary" id="bw-join">率团队亲征</button>
-          <button class="btn-ghost" id="bw-skip">各地驻军自行迎战，不亲征</button>
-        </div>
+        <div class="btns"><button class="btn-primary" id="bw-go">开战</button></div>
       </div>`);
-      $("#bw-join").onclick = () => { closeOverlay(); this.resolveBorderWar(m, edge, true); };
-      $("#bw-skip").onclick = () => { closeOverlay(); this.resolveBorderWar(m, edge, false); };
+      $("#bw-go").onclick = () => { closeOverlay(); this.resolveBorderWar(m, edge); };
     },
     // 共用：胜方夺城，同时调整双方部署——败方原驻守此城的武将退守至己方相邻城池，
     // 胜方随机挑选若干已现身武将进驻新占领的城池；返回被占领的城池 id
@@ -6193,96 +6382,87 @@
       Campaign.save();
       return capturedCity;
     },
-    resolveBorderWar(m, edge, joining) {
+    // 是否亲历此战不再询问，而由主角当前所在城池自动判定：站在交战两城之一（且归属己方）即视为亲历，
+    // 队伍随之强制上阵；不在场则与其余已现身武将一视同仁，混入候选池随机抽点才会上场。
+    // 无论主角是否上阵，本场战事均通过阵营大战（War）小游戏可视化演出（快捷/自动模式），不再静默瞬间出结果。
+    resolveBorderWar(m, edge) {
       const [a, b] = edge;
       const sideA = cityOwnerSide(m, a), sideB = cityOwnerSide(m, b);
       const heroSide = RPG.char.side;
-      if (!joining) {
-        let poolA = DB.list.filter(g => g.side === sideA && m.appeared.includes(g.id)).map(clone);
-        let poolB = DB.list.filter(g => g.side === sideB && m.appeared.includes(g.id)).map(clone);
-        shuffle(poolA); shuffle(poolB);
-        // 守将必上阵：其城在此战线上时置于本方阵前，另享 +3 全维死守加成（_guard 标记）
-        const guardFirst = (pool, cityId, side) => {
-          const gid = Guard.all(m)[cityId];
-          if (gid == null) return pool;
-          const g = DB.get(gid);
-          if (!g || g.side !== side) return pool;
-          const gg = clone(g); gg._guard = true;
-          return [gg, ...pool.filter(x => x.id !== gid)];
-        };
-        poolA = guardFirst(poolA, a, sideA);
-        poolB = guardFirst(poolB, b, sideB);
-        const count = Math.min(poolA.length, poolB.length);
-        // 城墙守备：本城一方全员六维 +2×城墙等级（攻守对称——敌占城市的城墙同样为敌所用）
-        const wallA = Buildings.lv(m, a, "wall") * 2, wallB = Buildings.lv(m, b, "wall") * 2;
-        const gearBuff = (g, plus) => {
-          const gg = Armory.geared(g, g.id);
-          const extra = plus + (g._guard ? Guard.STAT_BONUS : 0);
-          if (extra) DIMS.forEach(([k]) => { gg[k] += extra; });
-          return gg;
-        };
-        const rosterA = poolA.slice(0, count).map(g => gearBuff(g, wallA));
-        const rosterB = poolB.slice(0, count).map(g => gearBuff(g, wallB));
-        let ia = 0, ib = 0;
-        while (ia < rosterA.length && ib < rosterB.length) {
-          const res = autoBattle(rosterA[ia], rosterB[ib]);
-          if (res.winner.side === sideA) ib++; else ia++;
-        }
-        const winnerSide = ib >= rosterB.length ? sideA : sideB;
-        const capturedCity = this.applyBorderWarOutcome(m, edge, winnerSide);
-        const bonusHtml = winnerSide === heroSide ? `<br>🏆 己方大捷，边境犒赏 <b style="color:#b8860b">+${Bond.addGold(this.BORDER_WAR_WIN_BONUS)}</b> 金（现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : "";
-        openOverlay(`<div class="result-card detail-card">
-          <h1>⚔️ 边境战报</h1>
-          <div class="wdesc">${cityName(a)} vs ${cityName(b)}：<b style="color:var(--cn-red)">${sideName(winnerSide)}</b>获胜，夺取【${cityName(capturedCity)}】${bonusHtml}</div>
-          <div class="btns"><button class="btn-primary" id="bw-close">知道了</button></div>
-        </div>`);
-        $("#bw-close").onclick = () => { closeOverlay(); this.render(); };
-        return;
+      const heroCity = m.curCity;
+      const heroForced = (heroCity === a || heroCity === b) && cityOwnerSide(m, heroCity) === heroSide;
+
+      let poolA = DB.list.filter(g => g.side === sideA && m.appeared.includes(g.id)).map(clone);
+      let poolB = DB.list.filter(g => g.side === sideB && m.appeared.includes(g.id)).map(clone);
+      shuffle(poolA); shuffle(poolB);
+      // 守将必上阵：其城在此战线上时置于本方阵前，另享 +3 全维死守加成（_guard 标记）
+      const guardFirst = (pool, cityId, side) => {
+        const gid = Guard.all(m)[cityId];
+        if (gid == null) return pool;
+        const g = DB.get(gid);
+        if (!g || g.side !== side) return pool;
+        const gg = clone(g); gg._guard = true;
+        return [gg, ...pool.filter(x => x.id !== gid)];
+      };
+      poolA = guardFirst(poolA, a, sideA);
+      poolB = guardFirst(poolB, b, sideB);
+      // 主角不在交战两城之一：与其余已现身武将一视同仁，混入本方候选池，抽中方可上场（无特殊礼遇、不带队伍）
+      if (!heroForced) {
+        const heroFighter = RPG.heroGeneral();
+        if (heroSide === sideA) { poolA.push(heroFighter); shuffle(poolA); }
+        else { poolB.push(heroFighter); shuffle(poolB); }
       }
-      // 亲征：率主角与同阵营队友，改用组队大战（TeamBattle）模式而非阵营大战——武将选择原则不变
-      // （双方均从已现身武将中取，主角与队友必上阵，其余随机补足，双方数量相等），
-      // 仅因 TeamBattle 单场最多 10 将上阵，双方数量额外取 min(...,10)（与国战攻城的做法一致）
-      const oppSide = heroSide === "cn" ? "jp" : "cn";
-      const hero = RPG.heroGeneral();
-      const mates = Bond.teamGenerals().filter(g => g.side === heroSide);
-      const mateIds = new Set(mates.map(g => g.id));
-      // 己方守将（若此战线上己方城池设有守将）必随主角上阵；城墙加成仅作用于战报模拟——亲征的胜负由你亲手打出
-      const heroCityOnEdge = heroSide === sideA ? a : b;
-      const edgeGuard = Guard.of(m, heroCityOnEdge);
-      const guardArr = edgeGuard && !mateIds.has(edgeGuard.id) && edgeGuard.id !== hero.id ? [edgeGuard] : [];
-      let minePool = DB.list.filter(g => g.side === heroSide && m.appeared.includes(g.id)
-        && !mateIds.has(g.id) && !(edgeGuard && g.id === edgeGuard.id));
-      let theirPool = DB.list.filter(g => g.side === oppSide && m.appeared.includes(g.id));
-      shuffle(minePool); shuffle(theirPool);
-      const count = Math.min(1 + mates.length + guardArr.length + minePool.length, theirPool.length, 10);
-      const mine = [hero, ...mates, ...guardArr, ...minePool].slice(0, count);
-      const theirs = theirPool.slice(0, count);
-      TeamBattle.begin(mine, heroSide, {
-        exact: true, enemies: theirs, rpg: true,
+      const count = Math.min(poolA.length, poolB.length);
+      // 城墙守备：本城一方全员六维 +2×城墙等级（攻守对称——敌占城市的城墙同样为敌所用）；主角自身战力已由 heroGeneral() 精算好，不叠加
+      const wallA = Buildings.lv(m, a, "wall") * 2, wallB = Buildings.lv(m, b, "wall") * 2;
+      const statBuff = (g, plus) => {
+        const extra = plus + (g._guard ? Guard.STAT_BONUS : 0);
+        if (!extra || g.id === -1) return g;
+        const gg = clone(g);
+        DIMS.forEach(([k]) => { gg[k] += extra; });
+        return gg;
+      };
+      const rosterA = poolA.slice(0, count).map(g => statBuff(g, wallA));
+      const rosterB = poolB.slice(0, count).map(g => statBuff(g, wallB));
+      const cnRoster = sideA === "cn" ? rosterA : rosterB;
+      const jpRoster = sideA === "cn" ? rosterB : rosterA;
+
+      War.mode = "fast"; War.syncModeBtns();
+      showScreen("war");
+      War.start(heroForced ? RPG.heroGeneral() : null, {
+        customRoster: { cn: cnRoster, jp: jpRoster },
         onDone: (result) => {
-          const winnerSide = result.playerWon ? heroSide : oppSide;
+          const winnerSide = result.cnWin ? "cn" : "jp";
           const capturedCity = this.applyBorderWarOutcome(m, edge, winnerSide);
-          const c = RPG.char;
-          const heroAlive = result.mySurvivors.some(g => g.id === -1);
-          const goldGain = result.playerWon ? Bond.addGold(30 + result.kills * 5) : Bond.addGold(10);
-          const bonusGold = result.playerWon ? Bond.addGold(this.BORDER_WAR_WIN_BONUS) : 0;
-          if (result.playerWon) Campaign.addFame(20);
-          const exp = result.kills * 15 + (result.playerWon ? 60 : 15);
-          c.exp += exp;
-          let lvUp = 0;
-          while (c.exp >= RPG.expNeed(c.level)) { c.exp -= RPG.expNeed(c.level); c.level++; c.points += 1; lvUp++; }
-          RPG.save();
-          const heroHtml = `<div class="mc-sect">🎖️ 你的战果</div>
-            <div class="wdesc">${heroAlive ? '全身而退' : '力战倒下（阵中负伤）'}，本方战场斩获 <b style="color:var(--cn-red)">${result.kills}</b> 员${result.playerWon ? `，己方 ${sideName(heroSide)} 全线告捷！夺取【${cityName(capturedCity)}】，名声 <b style="color:var(--cn-red)">+20</b>` : '，惜未能扭转战局。'}<br>获得经验 <b style="color:var(--cn-red)">+${exp}</b>${Bond.goldLine(goldGain)}${bonusGold ? `<br>🏆 边境犒赏 <b style="color:#b8860b">+${bonusGold}</b> 金（现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : ''}${lvUp ? `<br>🎉 升级 ${lvUp} 级！` : ''}</div>`;
+          let heroHtml;
+          if (heroForced) {
+            const c = RPG.char;
+            const goldGain = result.heroSideWon ? Bond.addGold(30 + result.heroKills * 5) : Bond.addGold(10);
+            const bonusGold = result.heroSideWon ? Bond.addGold(this.BORDER_WAR_WIN_BONUS) : 0;
+            if (result.heroSideWon) Campaign.addFame(20);
+            const exp = result.heroKills * 15 + (result.heroSideWon ? 60 : 15);
+            c.exp += exp;
+            let lvUp = 0;
+            while (c.exp >= RPG.expNeed(c.level)) { c.exp -= RPG.expNeed(c.level); c.level++; c.points += 1; lvUp++; }
+            RPG.save();
+            heroHtml = `<div class="mc-sect">🎖️ 你的战果</div>
+              <div class="wdesc">${result.heroAlive ? '全身而退' : '力战倒下（阵中负伤）'}，你亲手斩获 <b style="color:var(--cn-red)">${result.heroKills}</b> 员${result.heroSideWon ? `，己方 ${sideName(heroSide)} 全线告捷！夺取【${cityName(capturedCity)}】，名声 <b style="color:var(--cn-red)">+20</b>` : '，惜未能扭转战局。'}<br>获得经验 <b style="color:var(--cn-red)">+${exp}</b>${Bond.goldLine(goldGain)}${bonusGold ? `<br>🏆 边境犒赏 <b style="color:#b8860b">+${bonusGold}</b> 金（现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : ''}${lvUp ? `<br>🎉 升级 ${lvUp} 级！` : ''}</div>`;
+          } else {
+            const bonusHtml = winnerSide === heroSide ? `<br>🏆 己方大捷，边境犒赏 <b style="color:#b8860b">+${Bond.addGold(this.BORDER_WAR_WIN_BONUS)}</b> 金（现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : "";
+            heroHtml = `<div class="wdesc">${bonusHtml || "本场未见你的身影，前线战报照常传回。"}</div>`;
+          }
           openOverlay(`<div class="result-card detail-card">
             <h1>⚔️ 边境战报</h1>
             <div class="wdesc">${cityName(a)} vs ${cityName(b)}：<b style="color:var(--cn-red)">${sideName(winnerSide)}</b>获胜，夺取【${cityName(capturedCity)}】</div>
             ${heroHtml}
-            <div class="btns"><button class="btn-primary" id="bw-close">返回天下地图</button></div>
+            <div class="btns"><button class="btn-primary" id="bw-close">${heroForced ? "返回天下地图" : "知道了"}</button></div>
           </div>`);
           $("#bw-close").onclick = () => { closeOverlay(); this.render(); showScreen("map"); };
         },
       });
+      // War.start 内部按 hero 参数决定 this.rpg（供硬件返回键判定归属层），主角未亲历时 hero 传 null 会
+      // 使其判为「非角色扮演」而误回首页；此处在同步调用返回后强制改回 true，确保返回键始终回天下地图
+      War.rpg = true;
     },
     // 宿营夜袭：若当前城池本地武将中有敌方阵营成员，有 15% 概率被其中一人偷袭，
     // 复用与「刺杀」完全相同的结算通道（m.activeAssassin）——主角获胜则对方六维受创，落败则己方受创
@@ -6511,20 +6691,20 @@
       const appeared = locals.filter(g => m.appeared.includes(g.id));
       const est = Estate.get(m, c.id);
       const eType = Estate.typeOf(c.id);
-      let estTxt = "—";
+      const npc = !est && Estate.npcGet(m, c.id);
+      let estTxt = "—", dailyGold = 0, dailyTxt = "—";
       if (eType) {
-        const npc = !est && Estate.npcGet(m, c.id);
-        if (npc) estTxt = Estate.sealed(m, c.id) ? `${eType.icon}敌营` : `${eType.icon}可接管`;
-        else if (!est) estTxt = `未置办`;
-        else if (Estate.sealed(m, c.id)) estTxt = `${eType.icon}查封`;
-        else estTxt = `${eType.icon}${est.pending ? `待收${est.pending}` : est.manager != null ? "代收中" : "已置办"}`;
+        if (npc) { estTxt = Estate.sealed(m, c.id) ? `${eType.icon}敌营` : `${eType.icon}可接管`; dailyGold = Estate.npcDailyRate(m, c.id); dailyTxt = `${dailyGold}（敌）`; }
+        else if (!est) { estTxt = `未置办`; dailyGold = eType.rate; dailyTxt = `潜力${dailyGold}`; }
+        else if (Estate.sealed(m, c.id)) { estTxt = `${eType.icon}查封`; dailyTxt = "查封"; }
+        else { estTxt = `${eType.icon}${est.pending ? `待收${est.pending}` : est.manager != null ? "代收中" : "已置办"}`; dailyGold = Estate.dailyRate(m, c.id); dailyTxt = `${dailyGold}`; }
       }
       const fac = CITY_FACILITY[c.id];
       return {
         c, owner, prosper: Prosper.lv(m, c.id),
         facName: fac ? fac.n : "—",
         smith: Armory.TYPES[hashStr(c.id) % Armory.TYPES.length].n,
-        estTxt, appeared: appeared.length, total: locals.length,
+        estTxt, dailyGold, dailyTxt, appeared: appeared.length, total: locals.length,
         bounty: ((m.bounties && m.bounties[c.id]) || []).length,
       };
     },
@@ -6541,7 +6721,7 @@
       });
       const arrow = k => key === k ? (dir > 0 ? " ▲" : " ▼") : "";
       const th = (k, label) => `<th data-sort="${k}" class="${key === k ? 'sorted' : ''}">${label}${arrow(k)}</th>`;
-      const head = `<tr>${th("name", "城市")}${th("owner", "归属")}${th("prosper", "繁荣")}<th>特色设施</th><th>铁匠专精</th><th>产业</th>${th("appeared", "武将")}${th("bounty", "悬赏")}</tr>`;
+      const head = `<tr>${th("name", "城市")}${th("owner", "归属")}${th("prosper", "繁荣")}<th>特色设施</th><th>铁匠专精</th><th>产业</th>${th("dailyGold", "日进")}${th("appeared", "武将")}${th("bounty", "悬赏")}</tr>`;
       const body = rows.map(r => `<tr data-id="${r.c.id}">
           <td class="dt-name ${r.owner}"><span class="dt-dot"></span>${r.c.id === m.curCity ? "📍" : ""}${r.c.n}</td>
           <td class="num">${r.c.side === "sea" ? "🌊" : ""}${sideName(r.owner)}</td>
@@ -6549,6 +6729,7 @@
           <td class="allgen-city">${r.facName}</td>
           <td class="allgen-city">${r.smith}</td>
           <td class="allgen-city">${r.estTxt}</td>
+          <td class="num">${r.dailyTxt}</td>
           <td class="num">${r.appeared}/${r.total}</td>
           <td class="num">${r.bounty}</td>
         </tr>`).join("");

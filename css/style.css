@@ -1067,7 +1067,7 @@ html, body {
 .mc-head-stats b { color: var(--cn-gold); font-family: "DotGothic16", monospace; font-weight: 700; }
 .map-menu { width: 100%; margin-bottom: 6px; }
 /* 城池功能区：不耗行动力的一组（集市/铁匠铺/产业/城建/守将/驿站/牢狱）与耗行动力的一组（历练/设施/宿营）分行三列摆放 */
-.map-menu-free, .map-menu-ap { grid-template-columns: repeat(3, 1fr); }
+.map-menu-free, .map-menu-ap { grid-template-columns: repeat(2, 1fr); }
 .mc-sect { font-size: 16px; font-weight: 700; color: var(--cn-gold); margin: 10px 0 6px; letter-spacing: 1px; }
 .mc-sect small { color: #8a7d5e; font-size: 12px; font-weight: 400; margin-left: 6px; letter-spacing: 0; }
 
