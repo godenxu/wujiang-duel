@@ -1134,17 +1134,26 @@ html, body {
 .fb-sect { font-size: 13px; font-weight: 700; margin: 10px 0 6px; opacity: .9; }
 .fb-forms { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
 .fb-form {
-  border: 1px solid rgba(255,255,255,.2); border-radius: 8px; background: rgba(255,255,255,.06);
-  color: inherit; font: inherit; font-size: 13px; font-weight: 700; padding: 7px 8px; cursor: pointer; text-align: left;
+  border: 1px solid rgba(212,175,55,.5); border-radius: 12px; background: rgba(255,255,255,.06);
+  color: var(--paper); font-family: inherit; font-size: 13px; font-weight: 700; padding: 8px 9px; cursor: pointer; text-align: left; letter-spacing: 1px;
 }
 .fb-form small { display: block; font-weight: 400; font-size: 11px; opacity: .7; }
 .fb-form.active { border-color: var(--cn-gold); background: rgba(244,196,48,.15); }
-.fb-board { display: flex; flex-direction: column; gap: 5px; }
-.fb-pos { display: flex; align-items: center; gap: 6px; }
-.fb-pos-lbl { width: 40px; font-size: 12px; font-weight: 900; opacity: .85; flex: none; }
+.fb-board2 {
+  display: grid; gap: 6px;
+  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-areas: ". van ." "left center right" ". reserve .";
+}
+.fb-slot { display: flex; flex-direction: column; gap: 4px; align-items: stretch; border: 1px dashed rgba(212,175,55,.35); border-radius: 10px; padding: 5px; }
+.fb-slot-van { grid-area: van; }
+.fb-slot-left { grid-area: left; }
+.fb-slot-center { grid-area: center; }
+.fb-slot-right { grid-area: right; }
+.fb-slot-reserve { grid-area: reserve; }
+.fb-pos-lbl { font-size: 12px; font-weight: 900; opacity: .85; text-align: center; }
 .fb-chip {
-  flex: 1; border: 1px solid rgba(255,255,255,.2); border-radius: 8px; padding: 5px 6px;
-  background: rgba(255,255,255,.06); color: inherit; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+  width: 100%; border: 1px solid rgba(212,175,55,.5); border-radius: 10px; padding: 6px 6px;
+  background: rgba(255,255,255,.06); color: var(--paper); font-family: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
 }
 .fb-chip small { display: block; font-weight: 400; font-size: 11px; opacity: .65; }
 .fb-chip.cn { border-left: 3px solid var(--cn-red); }
@@ -1195,8 +1204,8 @@ html, body {
 .fb-orders { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin: 6px 0; }
 .fb-ord-left { font-size: 12px; font-weight: 900; margin-right: 2px; }
 .fb-ord {
-  border: 1px solid rgba(255,255,255,.25); border-radius: 8px; background: rgba(255,255,255,.08);
-  color: inherit; font: inherit; font-size: 13px; font-weight: 700; padding: 6px 9px; cursor: pointer;
+  border: 1px solid rgba(212,175,55,.5); border-radius: 12px; background: rgba(255,255,255,.06);
+  color: var(--paper); font-family: inherit; font-size: 13px; font-weight: 700; padding: 7px 10px; cursor: pointer; letter-spacing: 1px;
 }
 .fb-ord:disabled { opacity: .35; cursor: default; }
 .fb-log {
