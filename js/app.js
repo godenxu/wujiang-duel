@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607180834";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607180911";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -2022,6 +2022,18 @@
       this.renderBoard();
       const cnAlive = this.cn.filter(u => u.alive).length, jpAlive = this.jp.filter(u => u.alive).length;
       const playerWon = this.playerSide === "cn" ? cnAlive > 0 : jpAlive > 0;
+      // 历战成长：战役内的组队大战（含边境战/遭遇战），参战真实武将胜负各有小概率精进
+      if (this.rpg && typeof Campaign !== "undefined") {
+        const gm = Campaign.mapState();
+        if (gm) {
+          let grew = 0;
+          [...this.cn, ...this.jp].forEach(u => {
+            if (u.g.id == null || u.g.id < 0) return;
+            if (Growth.battle(gm, u.g, u.side === "cn" ? cnAlive > 0 : jpAlive > 0)) grew++;
+          });
+          if (grew) this.log(`📈 历战磨砺：${grew} 位武将六维有所精进`);
+        }
+      }
       const mineAlive = this.playerSide === "cn" ? cnAlive : jpAlive, mineTotal = this.playerArr().length;
       const theirAlive = this.playerSide === "cn" ? jpAlive : cnAlive, theirTotal = this.enemyArr().length;
       this.log(playerWon ? "🎉 敌军溃散，你方大获全胜！" : "💀 己方全军溃败……");
@@ -3272,8 +3284,8 @@
     },
     // 唯一奇珍判定：全地图各仅一件，夺宝/NPC 换装时不得销毁——一律回流玩家宝物库
     isUnique(item) { return Object.values(this.UNIQUE_TREASURES).some(t => t.n === item.name); },
-    // 单挑夺宝赎回价：市价五成（与宝物出售价一档）
-    LOOT_PRICE: { normal: 500, fine: 1500, rare: 3000, legend: 5000 },
+    // 单挑夺宝赎回价：市价一倍二（基础售价 1000/3000/6000/10000 × 1.2）——敌将挟宝勒索，自然狮子大开口
+    LOOT_PRICE: { normal: 1200, fine: 3600, rare: 7200, legend: 12000 },
     // NPC 自行穿戴：比同槽现役加成高才穿（换下的旧装弃毁，唯一奇珍除外——退回玩家宝物库），
     // 不如现役则弃之不取（该物若已在库中则一并移除）；返回是否穿上
     npcAutoEquip(gid, item) {
@@ -3858,6 +3870,8 @@
           Campaign.save();
         }
       }
+      // 历战成长：与主角交手的真实武将（无论敌我阵营）胜负各有小概率百尺竿头更进一步
+      if (m && opp && opp.id >= 0) extraHtml += Growth.battle(m, opp, !heroWon);
       // 威名榜：击败八大高手记录战绩，凑齐后与武道会夺冠一并达成"天下无双"终局
       if (heroWon) extraHtml += checkRivalDefeat(opp);
       // 单挑夺宝：敌我单挑（对手为真实敌方武将）的胜方有机会夺取败方随身穿戴的一件宝物——
@@ -3872,7 +3886,7 @@
           extraHtml += `<br>🎒 夺得 ${opp.name} 随身的 ${it.icon}「${it.name}」（${Armory.rarityDef(it.rarity).n}），已收入宝物库！`;
         }
       }
-      if (hostileDuel && !heroWon && Math.random() < 0.25) {
+      if (hostileDuel && !heroWon && Math.random() < 0.35) {
         const pool = Armory.itemsOf("hero").filter(i => !Armory.isUnique(i));
         if (pool.length) ransomItem = pool[randInt(0, pool.length - 1)];
       }
@@ -4847,6 +4861,47 @@
         }
       }
       return news.length ? `⚔️ 武备风闻：${news.join("；")}` : "";
+    },
+  };
+  /* 全员武将成长（岁月修行 + 历战成长）：所有已现身武将都会随时间与战事缓慢变强——
+     · 岁月修行（tick，每次宿营）：随机抽 3 人闭关修行，评分越低成长概率越高（追赶机制），随机一维 +1，动向并入宿营夜报；
+     · 历战成长（battle，逢战结算）：参战的真实武将胜负各有小概率武力/统帅/体力随机一项 +1（胜者概率加倍）；
+     两者均写入战役层 m.statGrowth（经 Armory.geared 全局生效、新开局重置、不污染武将图鉴），
+     累计不设上限，但单项「不带宝物」的数值（基础+成长）不得超过 110 */
+  const Growth = {
+    CAP: 110, TRAIN_PICKS: 3, WIN_CHANCE: 0.12, LOSE_CHANCE: 0.06,
+    bump(m, gid, dim) {
+      const g = DB.get(gid); if (!g) return "";
+      if (!m.statGrowth) m.statGrowth = {};
+      const gr = m.statGrowth[gid] || (m.statGrowth[gid] = { ti: 0, wu: 0, tong: 0, zhi: 0, zheng: 0, mei: 0 });
+      if ((g[dim[0]] || 0) + gr[dim[0]] >= this.CAP) return "";   // 基础+成长封顶 110，仅宝物加成可再往上叠
+      gr[dim[0]]++;
+      Campaign.save();
+      return dim[1];
+    },
+    // 岁月修行：宿营时随机抽 TRAIN_PICKS 人（可重复抽中即多修一维），评分越低成长概率越高
+    tick(m) {
+      const pool = DB.list.filter(g => m.appeared.includes(g.id));
+      if (!pool.length) return "";
+      const news = [];
+      for (let i = 0; i < this.TRAIN_PICKS; i++) {
+        const g = pool[randInt(0, pool.length - 1)];
+        const chance = Math.max(0.1, Math.min(0.5, (750 - ratingScore(g)) / 500));
+        if (Math.random() >= chance) continue;
+        const dim = DIMS[randInt(0, DIMS.length - 1)];
+        if (this.bump(m, g.id, dim)) news.push(`${g.name}${this.verb(dim[0])}，${dim[1]} +1`);
+      }
+      return news.length ? `📈 修行风闻：${news.join("；")}` : "";
+    },
+    verb(k) { return k === "wu" || k === "ti" ? "勤练武艺" : k === "tong" ? "操演兵马" : k === "zhi" ? "研读兵书" : k === "zheng" ? "研习政略" : "广交名士"; },
+    // 历战成长：单场战斗的真实武将参与者（主角除外，其走经验升级），胜 12%/败 6% 概率战斗三维随机一项 +1
+    battle(m, g, won) {
+      if (!m || !g || g.id == null || g.id < 0) return "";
+      if (Math.random() >= (won ? this.WIN_CHANCE : this.LOSE_CHANCE)) return "";
+      const pool = [DIMS[1], DIMS[2], DIMS[0]];   // 武力/统帅/体力
+      const dim = pool[randInt(0, pool.length - 1)];
+      const label = this.bump(m, g.id, dim);
+      return label ? `<br>📈 ${g.name} 历战砥砺，${label} <b style="color:var(--cn-red)">+1</b>` : "";
     },
   };
   /* ============================================================
@@ -6382,6 +6437,7 @@
       const aiNews = AIDev.tick(m);   // 敌境自营：敌方城市随时间缓慢自行发展（城建/产业/繁荣）
       const nemNews = Nemesis.campEvent(m);   // 宿敌主动寻衅：拦路挑战 / 抢先夺赏 / 踏营下战书（三选一，小概率）
       const gearNews = AIGear.tick(m);        // 敌将武备自集：敌将有概率自获宝物并择优穿戴
+      const growNews = Growth.tick(m);        // 岁月修行：随机武将闭关精进（评分越低概率越高）
       // 悬赏轮换：每次宿营，每座城的每一条悬赏各自独立 50% 概率静默换新——榜单不再一成不变；
       // 已接取中的悬赏结算按接取时写入 m.activeBounty 的独立快照进行，不受轮换影响
       if (m.bounties) {
@@ -6410,7 +6466,7 @@
         msg = `🏕️ 宿营一夜，行动力已恢复（第 ${m.day} 天）`;
       }
       // 宿营夜报：有附加消息（敌境动向/宿敌风闻）时改用弹窗，点击任意处关闭——toast 稍纵即逝，来不及看
-      const extras = [aiNews, gearNews, nemNews].filter(Boolean);
+      const extras = [aiNews, gearNews, growNews, nemNews].filter(Boolean);
       if (extras.length) {
         openOverlay(`<div class="result-card">
           <h1>🏕️ 宿营夜报</h1>
