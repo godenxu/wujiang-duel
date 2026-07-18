@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607180911";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607190612";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -87,6 +87,7 @@
     war: "assets/bgm/tactics.mp3",            // 阵营大战
     cup: "assets/bgm/tactics.mp3",            // 世界杯（沿用战术曲）
     teamwar: "assets/bgm/tactics.mp3",        // 组队大战（沿用战术曲）
+    field: "assets/bgm/tactics.mp3",          // 野战演武（沿用战术曲）
   };
   // 记录"上一次停留的主页面"（角色扮演主页 或 天下地图）：战斗/宝物库等子界面结算后
   // 借此判断该回到哪一层，而不是一律固定返回某一处
@@ -150,6 +151,8 @@
       if (RPG.char && Campaign.meta && Campaign.meta.active) { MapUI.open(); return; }
       showScreen("home"); return;
     }
+    // 野战演武（纯小游戏）：退出即中止整场野战并回首页
+    if ($("#screen-field").classList.contains("active")) { FieldBattle.abort(); showScreen("home"); return; }
     // 阵营大战/组队大战/国战/世界杯：从「小游戏」自由试玩进入时退出回首页；
     // 从角色扮演/天下地图城池特色设施发起时（各自 rpg/rpgMode 标记为真）应回到发起它的那一层
     const rpgSubGames = [["war", () => War.rpg], ["teamwar", () => TeamBattle.rpg], ["conquest", () => Conquest.rpg], ["cup", () => Tournament.rpgMode]];
@@ -903,7 +906,7 @@
       const b = {
         p1: makeFighter(g1), p2: makeFighter(g2),
         round: 0, mode: "team", busy: false, spectate: !!opts.spectate,
-        backScreen: "teamwar",
+        backScreen: opts.backScreen || "teamwar",
         onWin: (winner, loser) => resolve({ winner, loser }),
         abortResolve: () => resolve(null),
       };
@@ -2064,6 +2067,427 @@
       $("#tw-again").onclick = () => { closeOverlay(); this.rpg ? RPG.teamBattle() : SelectUI.open("team"); };
       $("#tw-home").onclick = () => { closeOverlay(); if (this.rpg) goHome(); else showScreen("home"); };
       if (this.rpg) RPG.onTeamBattleResult(this.kills.player, playerWon);
+    },
+  };
+
+  /* ============================================================
+   *  野战演武（小游戏）：两军对圆 · 斗将破阵
+   *  排兵布阵（五位五将阵+阵形克制+随机地形）→ 阵前斗将（单挑定士气，连斩夺气）→
+   *  挥军破阵（前锋/左翼/右翼/中军四线实时推挤，限量军令扭转战局，溃线冲乱邻线）→ 追亡逐北。
+   *  自由玩法：使用武将图鉴默认数值，不消耗、不产出任何存档数据。
+   * ============================================================ */
+  const FieldBattle = {
+    gen: 0, phase: null, timer: null, side: "cn",
+    POSITIONS: [["van", "前锋"], ["left", "左翼"], ["right", "右翼"], ["center", "中军"], ["reserve", "后备"]],
+    LANES: ["van", "left", "right", "center"],
+    FORMS: {
+      cone: { n: "锥形", icon: "🔺", desc: "前锋/中军战力 +20%", beats: "round" },
+      crane: { n: "鹤翼", icon: "🕊️", desc: "左右两翼战力 +20%", beats: "cone" },
+      round: { n: "方圆", icon: "🛡️", desc: "被推挤幅度 -25%", beats: "goose" },
+      goose: { n: "雁行", icon: "🏹", desc: "乱箭蚀敌：敌军士气持续流失", beats: "crane" },
+    },
+    TERRAINS: {
+      plain: { n: "平原", icon: "🌾", desc: "堂堂之阵，正面对决，无特殊规则" },
+      pass: { n: "山道", icon: "⛰️", desc: "两翼难以展开（左右翼战力减半）；山道草木可施火攻" },
+      river: { n: "河畔", icon: "🌊", desc: "临水人心浮动：斗将士气波动 ×1.5；奇袭得手率 +15%" },
+    },
+    posName(k) { const p = this.POSITIONS.find(x => x[0] === k); return p ? p[1] : k; },
+    open() { this.setup(this.side || "cn"); },
+    setup(side) {
+      this.gen++;
+      clearInterval(this.timer); this.timer = null;
+      this.side = side;
+      this.phase = "deploy";
+      const foeSide = side === "cn" ? "jp" : "cn";
+      const draft = s => { const p = DB.bySide(s).slice(); shuffle(p); return p.slice(0, 10).map(clone); };
+      this.mine = draft(side); this.foes = draft(foeSide);
+      // 初始自动排阵：按（武力+统帅）从强到弱依次填 前锋→左翼→右翼→中军→后备，可手动对调
+      const deploy = arr => {
+        const sorted = arr.slice().sort((a, b) => (b.wu + b.tong) - (a.wu + a.tong));
+        const pos = {};
+        this.POSITIONS.forEach(([k], i) => { pos[k] = [sorted[i * 2], sorted[i * 2 + 1]]; });
+        return pos;
+      };
+      this.myPos = deploy(this.mine); this.foePos = deploy(this.foes);
+      this.myForm = "cone";
+      const fk = Object.keys(this.FORMS); this.foeForm = fk[randInt(0, fk.length - 1)];
+      this.foeFormKnown = false;
+      const tk = Object.keys(this.TERRAINS); this.terrain = tk[randInt(0, tk.length - 1)];
+      this.orders = 4;
+      this.myMorale = 50; this.foeMorale = 50;
+      this.duelRound = 0; this.myDuelWins = 0; this.foeDuelWins = 0;
+      this.dead = new Set();
+      this.lanes = null; this.orderMode = null; this.tickN = 0; this.logLines = [];
+      this.stats = { myFall: 0, foeFall: 0, myBreach: 0, foeBreach: 0 };
+      this.swapSel = null;
+      showScreen("field");
+      this.renderDeploy();
+    },
+    abort() { this.gen++; clearInterval(this.timer); this.timer = null; this.phase = null; },
+    alive(g) { return !this.dead.has(g.id); },
+    chip(g, posK, idx, sel) {
+      const dead = !this.alive(g);
+      return `<button class="fb-chip ${g.side} ${sel ? "sel" : ""} ${dead ? "dead" : ""}" data-pos="${posK}" data-idx="${idx}" ${dead ? "disabled" : ""}>
+        ${g.name}<small>武${g.wu} 统${g.tong}</small></button>`;
+    },
+    /* ---------- 第〇环 · 排兵布阵 ---------- */
+    renderDeploy() {
+      const t = this.TERRAINS[this.terrain];
+      $("#fb-content").innerHTML = `
+        <div class="section-hint">两军对圆：先排兵选阵，再阵前斗将，后挥军破阵——士气贯穿全场，军令共 <b>${this.orders}</b> 道，省着用</div>
+        <div class="fb-banner">${t.icon} 战场·${t.n}<small>${t.desc}</small></div>
+        <div class="fb-sect">我方阵形（与敌阵有相克：克敌全军 +12%）</div>
+        <div class="fb-forms">${Object.entries(this.FORMS).map(([k, f]) =>
+          `<button class="fb-form ${k === this.myForm ? "active" : ""}" data-form="${k}">${f.icon} ${f.n}<small>${f.desc}</small></button>`).join("")}</div>
+        <div class="fb-sect">敌军阵形：${this.foeFormKnown
+          ? `<b>${this.FORMS[this.foeForm].icon} ${this.FORMS[this.foeForm].n}</b>（${this.FORMS[this.foeForm].desc}）`
+          : `旌旗蔽日看不真切 <button class="cup-go" id="fb-scout" ${this.orders > 0 ? "" : "disabled"} style="padding:4px 10px">🕵️ 斥候探阵（耗 1 军令）</button>`}</div>
+        <div class="fb-sect">我方布阵（点两名武将互换位置——文官压前锋是要吃败仗的）</div>
+        <div class="fb-board">${this.POSITIONS.map(([k, n]) => `
+          <div class="fb-pos"><span class="fb-pos-lbl">${n}</span>
+            ${this.myPos[k].map((g, i) => this.chip(g, k, i, this.swapSel && this.swapSel.pos === k && this.swapSel.idx === i)).join("")}
+          </div>`).join("")}</div>
+        <div class="fb-sect">敌将共 10 员，为首者 ${this.foes.slice().sort((a, b) => b.wu - a.wu)[0].name}</div>
+        <div class="btns" style="margin-top:10px"><button class="btn-primary" id="fb-go">🥁 擂鼓 · 两军对圆</button></div>`;
+      $$(".fb-form").forEach(b => b.onclick = () => { this.myForm = b.dataset.form; this.renderDeploy(); });
+      const scout = $("#fb-scout");
+      if (scout) scout.onclick = () => {
+        if (this.orders <= 0) return;
+        this.orders--; this.foeFormKnown = true;
+        toast(`🕵️ 斥候回报：敌军摆的是${this.FORMS[this.foeForm].n}之阵！（军令余 ${this.orders}）`);
+        this.renderDeploy();
+      };
+      $$(".fb-chip", $("#fb-content")).forEach(c => c.onclick = () => {
+        const pos = c.dataset.pos, idx = +c.dataset.idx;
+        if (!this.swapSel) { this.swapSel = { pos, idx }; this.renderDeploy(); return; }
+        const a = this.swapSel; this.swapSel = null;
+        if (a.pos !== pos || a.idx !== idx) {
+          const tmp = this.myPos[a.pos][a.idx];
+          this.myPos[a.pos][a.idx] = this.myPos[pos][idx];
+          this.myPos[pos][idx] = tmp;
+        }
+        this.renderDeploy();
+      });
+      $("#fb-go").onclick = () => this.renderDuel();
+    },
+    /* ---------- 第一环 · 阵前斗将 ---------- */
+    challenger() {
+      const pool = this.foes.filter(g => this.alive(g));
+      return pool.sort((a, b) => b.wu - a.wu)[0] || null;
+    },
+    renderDuel() {
+      this.phase = "duel";
+      const foe = this.challenger();
+      if (!foe || this.duelRound >= 3) { this.startClash(); return; }
+      $("#fb-content").innerHTML = `
+        <div class="fb-banner">⚔️ 阵前斗将 · 第 ${this.duelRound + 1}/3 阵${this.moraleBarHtml()}</div>
+        <div class="fb-duel-card ${foe.side}">
+          <div class="fb-duel-av">${avatarChar(foe.name)}</div>
+          <div class="fb-duel-meta"><b>${foe.name}</b>纵马出阵，横刀立马点名搦战！<small>武 ${foe.wu} · 统 ${foe.tong} · 体 ${foe.ti}</small></div>
+        </div>
+        <div class="section-hint">胜一阵敌胆寒（士气 ±12${this.terrain === "river" ? "，河畔 ×1.5" : ""}），连斩三将敌军未战先乱；避战不出则己方士气 -6，出阵者若被斩折损更重</div>
+        <div class="btns">
+          <button class="btn-primary" id="fb-fight">出将应战</button>
+          <button class="btn-ghost" id="fb-decline">避战不出（士气 -6）</button>
+          <button class="btn-ghost" id="fb-allout">🥁 全军掩杀（跳过斗将）</button>
+        </div>`;
+      $("#fb-fight").onclick = () => this.pickDuelist(foe);
+      $("#fb-decline").onclick = () => {
+        const loss = this.terrain === "river" ? 9 : 6;
+        this.myMorale = Math.max(0, this.myMorale - loss);
+        toast(`鸣金避战，${foe.name} 阵前耀武扬威——己方士气 -${loss}`);
+        this.duelRound++;
+        if (this.myMorale <= 0) { this.finish(false, "士气崩溃，未战先溃"); return; }
+        this.renderDuel();
+      };
+      $("#fb-allout").onclick = () => this.startClash();
+    },
+    pickDuelist(foe) {
+      const cands = this.mine.filter(g => this.alive(g));
+      openOverlay(`<div class="result-card detail-card">
+        <h1>点将出阵</h1>
+        <div class="wdesc">谁去会一会 ${foe.name}（武 ${foe.wu}）？</div>
+        <div class="menu" style="max-height:46vh;overflow:auto">${cands.map(g =>
+          `<button class="menu-btn fb-pick" data-gid="${g.id}"><span class="mi">${avatarChar(g.name)}</span><span>${g.name}<small>武 ${g.wu} · 统 ${g.tong} · 体 ${g.ti}</small></span></button>`).join("")}</div>
+        <div class="btns"><button class="btn-ghost" id="fb-pick-cancel">再想想</button></div>
+      </div>`, { modal: true });
+      $$(".fb-pick").forEach(b => b.onclick = () => { closeOverlay(); this.runDuel(this.mine.find(g => g.id === +b.dataset.gid), foe); });
+      $("#fb-pick-cancel").onclick = () => { closeOverlay(); };
+    },
+    async runDuel(mineG, foe) {
+      if (!mineG) return;
+      const myGen = this.gen;
+      const res = await startTeamDuel(clone(mineG), clone(foe), {
+        title: "阵前斗将", backScreen: "field",
+        intro: `两军阵前，${mineG.name} 迎战 ${foe.name}——三军瞩目，胜负关乎全军士气！`,
+      });
+      if (this.gen !== myGen) return;
+      showScreen("field");
+      if (!res) { this.renderDuel(); return; }   // 中途退出：本阵作罢，不计胜负
+      const swing = Math.round(12 * (this.terrain === "river" ? 1.5 : 1));
+      if (res.winner.name === mineG.name) {
+        this.dead.add(foe.id); this.stats.foeFall++;
+        this.myDuelWins++;
+        this.myMorale = Math.min(100, this.myMorale + swing);
+        this.foeMorale = Math.max(0, this.foeMorale - swing);
+        let msg = `⚔️ ${mineG.name} 阵前斩 ${foe.name}！己方士气 +${swing}，敌军 -${swing}`;
+        if (this.myDuelWins >= 3) { this.foeMorale = Math.max(0, this.foeMorale - 15); msg += `——连斩三将，敌军未战先乱（再 -15）！`; }
+        toast(msg);
+      } else {
+        this.dead.add(mineG.id); this.stats.myFall++;
+        this.foeDuelWins++;
+        this.foeMorale = Math.min(100, this.foeMorale + swing);
+        this.myMorale = Math.max(0, this.myMorale - swing);
+        toast(`💀 ${mineG.name} 被 ${foe.name} 斩于阵前！己方士气 -${swing}`);
+      }
+      this.duelRound++;
+      if (this.foeMorale <= 0) { this.finish(true, "敌军士气崩溃，不战自溃"); return; }
+      if (this.myMorale <= 0) { this.finish(false, "士气崩溃，未战先溃"); return; }
+      this.renderDuel();
+    },
+    /* ---------- 第二环 · 挥军破阵 ---------- */
+    startClash() {
+      this.phase = "clash";
+      this.tickN = 0;
+      this.lanes = {};
+      this.LANES.forEach(k => { this.lanes[k] = { meter: 50, broken: null, myBoost: 0, foeBoost: 0, myHold: 0, myReserve: false, foeReserve: false }; });
+      this.myReserveUsed = false; this.foeReserveUsed = false;
+      this.renderClash();
+      this.log(`🥁 战鼓雷动，四线接敌！我军${this.FORMS[this.myForm].n}阵 对 敌军${this.FORMS[this.foeForm].n}阵${this.beats(this.myForm, this.foeForm) ? "——我阵克敌！" : this.beats(this.foeForm, this.myForm) ? "——敌阵克我，小心！" : ""}`);
+      const myGen = this.gen;
+      this.timer = setInterval(() => this.tick(myGen), 600);
+    },
+    beats(a, b) { return this.FORMS[a].beats === b; },
+    lanePower(side, laneK) {
+      const pos = side === "my" ? this.myPos : this.foePos;
+      const form = side === "my" ? this.myForm : this.foeForm;
+      let p = pos[laneK].filter(g => this.alive(g)).reduce((s, g) => s + g.wu * 0.6 + g.tong * 0.4, 0);
+      if (this.lanes[laneK][side === "my" ? "myReserve" : "foeReserve"]) {
+        p += pos.reserve.filter(g => this.alive(g)).reduce((s, g) => s + (g.wu * 0.6 + g.tong * 0.4) * 0.7, 0);
+      }
+      if (form === "cone" && (laneK === "van" || laneK === "center")) p *= 1.2;
+      if (form === "crane" && (laneK === "left" || laneK === "right")) p *= 1.2;
+      if (this.terrain === "pass" && (laneK === "left" || laneK === "right")) p *= 0.5;
+      const foeForm = side === "my" ? this.foeForm : this.myForm;
+      if (this.beats(form, foeForm)) p *= 1.12;
+      const morale = side === "my" ? this.myMorale : this.foeMorale;
+      p *= 0.6 + 0.8 * morale / 100;
+      return p;
+    },
+    tick(myGen) {
+      if (this.gen !== myGen || this.phase !== "clash") return;
+      this.tickN++;
+      const now = Date.now();
+      const sd = this.tickN > 100 ? 2 : 1;   // 胶着逾百刻进入决胜时刻：烈度翻倍，务必分出胜负
+      if (this.tickN === 101) this.log(`⚡ 决胜时刻！两军杀红了眼，战局加速倾泻`);
+      this.LANES.forEach(k => {
+        const L = this.lanes[k];
+        if (L.broken) return;
+        let myP = this.lanePower("my", k) * (now < L.myBoost ? 2 : 1);
+        let foeP = this.lanePower("foe", k) * (now < L.foeBoost ? 1.5 : 1);
+        let delta = (myP - foeP) / Math.max(myP, foeP, 1) * 8 * sd + (Math.random() * 2 - 1) * 1.4 * sd;
+        if (this.myForm === "round" && delta < 0) delta *= 0.75;
+        if (this.foeForm === "round" && delta > 0) delta *= 0.75;
+        if (now < L.myHold && delta < 0) delta = 0;
+        L.meter = Math.max(0, Math.min(100, L.meter + delta));
+        if (L.meter >= 100) this.breach("my", k);
+        else if (L.meter <= 0) this.breach("foe", k);
+      });
+      // 雁行乱箭：敌方士气持续流失
+      if (this.myForm === "goose") this.foeMorale = Math.max(0, this.foeMorale - 0.15);
+      if (this.foeForm === "goose") this.myMorale = Math.max(0, this.myMorale - 0.15);
+      // 敌军军令 AI：告急则投后备，否则偶尔擂鼓
+      if (this.tickN % 8 === 0) {
+        const losing = this.LANES.filter(k => !this.lanes[k].broken).sort((a, b) => this.lanes[b].meter - this.lanes[a].meter)[0];
+        if (losing) {
+          if (!this.foeReserveUsed && this.lanes[losing].meter > 70) {
+            this.foeReserveUsed = true; this.lanes[losing].foeReserve = true;
+            this.log(`🚨 敌军后备队压上${this.posName(losing)}线！`);
+          } else if (Math.random() < 0.3) {
+            this.lanes[losing].foeBoost = now + 5000;
+            this.log(`🥁 敌阵中军擂鼓，${this.posName(losing)}线敌兵狂攻！`);
+          }
+        }
+      }
+      if (this.checkClashEnd()) return;
+      this.updateClashDom();
+    },
+    breach(winner, laneK) {
+      const L = this.lanes[laneK];
+      if (L.broken) return;
+      L.broken = winner;
+      const nbs = { van: ["left", "right"], left: ["van", "center"], right: ["van", "center"], center: ["left", "right"] }[laneK] || [];
+      if (winner === "my") {
+        this.stats.myBreach++;
+        this.foeMorale = Math.max(0, this.foeMorale - 15);
+        this.myMorale = Math.min(100, this.myMorale + 8);
+        nbs.forEach(n => { if (!this.lanes[n].broken) this.lanes[n].meter = Math.min(100, this.lanes[n].meter + 8); });
+        this.log(`💥 我军突破${this.posName(laneK)}线！溃兵冲乱敌军邻线，敌士气 -15`);
+      } else {
+        this.stats.foeBreach++;
+        this.myMorale = Math.max(0, this.myMorale - 15);
+        this.foeMorale = Math.min(100, this.foeMorale + 8);
+        nbs.forEach(n => { if (!this.lanes[n].broken) this.lanes[n].meter = Math.max(0, this.lanes[n].meter - 8); });
+        this.log(`⚠️ ${this.posName(laneK)}线失守！我军溃兵冲乱邻线，士气 -15`);
+      }
+    },
+    checkClashEnd() {
+      const myB = this.LANES.filter(k => this.lanes[k].broken === "my").length;
+      const foeB = this.LANES.filter(k => this.lanes[k].broken === "foe").length;
+      if (this.foeMorale <= 0) { this.finish(true, "敌军士气崩溃，全线弃甲曳兵"); return true; }
+      if (this.myMorale <= 0) { this.finish(false, "我军士气崩溃，全线溃退"); return true; }
+      if (myB >= 3) { this.finish(true, `连破敌军 ${myB} 线，敌阵土崩瓦解`); return true; }
+      if (foeB >= 3) { this.finish(false, `我军 ${foeB} 线失守，阵脚大乱`); return true; }
+      if (myB + foeB >= 4) {
+        if (myB !== foeB) { this.finish(myB > foeB, "四线战罢，胜负已分"); return true; }
+        this.finish(this.myMorale >= this.foeMorale, "四线两两相持，士气高者胜"); return true;
+      }
+      return false;
+    },
+    /* 军令：点军令钮再点目标战线 */
+    useOrder(kind, laneK) {
+      if (this.orders <= 0) { toast("军令已用尽！"); return; }
+      const now = Date.now();
+      if (kind === "raid") {
+        const cands = this.myPos.reserve.filter(g => this.alive(g));
+        if (!cands.length) { toast("后备已无可用之将"); return; }
+        this.orders--;
+        const g = cands.sort((a, b) => b.zhi - a.zhi)[0];
+        const p = 0.5 + (g.zhi - 70) / 250 + (this.terrain === "river" ? 0.15 : 0);
+        if (Math.random() < p) {
+          const target = this.lanes.center.broken ? this.LANES.find(k => !this.lanes[k].broken) : "center";
+          if (target) this.lanes[target].meter = Math.min(100, this.lanes[target].meter + 25);
+          this.foeMorale = Math.max(0, this.foeMorale - 12);
+          this.log(`🐎 ${g.name} 奇袭敌军侧后得手！${this.posName(target || "center")}线大溃，敌士气 -12`);
+        } else {
+          this.dead.add(g.id); this.stats.myFall++;
+          this.myMorale = Math.max(0, this.myMorale - 10);
+          this.log(`💀 ${g.name} 奇袭被敌军识破，力战殉国——我军士气 -10`);
+        }
+        this.afterOrder(); return;
+      }
+      const L = this.lanes[laneK];
+      if (!L || L.broken) { toast("此线战事已了"); return; }
+      this.orders--;
+      if (kind === "drum") { L.myBoost = now + 6000; this.log(`🥁 擂鼓！${this.posName(laneK)}线我军战力倍增（6 秒）`); }
+      if (kind === "hold") { L.myHold = now + 6000; this.log(`🛡️ 鸣金稳守！${this.posName(laneK)}线我军结阵如山（6 秒不退）`); }
+      if (kind === "reserve") {
+        if (this.myReserveUsed) { toast("后备队已投入战场"); this.orders++; return; }
+        this.myReserveUsed = true; L.myReserve = true;
+        this.log(`🔀 后备队压上${this.posName(laneK)}线！`);
+      }
+      if (kind === "fire") {
+        L.meter = Math.min(100, L.meter + 18);
+        this.foeMorale = Math.max(0, this.foeMorale - 8);
+        this.log(`🔥 火攻！${this.posName(laneK)}线山风助火，敌军焦头烂额（敌士气 -8）`);
+      }
+      this.afterOrder();
+    },
+    afterOrder() { this.orderMode = null; this.renderClash(); },
+    moraleBarHtml() {
+      return `<div class="fb-morales">
+        <div class="fb-mor my"><span>我军士气</span><div class="fb-mor-bar"><i style="width:${this.myMorale}%"></i></div><b id="fb-mor-my">${Math.round(this.myMorale)}</b></div>
+        <div class="fb-mor foe"><span>敌军士气</span><div class="fb-mor-bar foe"><i style="width:${this.foeMorale}%"></i></div><b id="fb-mor-foe">${Math.round(this.foeMorale)}</b></div>
+      </div>`;
+    },
+    laneHtml(k) {
+      const L = this.lanes[k];
+      const myGs = this.myPos[k].map(g => this.alive(g) ? g.name : `<s>${g.name}</s>`).join("、");
+      const foeGs = this.foePos[k].map(g => this.alive(g) ? g.name : `<s>${g.name}</s>`).join("、");
+      const state = L.broken === "my" ? `<span class="fb-broke my">突破！</span>` : L.broken === "foe" ? `<span class="fb-broke foe">失守…</span>` : "";
+      return `<div class="fb-lane ${L.broken ? "done" : ""} ${this.orderMode ? "pickable" : ""}" data-lane="${k}">
+        <div class="fb-lane-top"><span class="fb-lane-lbl">${this.posName(k)}</span><span class="fb-lane-my">${myGs}</span>${state}<span class="fb-lane-foe">${foeGs}</span></div>
+        <div class="fb-push">
+          <div class="fb-mass my" style="width:${L.meter}%"><span class="fb-troops">${"⚔️".repeat(3)}</span></div>
+          <div class="fb-clashpt" style="left:${L.meter}%">${L.broken ? "" : "💥"}</div>
+          <div class="fb-mass foe" style="width:${100 - L.meter}%"><span class="fb-troops foe">${"🛡️".repeat(3)}</span></div>
+        </div>
+      </div>`;
+    },
+    renderClash() {
+      $("#fb-content").innerHTML = `
+        <div class="fb-banner">🥁 挥军破阵${this.orderMode ? ` · 请点选【${{ drum: "擂鼓强攻", hold: "鸣金稳守", reserve: "投入后备", fire: "火攻" }[this.orderMode]}】的目标战线` : ""}${this.moraleBarHtml()}</div>
+        <div class="fb-lanes" id="fb-lanes">${this.LANES.map(k => this.laneHtml(k)).join("")}</div>
+        <div class="fb-orders">
+          <span class="fb-ord-left">军令 <b id="fb-orders-left">${this.orders}</b></span>
+          <button class="fb-ord" id="fb-ord-drum" ${this.orders ? "" : "disabled"}>🥁 擂鼓</button>
+          <button class="fb-ord" id="fb-ord-hold" ${this.orders ? "" : "disabled"}>🛡️ 鸣金</button>
+          <button class="fb-ord" id="fb-ord-reserve" ${this.orders && !this.myReserveUsed ? "" : "disabled"}>🔀 后备</button>
+          <button class="fb-ord" id="fb-ord-fire" ${this.orders && this.terrain === "pass" ? "" : "disabled"} title="仅山道可用">🔥 火攻</button>
+          <button class="fb-ord" id="fb-ord-raid" ${this.orders ? "" : "disabled"}>🐎 奇袭</button>
+        </div>
+        <div class="fb-log" id="fb-log">${(this.logLines || []).join("")}</div>`;
+      [["drum", "#fb-ord-drum"], ["hold", "#fb-ord-hold"], ["reserve", "#fb-ord-reserve"], ["fire", "#fb-ord-fire"]].forEach(([kind, sel]) => {
+        const b = $(sel); if (b) b.onclick = () => { if (this.orders <= 0) return; this.orderMode = this.orderMode === kind ? null : kind; this.renderClash(); };
+      });
+      const raid = $("#fb-ord-raid"); if (raid) raid.onclick = () => this.useOrder("raid");
+      $$(".fb-lane", $("#fb-content")).forEach(el => el.onclick = () => { if (this.orderMode) this.useOrder(this.orderMode, el.dataset.lane); });
+    },
+    // 高频只改数值/宽度，不整块重绘（避免打断点击）
+    updateClashDom() {
+      this.LANES.forEach(k => {
+        const el = document.querySelector(`.fb-lane[data-lane="${k}"]`);
+        if (!el) return;
+        const L = this.lanes[k];
+        const my = el.querySelector(".fb-mass.my"), foe = el.querySelector(".fb-mass.foe"), pt = el.querySelector(".fb-clashpt");
+        if (my) my.style.width = L.meter + "%";
+        if (foe) foe.style.width = (100 - L.meter) + "%";
+        if (pt) { pt.style.left = L.meter + "%"; if (L.broken) pt.textContent = ""; }
+        if (L.broken && !el.classList.contains("done")) this.renderClash();
+      });
+      const mm = $("#fb-mor-my"), mf = $("#fb-mor-foe");
+      if (mm) mm.textContent = Math.round(this.myMorale);
+      if (mf) mf.textContent = Math.round(this.foeMorale);
+      const mbar = document.querySelector(".fb-mor.my i"), fbar = document.querySelector(".fb-mor-bar.foe i");
+      if (mbar) mbar.style.width = this.myMorale + "%";
+      if (fbar) fbar.style.width = this.foeMorale + "%";
+    },
+    log(msg) {
+      this.logLines = this.logLines || [];
+      this.logLines.unshift(`<div>${msg}</div>`);
+      if (this.logLines.length > 30) this.logLines.pop();
+      const el = $("#fb-log"); if (el) el.innerHTML = this.logLines.join("");
+    },
+    /* ---------- 终局 · 追亡逐北 ---------- */
+    finish(won, reason) {
+      clearInterval(this.timer); this.timer = null;
+      this.phase = "done";
+      if (!won) { this.showResult(false, reason, ""); return; }
+      openOverlay(`<div class="result-card">
+        <h1>🏇 追亡逐北</h1>
+        <div class="wdesc">${reason}——敌军全线溃退！穷追可扩大战果，但若敌后备未乱，恐有埋伏。</div>
+        <div class="btns">
+          <button class="btn-primary" id="fb-chase">穷追猛打</button>
+          <button class="btn-ghost" id="fb-stop">见好就收</button>
+        </div></div>`, { modal: true });
+      $("#fb-chase").onclick = () => {
+        closeOverlay();
+        if (Math.random() < 0.6) {
+          const extra = randInt(2, 4);
+          this.stats.foeFall += extra;
+          this.showResult(true, reason, `🏇 穷追三十里，再斩敌将 ${extra} 员，大获全胜、缴获无数！`);
+        } else {
+          const lost = randInt(1, 2);
+          this.stats.myFall += lost;
+          this.showResult(true, reason, `⚠️ 追击途中遭敌后备伏击，折损 ${lost} 将——胜局虽在，美中不足。`);
+        }
+      };
+      $("#fb-stop").onclick = () => { closeOverlay(); this.showResult(true, reason, "🎺 鸣金收兵，稳稳吃下这场大胜。"); };
+    },
+    showResult(won, reason, chaseTxt) {
+      openOverlay(`<div class="result-card">
+        <h1>${won ? "🏆 野战大捷" : "💀 兵败如山"}</h1>
+        <div class="wdesc">${reason}${chaseTxt ? `<br>${chaseTxt}` : ""}<br><br>
+          ⚔️ 阵前斗将：${this.myDuelWins} 胜 ${this.foeDuelWins} 负<br>
+          💥 破阵：突破 ${this.stats.myBreach} 线 · 失守 ${this.stats.foeBreach} 线<br>
+          💀 阵亡：我方 ${this.stats.myFall} 将 · 敌方 ${this.stats.foeFall} 将<br>
+          🚩 终局士气：我 ${Math.round(this.myMorale)} · 敌 ${Math.round(this.foeMorale)}</div>
+        <div class="btns">
+          <button class="btn-primary" id="fb-again">再战一场</button>
+          <button class="btn-ghost" id="fb-home">返回菜单</button>
+        </div></div>`);
+      $("#fb-again").onclick = () => { closeOverlay(); this.open(); };
+      $("#fb-home").onclick = () => { closeOverlay(); this.abort(); showScreen("home"); };
     },
   };
 
@@ -7416,6 +7840,7 @@
       const go = b.dataset.go;
       if (go === "select") SelectUI.open(b.dataset.mode);
       else if (go === "war") War.open();
+      else if (go === "field") FieldBattle.open();
       else if (go === "conquest") Conquest.open();
       else if (go === "cup") Tournament.open();
       else if (go === "rpg") RPG.open();
