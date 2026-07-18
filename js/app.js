@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607172246";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607180834";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -3270,6 +3270,28 @@
       chitu: { n: "赤兔·千里神驹", type: "mount", stat: "tong", intro: "人中吕布马中赤兔，日行千里，唯此一骑——佩之统帅超群。" },
       senriGeta: { n: "千里靴", type: "attire", stat: "mei", intro: "踏遍天下路不知疲，唯此一双——佩之魅力超群。" },
     },
+    // 唯一奇珍判定：全地图各仅一件，夺宝/NPC 换装时不得销毁——一律回流玩家宝物库
+    isUnique(item) { return Object.values(this.UNIQUE_TREASURES).some(t => t.n === item.name); },
+    // 单挑夺宝赎回价：市价五成（与宝物出售价一档）
+    LOOT_PRICE: { normal: 500, fine: 1500, rare: 3000, legend: 5000 },
+    // NPC 自行穿戴：比同槽现役加成高才穿（换下的旧装弃毁，唯一奇珍除外——退回玩家宝物库），
+    // 不如现役则弃之不取（该物若已在库中则一并移除）；返回是否穿上
+    npcAutoEquip(gid, item) {
+      const cur = this.data.items.find(i => i.equippedBy === gid && i.type === item.type);
+      if (cur && (cur.bonus || 0) >= (item.bonus || 0)) {
+        this.data.items = this.data.items.filter(i => i.uid !== item.uid);
+        this.save();
+        return false;
+      }
+      if (cur) {
+        if (this.isUnique(cur)) cur.equippedBy = null;
+        else this.data.items = this.data.items.filter(i => i.uid !== cur.uid);
+      }
+      if (!this.data.items.some(i => i.uid === item.uid)) this.data.items.push(item);
+      item.equippedBy = gid;
+      this.save();
+      return true;
+    },
     makeUniqueTreasure(key) {
       const t = this.UNIQUE_TREASURES[key];
       const type = this.typeDef(t.type);
@@ -3838,19 +3860,63 @@
       }
       // 威名榜：击败八大高手记录战绩，凑齐后与武道会夺冠一并达成"天下无双"终局
       if (heroWon) extraHtml += checkRivalDefeat(opp);
+      // 单挑夺宝：敌我单挑（对手为真实敌方武将）的胜方有机会夺取败方随身穿戴的一件宝物——
+      // 主角获胜直接收入宝物库；主角落败被夺时立刻弹赎回选择（唯一奇珍不入夺宝池，永不遗失）
+      const hostileDuel = m && opp && opp.id >= 0 && opp.side !== c.side;
+      let ransomItem = null;
+      if (hostileDuel && heroWon && Math.random() < 0.35) {
+        const spoils = Armory.itemsOf(opp.id);
+        if (spoils.length) {
+          const it = spoils[randInt(0, spoils.length - 1)];
+          it.equippedBy = null; Armory.save();
+          extraHtml += `<br>🎒 夺得 ${opp.name} 随身的 ${it.icon}「${it.name}」（${Armory.rarityDef(it.rarity).n}），已收入宝物库！`;
+        }
+      }
+      if (hostileDuel && !heroWon && Math.random() < 0.25) {
+        const pool = Armory.itemsOf("hero").filter(i => !Armory.isUnique(i));
+        if (pool.length) ransomItem = pool[randInt(0, pool.length - 1)];
+      }
       const bg = c.side === 'cn' ? 'linear-gradient(135deg,var(--cn-red),#7a1420)' : 'linear-gradient(135deg,var(--jp-indigo),#141e3c)';
-      openOverlay(`<div class="result-card">
-        <h1>${heroWon ? '历练胜利' : '虽败犹荣'}</h1>
-        <div class="winner-av" style="background:${bg}">${avatarChar(c.name)}</div>
-        <div class="wname">${c.name}</div>
-        <div class="wdesc">${heroWon ? '击败' : '不敌'} ${opp.name}（武将评分 ${oppSum} / 你 ${heroSum}）${tag}<br>获得经验 <b style="color:var(--cn-red)">+${gain}</b>${Bond.goldLine(goldGain)}${Armory.dropLine(drops)}
-          ${lvUp ? `<br>🎉 升级 ${lvUp} 级！获得加点 <b style="color:var(--cn-red)">+${lvUp * 1}</b>` : ''}${extraHtml}</div>
-        <div class="btns">
-          <button class="btn-primary" id="rpg-again">再历练</button>
-          <button class="btn-ghost" id="rpg-hub">返回养成</button>
-        </div></div>`);
-      $("#rpg-again").onclick = () => { closeOverlay(); this.train(); };
-      $("#rpg-hub").onclick = () => { closeOverlay(); goHome(); };
+      const showResult = () => {
+        openOverlay(`<div class="result-card">
+          <h1>${heroWon ? '历练胜利' : '虽败犹荣'}</h1>
+          <div class="winner-av" style="background:${bg}">${avatarChar(c.name)}</div>
+          <div class="wname">${c.name}</div>
+          <div class="wdesc">${heroWon ? '击败' : '不敌'} ${opp.name}（武将评分 ${oppSum} / 你 ${heroSum}）${tag}<br>获得经验 <b style="color:var(--cn-red)">+${gain}</b>${Bond.goldLine(goldGain)}${Armory.dropLine(drops)}
+            ${lvUp ? `<br>🎉 升级 ${lvUp} 级！获得加点 <b style="color:var(--cn-red)">+${lvUp * 1}</b>` : ''}${extraHtml}</div>
+          <div class="btns">
+            <button class="btn-primary" id="rpg-again">再历练</button>
+            <button class="btn-ghost" id="rpg-hub">返回养成</button>
+          </div></div>`);
+        $("#rpg-again").onclick = () => { closeOverlay(); this.train(); };
+        $("#rpg-hub").onclick = () => { closeOverlay(); goHome(); };
+      };
+      if (ransomItem) {
+        const price = Armory.LOOT_PRICE[ransomItem.rarity] || 500;
+        const canPay = Bond.gold() >= price;
+        openOverlay(`<div class="result-card">
+          <h1>🎒 宝物被夺！</h1>
+          <div class="wdesc">${opp.name} 顺手夺走了你随身的 ${ransomItem.icon}「${ransomItem.name}」（${Armory.rarityDef(ransomItem.rarity).n}）！<br>是否当场以 <b style="color:#b8860b">${price}</b> 金赎回？（现有 <b style="color:#b8860b">${Bond.gold()}</b> 金${canPay ? "" : "，不足以赎回"}）</div>
+          <div class="btns">
+            <button class="btn-primary" id="loot-buy" ${canPay ? "" : "disabled"}>💰 赎回（${price} 金）</button>
+            <button class="btn-ghost" id="loot-no">忍痛舍弃</button>
+          </div></div>`, { modal: true });
+        $("#loot-buy").onclick = () => {
+          if (!Bond.spend(price)) return;
+          extraHtml += `<br>🎒 ${opp.name} 一度夺走你的「${ransomItem.name}」，你当场以 ${price} 金赎回（现有 ${Bond.gold()} 金）`;
+          closeOverlay(); showResult();
+        };
+        $("#loot-no").onclick = () => {
+          const wore = Armory.npcAutoEquip(opp.id, ransomItem);
+          Campaign.recalcApMax(); Campaign.save();   // 被夺之物可能是行动力奇珍，即时重算上限
+          extraHtml += wore
+            ? `<br>🎒 「${ransomItem.name}」被 ${opp.name} 夺去随身佩戴，他日战而胜之可再夺回`
+            : `<br>🎒 「${ransomItem.name}」被 ${opp.name} 夺去，嫌不如其现役装备随手丢弃，就此遗失`;
+          closeOverlay(); showResult();
+        };
+        return;
+      }
+      showResult();
     },
     // 切磋习得：按对手当前友谊值算出 1%~31% 的触发概率；命中后比较双方（按当前实际数值，含装备/惩罚/成长加成）
     // 六维——若败方六维中最高一项严格大于胜方同一项，胜方该项 +1（主角走 alloc 永久成长，NPC 走战役内 statGrowth）
@@ -4359,7 +4425,7 @@
     },
     // 懒结算：按距上次结算的天数计入；被敌方占据期间颗粒无收（天数照样翻篇）。
     // 有掌柜时金币由掌柜逐日代收直接入账（不进待收、不受 15 天积攒上限，商队行情按整段一次判定），
-    // 矿山材料不在代收之列，仍须本人到城收取。
+    // 矿山材料同样由掌柜一并代收直接入库（不受待收上限；无掌柜时仍须本人到城收取）。
     // 边境战易主一瞬由 applyBorderWarOutcome 先行调用本函数，保证易主前的天数不漏记、易主后不多记
     accrue(m, cityId) {
       const est = this.get(m, cityId);
@@ -4385,6 +4451,11 @@
         const gain = Math.floor(est.matCarry / per);
         est.matCarry -= gain * per;
         est.matPending = Math.min(this.MAT_CAP_BY_LV[lv - 1], (est.matPending || 0) + gain);
+        if (est.manager != null && est.matPending > 0) {
+          this.deliverMats(cityId, est.matPending);
+          est.matBanked = (est.matBanked || 0) + est.matPending;
+          est.matPending = 0;
+        }
       }
     },
     accrueAll(m) { Object.keys(this.all(m)).forEach(cid => this.accrue(m, cid)); },
@@ -4756,6 +4827,28 @@
       return news.length ? `🏗️ 敌境风闻：${news.join("；")}` : "";
     },
   };
+  /* 敌将武备自集：敌方已现身武将每次宿营随机抽 2 人、各 25% 概率自获一件宝物——
+     比同槽现役强则随身穿戴（换下的旧装弃毁，唯一奇珍除外），不如现役则弃之不取；
+     动向以「⚔️ 武备风闻」并入宿营夜报，敌将实力因此随时间缓慢水涨船高 */
+  const AIGear = {
+    PICKS: 2, CHANCE: 0.25,
+    tick(m) {
+      const enemySide = RPG.char.side === "cn" ? "jp" : "cn";
+      const pool = DB.list.filter(g => g.side === enemySide && m.appeared.includes(g.id));
+      if (!pool.length) return "";
+      const news = [];
+      for (let i = 0; i < this.PICKS; i++) {
+        if (Math.random() >= this.CHANCE) continue;
+        const g = pool[randInt(0, pool.length - 1)];
+        const typeK = Armory.TYPES[randInt(0, Armory.TYPES.length - 1)].k;
+        const item = Armory.makeItem(typeK, Armory.rollRarity(false));
+        if (Armory.npcAutoEquip(g.id, item)) {
+          news.push(`${g.name}得${item.icon}「${item.name}」（${Armory.rarityDef(item.rarity).n}）随身佩戴`);
+        }
+      }
+      return news.length ? `⚔️ 武备风闻：${news.join("；")}` : "";
+    },
+  };
   /* ============================================================
    *  宿敌（天命之敌）：主角首次败于某位敌方阵营武将（刺杀反被所伤/宿营夜袭落败/边境战亲历落败等
    *  任一场敌我对决）即与其结下宿敌之约（若久未败绩，名声达「声名初显」后每次宿营亦有小概率随缘指定）。
@@ -4779,18 +4872,21 @@
       Campaign.save();
       if (!silent) toast(`⚔️ 你与【${DB.get(gid).name}】结下宿敌之约！从此天涯海角，终有一战。`);
     },
-    // 首次败于敌方阵营武将：立即结为宿敌（若尚无宿敌）
+    // 首次败于敌方阵营武将：立即结为宿敌（若尚无未了结的宿敌）；
+    // 旧宿敌恩怨已了后再败于新的敌将，即翻开新的一页宿怨（不与刚了结的旧宿敌原地续约）
     onHeroLoss(m, opp) {
-      if (!m || m.nemesis || !opp || opp.side === RPG.char.side || opp.id < 0) return;
+      if (!m || !opp || opp.side === RPG.char.side || opp.id < 0) return;
+      if (m.nemesis && (!m.nemesis.finaleDone || m.nemesis.id === opp.id)) return;
       this.assign(m, opp.id);
     },
-    // 兜底：迟迟未与敌将交手落败，但名声已达「声名初显」，随游历时间随缘指定一位
+    // 兜底：迟迟未与敌将交手落败（或旧怨已了后久无新怨），名声已达「声名初显」时随游历时间随缘指定一位
     ensureFallback(m) {
-      if (m.nemesis) return;
+      if (m.nemesis && !m.nemesis.finaleDone) return;
       if (Campaign.fameTierIndex(m.fame || 0) < this.FALLBACK_FAME_TIER) return;
       if (Math.random() >= this.FALLBACK_CHANCE) return;
-      const g = this.candidate(m);
-      if (g) this.assign(m, g.id);
+      const oldId = m.nemesis ? m.nemesis.id : null;
+      const pool = DB.list.filter(g => g.side !== RPG.char.side && m.appeared.includes(g.id) && g.id !== oldId);
+      if (pool.length) this.assign(m, pool[randInt(0, pool.length - 1)].id);
     },
     // 宿敌当前战力：在其真实数据（含装备）基础上，按主角等级与历次交手战绩临时叠加六维——
     // 只在本场战斗中生效，不写入 statGrowth，不污染其在武将图鉴/其他玩法中的数值
@@ -5492,9 +5588,10 @@
     nemesisHtml(m) {
       const st = m.nemesis;
       if (!st) return "";
+      if (st.finaleDone) return "";   // 恩怨已了：宿敌卡隐去，待与新的敌将结怨再现
       const g = DB.get(st.id);
       if (!g) return "";
-      const progress = st.finaleDone ? "恩怨已了" : `${st.wins}/${Nemesis.FINALE_WINS}`;
+      const progress = `${st.wins}/${Nemesis.FINALE_WINS}`;
       const canChallenge = !st.ambush && m.ap > 0;
       return `<div class="map-hero-card ${g.side}" style="margin-top:8px">
         <div class="mh-av">${avatarChar(g.name)}</div>
@@ -5503,7 +5600,7 @@
           <div class="mh-sub">战绩 ${st.wins}胜${st.nemesisWins}负 · ${progress}</div>
         </div>
         <div class="mh-action-col">
-          <button class="cup-go" id="map-nemesis" ${canChallenge ? "" : "disabled"}>${st.finaleDone ? "重温旧怨" : "🗡️ 下战书"}</button>
+          <button class="cup-go" id="map-nemesis" ${canChallenge ? "" : "disabled"}>🗡️ 下战书</button>
         </div>
       </div>`;
     },
@@ -5834,7 +5931,7 @@
       openOverlay(`<div class="result-card detail-card">
         <h1>${t.icon} ${cityName(cityId)} · ${lvName}${lv > 1 ? `（${lv} 级）` : ""}</h1>
         ${sealed ? `<div class="wdesc" style="color:var(--cn-red)"><b>⛔ 产业已被敌方查封</b>——停产且不可收取/变卖，待己方夺回此城自动恢复。</div>` : ""}
-        <div class="wdesc">日进 <b style="color:#b8860b">${rate}</b> 金（${lv > 1 ? `${lv} 级 ×${Estate.LV_MULT[lv - 1]}，` : ""}繁荣 ${Prosper.stars(m, cityId)} ×${Prosper.mult(m, cityId).toFixed(1)}${mgr ? `，掌柜 +${bonus}%` : ""}） · 待收 <b style="color:#b8860b">${est.pending || 0}</b> 金${est.manager != null ? `<br>🤝 掌柜逐日代收金币直接入账（累计已代收 <b style="color:#b8860b">${est.banked || 0}</b> 金），材料仍须本人收取` : `（上限 ${rate * Estate.ACCRUE_CAP_DAYS}）`}${est.type === "mine" ? `<br>⛏️ 待收${matType.n}材料 <b>${est.matPending || 0}</b> 份（每满 ${Estate.MINE_DAYS[lv - 1]} 天 +1，上限 ${Estate.MAT_CAP_BY_LV[lv - 1]}）` : ""}${est.type === "caravan" ? `<br>🚢 商队行情：收取时浮动六成～一倍四` : ""}<br>🤝 掌柜：${mgr ? `<b>${mgr.name}</b>（收益 +${bonus}%）` : "空缺（可委任友谊满上限的武将，按其智力+政治提升收益，并逐日代收金币）"}</div>
+        <div class="wdesc">日进 <b style="color:#b8860b">${rate}</b> 金（${lv > 1 ? `${lv} 级 ×${Estate.LV_MULT[lv - 1]}，` : ""}繁荣 ${Prosper.stars(m, cityId)} ×${Prosper.mult(m, cityId).toFixed(1)}${mgr ? `，掌柜 +${bonus}%` : ""}） · 待收 <b style="color:#b8860b">${est.pending || 0}</b> 金${est.manager != null ? `<br>🤝 掌柜逐日代收金币直接入账（累计已代收 <b style="color:#b8860b">${est.banked || 0}</b> 金）${est.type === "mine" ? `，矿山材料亦一并代收入库（累计 <b>${est.matBanked || 0}</b> 份）` : ""}` : `（上限 ${rate * Estate.ACCRUE_CAP_DAYS}）`}${est.type === "mine" ? `<br>⛏️ 待收${matType.n}材料 <b>${est.matPending || 0}</b> 份（每满 ${Estate.MINE_DAYS[lv - 1]} 天 +1，上限 ${Estate.MAT_CAP_BY_LV[lv - 1]}）` : ""}${est.type === "caravan" ? `<br>🚢 商队行情：收取时浮动六成～一倍四` : ""}<br>🤝 掌柜：${mgr ? `<b>${mgr.name}</b>（收益 +${bonus}%）` : "空缺（可委任友谊满上限的武将，按其智力+政治提升收益，并逐日代收金币与矿山材料）"}</div>
         <div class="btns">
           <button class="btn-primary" id="est-collect" ${canCollect ? "" : "disabled"}>💰 收取进账</button>
           ${lv < 3 ? `<button class="btn-ghost" id="est-up" ${sealed ? "disabled" : ""}>扩建为「${t.lvN[lv]}」（${Estate.upCost(cityId, lv + 1)} 金 · 收益 ×${Estate.LV_MULT[lv]}${starLack ? ` · 需繁荣 ${"★".repeat(needStar)}` : ""}）</button>` : ""}
@@ -6284,6 +6381,7 @@
       const wandered = this.wanderGenerals(m);
       const aiNews = AIDev.tick(m);   // 敌境自营：敌方城市随时间缓慢自行发展（城建/产业/繁荣）
       const nemNews = Nemesis.campEvent(m);   // 宿敌主动寻衅：拦路挑战 / 抢先夺赏 / 踏营下战书（三选一，小概率）
+      const gearNews = AIGear.tick(m);        // 敌将武备自集：敌将有概率自获宝物并择优穿戴
       // 悬赏轮换：每次宿营，每座城的每一条悬赏各自独立 50% 概率静默换新——榜单不再一成不变；
       // 已接取中的悬赏结算按接取时写入 m.activeBounty 的独立快照进行，不受轮换影响
       if (m.bounties) {
@@ -6312,7 +6410,7 @@
         msg = `🏕️ 宿营一夜，行动力已恢复（第 ${m.day} 天）`;
       }
       // 宿营夜报：有附加消息（敌境动向/宿敌风闻）时改用弹窗，点击任意处关闭——toast 稍纵即逝，来不及看
-      const extras = [aiNews, nemNews].filter(Boolean);
+      const extras = [aiNews, gearNews, nemNews].filter(Boolean);
       if (extras.length) {
         openOverlay(`<div class="result-card">
           <h1>🏕️ 宿营夜报</h1>
