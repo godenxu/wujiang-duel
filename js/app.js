@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607190726";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607191114";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -2118,6 +2118,7 @@
       this.duelRound = 0; this.myDuelWins = 0; this.foeDuelWins = 0;
       this.dead = new Set();
       this.usedDuelists = new Set();   // 斗将三阵须各遣一将，胜者亦不得再出
+      this.usedFoeDuelists = new Set();   // 敌方出阵搦战的武将同样不得重复出战
       this.lanes = null; this.orderMode = null; this.tickN = 0; this.logLines = [];
       this.assault = false; this.mainLane = null; this.foeMain = null;
       this.stats = { myFall: 0, foeFall: 0, myBreach: 0, foeBreach: 0 };
@@ -2150,7 +2151,7 @@
             ${this.myPos[k].map((g, i) => this.chip(g, k, i, this.swapSel && this.swapSel.pos === k && this.swapSel.idx === i)).join("")}
           </div>`).join("")}</div>
         <div class="fb-sect">敌将共 10 员，为首者 ${this.foes.slice().sort((a, b) => b.wu - a.wu)[0].name}</div>
-        <div class="btns" style="margin-top:10px"><button class="btn-primary" id="fb-go">🥁 擂鼓 · 两军对圆</button></div>`;
+        <div class="cup-start-btns" style="margin-top:10px"><button class="cup-go primary" id="fb-go">🥁 擂鼓 · 两军对圆</button></div>`;
       $$(".fb-form").forEach(b => b.onclick = () => { this.myForm = b.dataset.form; this.renderDeploy(); });
       const scout = $("#fb-scout");
       if (scout) scout.onclick = () => {
@@ -2174,13 +2175,14 @@
     },
     /* ---------- 第一环 · 阵前斗将 ---------- */
     challenger() {
-      const pool = this.foes.filter(g => this.alive(g));
+      const pool = this.foes.filter(g => this.alive(g) && !this.usedFoeDuelists.has(g.id));
       return pool.sort((a, b) => b.wu - a.wu)[0] || null;
     },
     renderDuel() {
       this.phase = "duel";
       const foe = this.challenger();
       if (!foe || this.duelRound >= 3) { this.startClash(); return; }
+      this.usedFoeDuelists.add(foe.id);   // 已搦战出阵者，此局不得再战
       $("#fb-content").innerHTML = `
         <div class="fb-banner">⚔️ 阵前斗将 · 第 ${this.duelRound + 1}/3 阵${this.moraleBarHtml()}</div>
         <div class="fb-duel-card ${foe.side}">
@@ -2188,10 +2190,10 @@
           <div class="fb-duel-meta"><b>${foe.name}</b>纵马出阵，横刀立马点名搦战！<small>武 ${foe.wu} · 统 ${foe.tong} · 体 ${foe.ti}</small></div>
         </div>
         <div class="section-hint">胜一阵敌胆寒（士气 ±12${this.terrain === "river" ? "，河畔 ×1.5" : ""}），连斩三将敌军未战先乱；避战不出则己方士气 -6，出阵者若被斩折损更重</div>
-        <div class="btns">
-          <button class="btn-primary" id="fb-fight">出将应战</button>
-          <button class="btn-ghost" id="fb-decline">避战不出（士气 -6）</button>
-          <button class="btn-ghost" id="fb-allout">🥁 全军掩杀（跳过斗将）</button>
+        <div class="fb-btnrow">
+          <button class="cup-go primary" id="fb-fight">出将应战</button>
+          <button class="cup-go" id="fb-decline">避战不出（士气 -6）</button>
+          <button class="cup-go" id="fb-allout">🥁 全军掩杀（跳过斗将）</button>
         </div>`;
       $("#fb-fight").onclick = () => this.pickDuelist(foe);
       $("#fb-decline").onclick = () => {
@@ -2270,7 +2272,7 @@
       this.log(`🥁 战鼓雷动，五线接敌！我军${this.FORMS[this.myForm].n}阵 对 敌军${this.FORMS[this.foeForm].n}阵${this.beats(this.myForm, this.foeForm) ? "——我阵克敌！" : this.beats(this.foeForm, this.myForm) ? "——敌阵克我，小心！" : ""}`);
       this.log(`🚩 我军以${this.posName(this.mainLane)}为主攻（+12%）；探马来报：敌军主攻${this.posName(this.foeMain)}！`);
       const myGen = this.gen;
-      this.timer = setInterval(() => this.tick(myGen), 600);
+      this.timer = setInterval(() => this.tick(myGen), 1100);   // 放慢刻度间隔，留出下令决策的时间
     },
     beats(a, b) { return this.FORMS[a].beats === b; },
     lanePower(side, laneK) {
@@ -2292,14 +2294,14 @@
       if (this.gen !== myGen || this.phase !== "clash") return;
       this.tickN++;
       const now = Date.now();
-      const sd = this.tickN > 100 ? 2 : 1;   // 胶着逾百刻进入决胜时刻：烈度翻倍，务必分出胜负
-      if (this.tickN === 101) this.log(`⚡ 决胜时刻！两军杀红了眼，战局加速倾泻`);
+      const sd = this.tickN > 60 ? 1.6 : 1;   // 胶着逾60刻进入决胜时刻：烈度加快，务必分出胜负
+      if (this.tickN === 61) this.log(`⚡ 决胜时刻！两军杀红了眼，战局加速倾泻`);
       this.LANES.forEach(k => {
         const L = this.lanes[k];
         if (L.broken) return;
         let myP = this.lanePower("my", k) * (now < L.myBoost ? 2 : 1);
         let foeP = this.lanePower("foe", k) * (now < L.foeBoost ? 1.5 : 1);
-        let delta = (myP - foeP) / Math.max(myP, foeP, 1) * 8 * sd + (Math.random() * 2 - 1) * 1.4 * sd;
+        let delta = (myP - foeP) / Math.max(myP, foeP, 1) * 5 * sd + (Math.random() * 2 - 1) * sd;
         if (this.myForm === "round" && delta < 0) delta *= 0.75;
         if (this.foeForm === "round" && delta > 0) delta *= 0.75;
         if (now < L.myHold && delta < 0) delta = 0;
@@ -2311,10 +2313,10 @@
       if (this.myForm === "goose") this.foeMorale = Math.max(0, this.foeMorale - 0.15);
       if (this.foeForm === "goose") this.myMorale = Math.max(0, this.myMorale - 0.15);
       // 敌军军令 AI：偶尔为最吃紧的一线擂鼓
-      if (this.tickN % 8 === 0) {
+      if (this.tickN % 5 === 0) {
         const losing = this.LANES.filter(k => !this.lanes[k].broken).sort((a, b) => this.lanes[b].meter - this.lanes[a].meter)[0];
         if (losing && Math.random() < 0.35) {
-          this.lanes[losing].foeBoost = now + 5000;
+          this.lanes[losing].foeBoost = now + 8000;
           this.log(`🥁 敌阵中军擂鼓，${this.posName(losing)}线敌兵狂攻！`);
         }
       }
@@ -2375,8 +2377,8 @@
       const L = this.lanes[laneK];
       if (!L || L.broken) { toast("此线战事已了"); return; }
       this.orders--;
-      if (kind === "drum") { L.myBoost = now + 6000; this.log(`🥁 擂鼓！${this.posName(laneK)}线我军战力倍增（6 秒）`); }
-      if (kind === "hold") { L.myHold = now + 6000; this.log(`🛡️ 鸣金稳守！${this.posName(laneK)}线我军结阵如山（6 秒不退）`); }
+      if (kind === "drum") { L.myBoost = now + 9000; this.log(`🥁 擂鼓！${this.posName(laneK)}线我军战力倍增（9 秒）`); }
+      if (kind === "hold") { L.myHold = now + 9000; this.log(`🛡️ 鸣金稳守！${this.posName(laneK)}线我军结阵如山（9 秒不退）`); }
       if (kind === "fire") {
         L.meter = Math.min(100, L.meter + 18);
         this.foeMorale = Math.max(0, this.foeMorale - 8);
@@ -2388,7 +2390,7 @@
     moraleBarHtml() {
       return `<div class="fb-morales">
         <div class="fb-mor my"><span>我军士气</span><div class="fb-mor-bar"><i style="width:${this.myMorale}%"></i></div><b id="fb-mor-my">${Math.round(this.myMorale)}</b></div>
-        <div class="fb-mor foe"><span>敌军士气</span><div class="fb-mor-bar foe"><i style="width:${this.foeMorale}%"></i></div><b id="fb-mor-foe">${Math.round(this.foeMorale)}</b></div>
+        <div class="fb-mor foe"><b id="fb-mor-foe">${Math.round(this.foeMorale)}</b><div class="fb-mor-bar foe"><i style="width:${this.foeMorale}%"></i></div><span>敌军士气</span></div>
       </div>`;
     },
     laneHtml(k) {
@@ -2419,7 +2421,7 @@
           <button class="fb-ord" id="fb-ord-hold" ${this.orders ? "" : "disabled"}>🛡️ 鸣金</button>
           <button class="fb-ord" id="fb-ord-fire" ${this.orders && this.terrain === "pass" ? "" : "disabled"} title="仅山道可用">🔥 火攻</button>
           <button class="fb-ord" id="fb-ord-raid" ${this.orders ? "" : "disabled"}>🐎 奇袭</button>
-        </div>` : `<div class="btns" style="margin:10px 0"><button class="btn-primary" id="fb-assault" ${this.mainLane ? "" : "disabled"}>🥁 击鼓总攻</button></div>`}
+        </div>` : `<div class="cup-start-btns" style="margin:10px 0"><button class="cup-go primary" id="fb-assault" ${this.mainLane ? "" : "disabled"}>🥁 击鼓总攻</button></div>`}
         <div class="fb-log" id="fb-log">${(this.logLines || []).join("")}</div>`;
       [["drum", "#fb-ord-drum"], ["hold", "#fb-ord-hold"], ["fire", "#fb-ord-fire"]].forEach(([kind, sel]) => {
         const b = $(sel); if (b) b.onclick = () => { if (this.orders <= 0) return; this.orderMode = this.orderMode === kind ? null : kind; this.renderClash(); };

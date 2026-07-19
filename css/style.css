@@ -1171,13 +1171,17 @@ html, body {
 .fb-duel-card.cn .fb-duel-av { background: linear-gradient(135deg, var(--cn-red), #7a1420); }
 .fb-duel-meta { font-size: 14px; line-height: 1.5; }
 .fb-duel-meta small { display: block; font-size: 12px; opacity: .7; }
-.fb-morales { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; font-weight: 400; }
-.fb-mor { display: flex; align-items: center; gap: 6px; font-size: 11px; }
-.fb-mor span { width: 56px; flex: none; }
-.fb-mor b { width: 26px; text-align: right; }
-.fb-mor-bar { flex: 1; height: 7px; border-radius: 4px; background: rgba(0,0,0,.35); overflow: hidden; }
-.fb-mor-bar i { display: block; height: 100%; background: linear-gradient(90deg, #e8b33a, #f4c430); transition: width .4s; }
-.fb-mor-bar.foe i { background: linear-gradient(90deg, #5a6fbf, #8797d8); }
+.fb-btnrow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.fb-btnrow .cup-go { flex: 1 1 auto; min-width: 100px; }
+/* 士气条左右分列，如单挑血条般从两端向中央递减 */
+.fb-morales { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-weight: 400; }
+.fb-mor { flex: 1; display: flex; align-items: center; gap: 6px; font-size: 11px; min-width: 0; }
+.fb-mor.foe { flex-direction: row-reverse; }
+.fb-mor span { flex: none; }
+.fb-mor b { width: 22px; text-align: center; flex: none; }
+.fb-mor-bar { flex: 1; height: 8px; border-radius: 4px; background: rgba(0,0,0,.35); overflow: hidden; }
+.fb-mor-bar i { display: block; height: 100%; width: 100%; background: linear-gradient(90deg, #e8b33a, #f4c430); transition: width .4s; }
+.fb-mor.foe .fb-mor-bar i { margin-left: auto; background: linear-gradient(90deg, #8797d8, #5a6fbf); }
 .fb-lanes { display: flex; flex-direction: column; gap: 7px; margin: 8px 0; }
 .fb-lane { border-radius: 9px; padding: 6px 8px; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12); }
 .fb-lane.pickable { cursor: pointer; border-color: var(--cn-gold); box-shadow: 0 0 8px rgba(244,196,48,.35); }
