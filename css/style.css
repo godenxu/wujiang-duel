@@ -1200,31 +1200,41 @@ html, body {
 .fb-morales.big .fb-mor b.fb-trnum { font-size: 17px; min-width: 56px; }
 .fb-morales.big .fb-mor-bar { height: 10px; }
 .fb-lanes { display: flex; flex-direction: column; gap: 7px; margin: 8px 0; }
-.fb-lane { border-radius: 9px; padding: 6px 8px; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12); }
+/* 战线框：将魂技能钮分列框线左右两侧，中间是战线本体（战线名→士气→姓名→兵力条，自上而下更紧凑） */
+.fb-lane { display: flex; align-items: center; gap: 5px; border-radius: 9px; padding: 5px; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12); }
 .fb-lane.pickable { cursor: pointer; border-color: var(--cn-gold); box-shadow: 0 0 8px rgba(244,196,48,.35); }
 .fb-lane.done { opacity: .65; }
-/* 战线头行：我士气 | 线名居中 | 敌士气；字号加大便于总攻中辨读 */
-.fb-lane-top2 { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px; }
-.fb-lane-lbl { font-size: 16px; font-weight: 900; letter-spacing: 1px; text-align: center; flex: 1; }
-.fb-lmor { font-size: 14px; font-weight: 900; flex: none; }
+.fb-lane-body { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px; }
+.fb-lane-lbl { font-size: 15px; font-weight: 900; letter-spacing: 1px; text-align: center; }
+/* 士气行夹在战线名与姓名行之间 */
+.fb-lane-top2 { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.fb-lmor { font-size: 12px; font-weight: 900; flex: none; }
 .fb-lmor.my { color: #f0c9a0; }
 .fb-lmor.foe { color: #aeb9e8; }
-.fb-lane-gs { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; margin-top: 3px; }
+/* 姓名行移到兵力色条上方 */
+.fb-lane-gs { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; }
 .fb-lane-my { color: #f0c9a0; }
 .fb-lane-foe { color: #aeb9e8; text-align: right; }
-/* 将魂主动技能钮：战线两端各一枚，冷却环随刻推进，冷却完毕自动发动并短暂闪光 */
-.fb-lane-skl { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; height: 26px; }
-.fb-skillbtn, .fb-skillbtn-slot { width: 24px; height: 24px; flex: none; }
+/* 将魂主动技能钮：移至战线框线左右两侧，按钮加大并写出技能名；冷却环随刻推进（冷却时长按持有者统帅浮动），冷却完毕自动发动并短暂闪光 */
+.fb-skillbtn, .fb-skillbtn-slot { width: 50px; height: 52px; flex: none; }
 .fb-skillbtn {
-  border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px;
+  border-radius: 11px; padding: 3px; cursor: default; transition: box-shadow .2s;
   background: conic-gradient(var(--cn-gold) calc(360deg * (1 - var(--cdpct, 0))), rgba(0,0,0,.72) 0deg);
-  border: 1px solid rgba(212,175,55,.6); cursor: default; transition: box-shadow .2s;
 }
-.fb-skillbtn.foe { background: conic-gradient(#8797d8 calc(360deg * (1 - var(--cdpct, 0))), rgba(0,0,0,.72) 0deg); border-color: rgba(135,151,216,.6); }
+.fb-skillbtn.foe { background: conic-gradient(#8797d8 calc(360deg * (1 - var(--cdpct, 0))), rgba(0,0,0,.72) 0deg); }
+.fb-skillbtn .face {
+  width: 100%; height: 100%; border-radius: 8px; background: rgba(8,6,4,.88);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  border: 1px solid rgba(212,175,55,.5);
+}
+.fb-skillbtn.foe .face { border-color: rgba(135,151,216,.5); }
+.fb-skillbtn .ic { font-size: 17px; line-height: 1; }
+.fb-skillbtn .nm { font-size: 9px; font-weight: 700; line-height: 1.1; color: #f0dcae; text-align: center; word-break: break-all; padding: 0 2px; }
+.fb-skillbtn.foe .nm { color: #cfd8f5; }
 .fb-skillbtn.fire { animation: fbSkillFire .7s ease-out; }
 @keyframes fbSkillFire {
   0% { box-shadow: 0 0 0 0 rgba(244,196,48,.9); transform: scale(1); }
-  35% { box-shadow: 0 0 10px 4px rgba(244,196,48,.85); transform: scale(1.35); }
+  35% { box-shadow: 0 0 10px 4px rgba(244,196,48,.85); transform: scale(1.06); }
   100% { box-shadow: 0 0 0 0 rgba(244,196,48,0); transform: scale(1); }
 }
 .fb-broke { font-weight: 900; font-size: 13px; margin-left: 4px; }
