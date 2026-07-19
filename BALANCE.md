@@ -774,3 +774,22 @@ mitigation = 1 − min(0.55, 守.智/360)         （守方智力减伤）
 **② 调速与暂停合一钮**：移除 `index.html` 中音乐钮左侧的独立 `#fb-speed` 按钮及其绑定逻辑 `bindSpeedBtn()`，改由总攻页军令台内新增的 `#fb-ord-ctrl` 钮统一承担——按钮文案随 `FieldBattle.assaultCtrlLabel()` 在「攻击→×1→×2→×4→暂停→×1→…」间循环（首次显示「攻击」时全局处于暂停态，金色高亮吸引点击；其后循环不再出现「攻击」字样，暂停态显示「暂停」）。联动改造：`startClash()` 进入总攻页时不再立即开打，而是 `this.paused = true; this.everStarted = false`——斗将结束后总攻页面依旧无需中间确认页即可直接呈现（沿用第二十五轮设定），但节奏本身先按兵不动，玩家需亲自点击【攻击】钮下达总攻令，钮上同时兼管调速与暂停，逻辑集中在新增的 `assaultCtrlClick()` 中。
 
 **验证**：test24 扩至 62 项全过——新增/更新断言：确认音乐钮左侧 `#fb-speed` 已彻底移除；总攻页进入后默认暂停、兵力保持不变，点击【攻击】后转为「×1」态且开始推进；技能钮堆叠改水平放置断言（`flexDirection:row`）及字体放大断言（图标>12px、技能名>7px）；调速与暂停合一钮循环断言（连点两次验证 ×1→×2→×4，再点一次验证进入「暂停」态且兵力冻结，最后一点验证回落「×1」并恢复厮杀）。中途排查一处假失败：「雁行阵乱箭蚀敌」断言在合一钮改造后一度不稳——因新设计里「暂停→×1」的循环会把倍速重置回 ×1（而非像旧版暂停钮那样保留暂停前的倍速），若不额外把倍速调回 ×4 就直接进入雁行观测窗口，×1 节奏下 10s 内实际推进的刻数不足以让确定性衰减稳定压过随机噪声；修正为暂停/继续测试后显式再点两次合一钮调回 ×4、观测前静置 500ms 避开调速瞬间、观测窗口进一步拉长到 15s，重跑三次均稳定通过——诊断为测试脚本自身未适配新合一钮的倍速重置语义，非游戏逻辑缺陷（用独立的 goosecheck 脚本单独验证过雁行乱箭在 ×4 下的衰减曲线本身完全正常，18s 内从 50.0 降到 41.2）。回归 test21 22 项、test22 14 项、test23 10 项全过。
+
+## 四十一、总攻合一钮加宽改名「开始总攻」+ 全局隐藏滚动条防布局抖动 + 边境战事改走野战演武（第三十九轮）
+
+按用户三点反馈实施：①总攻合一钮宽度不够、初始文案「攻击」改为「开始总攻」；②野战总攻界面运行一段时间后页面宽度会变窄，需排查修复；③把角色扮演·天下地图的「边境战事」由组队大战（TeamBattle）engine 换成野战演武（FieldBattle），相应调整关联要素。
+
+**① 合一钮加宽改名**：`assaultCtrlLabel()` 的初始态文案由 `"攻击"` 改为 `"开始总攻"`；CSS 新增 `.fb-ord.ctrl { min-width: 96px; padding: 7px 14px; }`（其余 `.fb-ord` 钮维持原宽度不变），钮体明显加大不再显局促。
+
+**② 布局宽度抖动排查**：用 Playwright 在战斗过程中逐帧量测 `document.documentElement.clientWidth`/`#screen-field .topbar` 宽度，未在本沙盒的无头 Chromium 下直接复现出数值抖动（全程稳定 390px，`.fb-log` 战报面板本身已有 `max-height:150px` 内部滚动、不会撑高外层 `.screen` 高度）。但经典（非悬浮）滚动条在内容首次超出可视高度、产生纵向滚动条时会临时占用一段宽度（内容变化、滚动条隐现之间即会被感知为"变窄/变宽"），这是浏览器环境相关的已知布局抖动成因，在本沙盒的无头环境恰好不复现（大概率使用悬浮式滚动条），但用户的实机环境很可能命中经典滚动条路径。修复：全局新增 `* { scrollbar-width: none; -ms-overflow-style: none; } *::-webkit-scrollbar { width: 0; height: 0; display: none; }`，彻底隐藏原生滚动条本体（触摸/滚轮滑动功能不受影响），从根源上让滚动条不再占用任何宽度、不再有出现/消失的宽度抖动，这一改动是防御性且零副作用的（游戏本身在其余所有可滚动区域也从未依赖可见滚动条样式），改动后全部回归套件（含大量弹窗/长列表的 test21~24）均无异常，滚动功能本身照常可用。
+
+**③ 边境战事改走野战演武**：`FieldBattle` 新增 `beginExternal(myRoster, foeRoster, heroSide, opts)` 入口（`opts.rpg`/`opts.observe`/`opts.onDone`），与原有 `setup(side)`（标准小游戏入口，从图鉴随机抽点）共用重构出的 `_setupCommon()`；`RPG.resolveBorderWar()` 里原先的 `TeamBattle.begin(myRoster, heroSide, {exact:true, enemies:foeRoster, ...})` 直接替换为 `FieldBattle.beginExternal(myRoster, foeRoster, heroSide, {...})`，`myRoster`/`foeRoster`（含城墙/守将统计加成、主角强制编入等既有逻辑）原样复用、不做改动。
+  - **主角亲历**（`heroIn=true`）：与自由试玩的野战演武体验完全一致——排兵布阵可选阵形、阵前斗将三阵各遣一将（可亲自操控或自动接战）、挥军破阵需点【开始总攻】才开打，边境战事从原本"只有组队大战一种打法"升级为拥有阵形相克、地形、军令等完整策略维度。
+  - **主角未上阵**（`observe:true`）：新增全自动推演模式——`_setupCommon()` 检测到 `external.auto` 时跳过排兵布阵画面直接进入斗将流程，`renderDuel()` 自动抽点候选（无候选则视同避战）并强制 `spectate:true`，`startClash()` 自动点火且倍速直接拉到 ×4，`finishExternal()` 检测到 `auto` 时跳过追亡逐北二次确认直接结算，全程无需玩家任何点击。
+  - **结果回调兼容**：`finishExternal(won, reason)` 把野战自身状态折算为 `{ playerWon, mySurvivors, kills }`（与组队大战原有结果对象同形），`resolveBorderWar` 的 `onDone` 回调、经验/金币/夺城结算逻辑完全不必改动。
+  - **历战成长联动**：组队大战 `TeamBattle.finish()` 里挂钩的"历战成长"（真实参战武将胜负各有小概率六维精进）随边境战事迁移到野战引擎后不会自动跟着触发，为避免功能倒退，在 `finishExternal()` 内补一份等价逻辑——对 `this.mine`/`this.foes` 中的真实武将（主角除外）分别按各自胜负调用 `Growth.battle(gm, g, won/!won)`。
+  - **返回键路由**：`FieldBattle` 新增 `this.rpg` 标记（`beginExternal` 时置真，`setup` 小游戏入口置假），`handleBackAction()` 里野战演武分支据此选择回天下地图（`goHome()`）还是回首页（`showScreen("home")`），与 War/TeamBattle/Conquest/Tournament 等既有角色扮演子玩法的返回路由约定一致。
+  - **多人数容错**：`_setupCommon()` 内的 `deploy()` 由固定拆两两一组改为 `[sorted[i*2], sorted[i*2+1]].filter(Boolean)`，容许外部战场人数不足 10（边境两侧现身武将较少时）也能正常拆入五线、不产生 `undefined` 占位。
+  - **联调发现并顺手修复的既有缺陷**：`FieldBattle` 此前只导出了 `Skill`（`window.Skill = Skill`）却未导出自身，导致任何外部脚本（包括本轮新增的自动化测试）都无法以 `FieldBattle.xxx` 读取战场状态——`window.FieldBattle` 从未被赋值，`window.FieldBattle`/裸标识符 `FieldBattle` 在页面外层脚本里均为 `ReferenceError`（此前误以为"裸标识符可行、只是不便"，实测校验后确认其实完全不可达）。已比照 `Skill` 的写法补上 `window.FieldBattle = FieldBattle;` 导出。
+
+**验证**：test21 新增/重写「边境战 A（亲历）」「边境战 B（观战）」两个子场景共 6 项断言，覆盖弹窗文案改为"野战演武"、主角强制编入我方阵容、走完三阵斗将进入挥军破阵、点【开始总攻】后加速推进直到边境战报、观战模式全自动推演（无任何手动确认）且不卡死、城池按胜负易主；21 项全过。调试过程中先后修正两处测试脚本自身问题（均非产品缺陷）：一是最初误以为 `FieldBattle` 裸标识符可从 `page.evaluate()` 访问，实测才发现从未导出，遂直接在产品代码里补上 `window.FieldBattle` 导出（见上）；二是"观战"分支最初断言点击开战后应立即出现 `#screen-field.active`，但全自动推演一开场就直接跳进第一场斗将子画面 `#screen-battle`（不一定先落在 `#screen-field`），改为两个画面出现其一即视为进场、另加 `FieldBattle.external.auto` 状态断言替代原先依赖 DOM 时序的判断，问题消失。回归 test22 14 项、test23 10 项、test24 62 项全过，未改动共用单挑/组队大战引擎其余调用方的行为。

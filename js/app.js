@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607200549";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607200654";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -151,8 +151,13 @@
       if (RPG.char && Campaign.meta && Campaign.meta.active) { MapUI.open(); return; }
       showScreen("home"); return;
     }
-    // 野战演武（纯小游戏）：退出即中止整场野战并回首页
-    if ($("#screen-field").classList.contains("active")) { FieldBattle.abort(); showScreen("home"); return; }
+    // 野战演武：从小游戏自由试玩进入时退出中止整场回首页；从边境战事等角色扮演流程发起时（rpg 标记为真）回到天下地图
+    if ($("#screen-field").classList.contains("active")) {
+      const rpg = FieldBattle.rpg;
+      FieldBattle.abort();
+      if (rpg) goHome(); else showScreen("home");
+      return;
+    }
     // 阵营大战/组队大战/国战/世界杯：从「小游戏」自由试玩进入时退出回首页；
     // 从角色扮演/天下地图城池特色设施发起时（各自 rpg/rpgMode 标记为真）应回到发起它的那一层
     const rpgSubGames = [["war", () => War.rpg], ["teamwar", () => TeamBattle.rpg], ["conquest", () => Conquest.rpg], ["cup", () => Tournament.rpgMode]];
@@ -1735,7 +1740,7 @@
       this.gen++;
       const myGen = this.gen;
       this.playerSide = side;
-      this.delegated = !!opts.observe;   // observe：主角未上场的纯观战——「己方」全程由 AI 代打（边境战主角未被抽中时）
+      this.delegated = !!opts.observe;   // observe：主角未上场的纯观战——「己方」全程由 AI 代打
       this.picking = null;
       this.activeUnit = null;
       this.running = true;
@@ -2050,7 +2055,8 @@
       this.renderBoard();
       const cnAlive = this.cn.filter(u => u.alive).length, jpAlive = this.jp.filter(u => u.alive).length;
       const playerWon = this.playerSide === "cn" ? cnAlive > 0 : jpAlive > 0;
-      // 历战成长：战役内的组队大战（含边境战/遭遇战），参战真实武将胜负各有小概率精进
+      // 历战成长：战役内的组队大战（如遭遇战、武将大会等；边境战事第三十九轮起改走野战演武，
+      // 其历战成长见 FieldBattle.finishExternal），参战真实武将胜负各有小概率精进
       if (this.rpg && typeof Campaign !== "undefined") {
         const gm = Campaign.mapState();
         if (gm) {
@@ -2247,15 +2253,34 @@
       this.gen++;
       clearInterval(this.timer); this.timer = null;
       this.side = side;
-      this.phase = "deploy";
+      this.rpg = false; this.external = null;
       const foeSide = side === "cn" ? "jp" : "cn";
       const draft = s => { const p = DB.bySide(s).slice(); shuffle(p); return p.slice(0, 10).map(clone); };
       this.mine = draft(side); this.foes = draft(foeSide);
-      // 初始自动排阵：按（武力+统帅）从强到弱依次填 前锋→左翼→右翼→中军→后备，可手动对调
+      this._setupCommon();
+    },
+    // 供角色扮演·边境战事调用：以外部已构建好的双方阵容（含城墙/守将等加成）开局，不再从图鉴随机抽点；
+    // opts.observe 为真（主角未被抽中亲历）时全程自动推演，无需任何点击；战罢通过 opts.onDone 回调
+    // 组队大战兼容的结果对象（playerWon/mySurvivors/kills），交由调用方沿用既有的经验/金币/夺城结算
+    beginExternal(myRoster, foeRoster, heroSide, opts = {}) {
+      this.gen++;
+      clearInterval(this.timer); this.timer = null;
+      this.side = heroSide;
+      this.rpg = !!opts.rpg;
+      this.external = { auto: !!opts.observe, onDone: opts.onDone };
+      this.mine = myRoster.slice(0, 10);
+      this.foes = foeRoster.slice(0, 10);
+      this._setupCommon();
+    },
+    // 双方开局共用步骤：this.mine/this.foes 须已就位（随机抽点或外部指定皆可）
+    _setupCommon() {
+      this.phase = "deploy";
+      // 初始自动排阵：按（武力+统帅）从强到弱依次填 前锋→左翼→右翼→中军→后备，可手动对调；
+      // filter(Boolean) 容许外部战场人数不足 10（如边境战一方现身武将较少）时某些战线只分到 0~1 员
       const deploy = arr => {
         const sorted = arr.slice().sort((a, b) => (b.wu + b.tong) - (a.wu + a.tong));
         const pos = {};
-        this.POSITIONS.forEach(([k], i) => { pos[k] = [sorted[i * 2], sorted[i * 2 + 1]]; });
+        this.POSITIONS.forEach(([k], i) => { pos[k] = [sorted[i * 2], sorted[i * 2 + 1]].filter(Boolean); });
         return pos;
       };
       this.myPos = deploy(this.mine); this.foePos = deploy(this.foes);
@@ -2280,13 +2305,15 @@
       this.swapSel = null;
       showScreen("field");
       this.applyTickMs();
-      this.renderDeploy();
+      // 全自动推演（边境战主角未被抽中亲历）：跳过排兵布阵画面/点将出阵等一切手动确认，直接进入斗将流程
+      if (this.external && this.external.auto) this.renderDuel();
+      else this.renderDeploy();
     },
     // 冷却环的 transition-duration 与实际刻间隔同步，使调速时动画节奏保持连续跟手（见 --fbtickms）
     applyTickMs() { document.documentElement.style.setProperty("--fbtickms", Math.round(1100 / (this.speed || 1)) + "ms"); },
     // 总攻控制钮的当前文案：攻击（一次性初始态，此时全局暂停）→ ×1 → ×2 → ×4 → 暂停 → ×1 → …（循环）
     assaultCtrlLabel() {
-      if (!this.everStarted) return "攻击";
+      if (!this.everStarted) return "开始总攻";
       return this.paused ? "暂停" : `×${this.speed}`;
     },
     // 总攻调速+暂停合一钮：去除原音乐钮左侧的独立倍速按钮，改与暂停功能合并为单钮循环
@@ -2426,7 +2453,7 @@
           <div class="fb-slot fb-slot-${k}"><span class="fb-pos-lbl">${n}</span>
             ${this.myPos[k].map((g, i) => this.chip(g, k, i, this.swapSel && this.swapSel.pos === k && this.swapSel.idx === i)).join("")}
           </div>`).join("")}</div>
-        <div class="fb-sect">敌将共 10 员，为首者 ${this.foes.slice().sort((a, b) => b.wu - a.wu)[0].name}</div>
+        <div class="fb-sect">敌将共 ${this.foes.length} 员，为首者 ${this.foes.slice().sort((a, b) => b.wu - a.wu)[0].name}</div>
         <div class="cup-start-btns" style="margin-top:10px"><button class="cup-go primary" id="fb-go">🥁 擂鼓 · 两军对圆</button></div>`;
       $$(".fb-form").forEach(b => b.onclick = () => { this.myForm = b.dataset.form; this.renderDeploy(); });
       const scout = $("#fb-scout");
@@ -2459,6 +2486,18 @@
       const foe = this.challenger();
       if (!foe || this.duelRound >= 3) { this.startClash(); return; }
       this.usedFoeDuelists.add(foe.id);   // 已搦战出阵者，此局不得再战
+      // 全自动推演：不弹点将名单，直接从可用武将中抽一员应战（无人可遣则视同避战）
+      if (this.external && this.external.auto) {
+        const cands = this.mine.filter(g => this.alive(g) && !this.usedDuelists.has(g.id));
+        if (!cands.length) {
+          this.myMorale = Math.max(5, this.myMorale - (this.terrain === "river" ? 6 : 4));
+          this.duelRound++;
+          this.renderDuel();
+          return;
+        }
+        this.runDuel(cands[randInt(0, cands.length - 1)], foe);
+        return;
+      }
       $("#fb-content").innerHTML = `
         <div class="fb-banner">⚔️ 阵前斗将 · 第 ${this.duelRound + 1}/3 阵${this.moraleBarHtml()}</div>
         <div class="fb-duel-card ${foe.side}">
@@ -2503,7 +2542,7 @@
       this.usedDuelists.add(mineG.id);
       const res = await startTeamDuel(clone(mineG), clone(foe), {
         title: "阵前斗将", backScreen: "field",
-        spectate: !this.controllable(mineG),
+        spectate: (this.external && this.external.auto) || !this.controllable(mineG),
         intro: `两军阵前，${mineG.name} 迎战 ${foe.name}——三军瞩目，胜负关乎全军士气！`,
       });
       if (this.gen !== myGen) return;
@@ -2558,6 +2597,8 @@
       this.renderClash();
       // 敌我同享阵形加成——开战时把双方阵形效果都摆到明面上
       this.log(`🥁 战鼓雷动，五线接敌！我军${this.FORMS[this.myForm].n}阵（${this.FORMS[this.myForm].desc}） 对 敌军${this.FORMS[this.foeForm].n}阵（${this.FORMS[this.foeForm].desc}）${this.beats(this.myForm, this.foeForm) ? "——我阵克敌，全线攻 +12%！" : this.beats(this.foeForm, this.myForm) ? "——敌阵克我（敌攻 +12%），小心！" : ""}`);
+      // 全自动推演：无需玩家点【攻击】，径直以最高倍速开打
+      if (this.external && this.external.auto) { this.everStarted = true; this.paused = false; this.speed = 4; this.applyTickMs(); }
       const myGen = this.gen;
       // 基准刻 1100ms 留出下令余裕；tick() 内 this.paused 为真时直接跳过，故此刻虽已建好定时器但按兵不动，等玩家点【攻击】钮
       this.timer = setInterval(() => this.tick(myGen), Math.round(1100 / (this.speed || 1)));
@@ -2918,6 +2959,7 @@
     finish(won, reason) {
       clearInterval(this.timer); this.timer = null;
       this.phase = "done";
+      if (this.external) { this.finishExternal(won, reason); return; }
       if (!won) { this.showResult(false, reason, ""); return; }
       openOverlay(`<div class="result-card">
         <h1>🏇 追亡逐北</h1>
@@ -2940,6 +2982,41 @@
       };
       $("#fb-stop").onclick = () => { closeOverlay(); this.showResult(true, reason, "🎺 鸣金收兵，稳稳吃下这场大胜。"); };
     },
+    // 外部战场（如边境战事）终局：不展示野战自身的战果卡，折算为调用方约定的结果对象后回调；
+    // 全自动推演（敌我皆非玩家亲历）直接结算，无需追亡逐北的二次确认；亲历时胜局仍可选择穷追
+    finishExternal(won, reason) {
+      // 历战成长：与组队大战一致，双方真实参战武将（主角除外）按各自胜负各有小概率六维精进
+      if (typeof Campaign !== "undefined") {
+        const gm = Campaign.mapState();
+        if (gm) {
+          let grew = 0;
+          this.mine.forEach(g => { if (g.id != null && g.id >= 0 && Growth.battle(gm, g, won)) grew++; });
+          this.foes.forEach(g => { if (g.id != null && g.id >= 0 && Growth.battle(gm, g, !won)) grew++; });
+          if (grew) this.log(`📈 历战磨砺：${grew} 位武将六维有所精进`);
+        }
+      }
+      const done = () => {
+        const res = { playerWon: won, mySurvivors: this.mine.filter(g => this.alive(g)), kills: this.stats.foeFall };
+        const onDone = this.external.onDone;
+        this.external = null;
+        if (onDone) onDone(res);
+      };
+      if (!won || this.external.auto) { done(); return; }
+      openOverlay(`<div class="result-card">
+        <h1>🏇 追亡逐北</h1>
+        <div class="wdesc">${reason}——敌军全线溃退！穷追可扩大战果，但若敌后备未乱，恐有埋伏。</div>
+        <div class="btns">
+          <button class="btn-primary" id="fb-chase">穷追猛打</button>
+          <button class="btn-ghost" id="fb-stop">见好就收</button>
+        </div></div>`, { modal: true });
+      $("#fb-chase").onclick = () => {
+        closeOverlay();
+        if (Math.random() < 0.6) this.stats.foeFall += randInt(2, 4);
+        else this.stats.myFall += randInt(1, 2);
+        done();
+      };
+      $("#fb-stop").onclick = () => { closeOverlay(); done(); };
+    },
     showResult(won, reason, chaseTxt) {
       openOverlay(`<div class="result-card">
         <h1>${won ? "🏆 野战大捷" : "💀 兵败如山"}</h1>
@@ -2956,6 +3033,7 @@
       $("#fb-home").onclick = () => { closeOverlay(); this.abort(); showScreen("home"); };
     },
   };
+  window.FieldBattle = FieldBattle;   // 导出到 window，便于自动化测试等外部脚本直接读取战场状态
 
   /* ============================================================
    *  国战 · 攻城略地
@@ -7387,7 +7465,7 @@
       return count;
     },
     // 月末边境大战：owner 不同的相邻城池间，每月最多只爆发一场（随机挑一条边），
-    // 双方各出「已现身武将」中随机等量人马（不限本地武将，每方至多 10 将），以组队大战（TeamBattle）开打；
+    // 双方各出「已现身武将」中随机等量人马（不限本地武将，每方至多 10 将），以野战演武（FieldBattle）开打；
     // 胜方夺取败方该城；返回 true 表示已接管本次宿营流程
     checkBorderWar(m) {
       const edges = borderEdges(m).filter(([a, b]) => {
@@ -7404,7 +7482,7 @@
       const sideA = cityOwnerSide(m, a), sideB = cityOwnerSide(m, b);
       openOverlay(`<div class="result-card detail-card">
         <h1>⚔️ 边境战事</h1>
-        <div class="wdesc">边境爆发冲突：<b>${cityName(a)}（${sideName(sideA)}）</b> vs <b>${cityName(b)}（${sideName(sideB)}）</b>，两军以组队大战方式厮杀，胜方夺取败方城池。</div>
+        <div class="wdesc">边境爆发冲突：<b>${cityName(a)}（${sideName(sideA)}）</b> vs <b>${cityName(b)}（${sideName(sideB)}）</b>，两军以野战演武方式厮杀，胜方夺取败方城池。</div>
         <div class="btns"><button class="btn-primary" id="bw-go">开战</button></div>
       </div>`, { modal: true });
       $("#bw-go").onclick = () => { closeOverlay(); this.resolveBorderWar(m, edge); };
@@ -7441,8 +7519,8 @@
     },
     // 是否亲历此战不再询问，而由主角当前所在城池自动判定：站在交战两城之一（且归属己方）即视为亲历，
     // 队伍随之强制上阵；不在场则与其余已现身武将一视同仁，混入候选池随机抽点才会上场。
-    // 战斗一律以组队大战（TeamBattle）演出：主角上阵（亲历或被抽中）即为可亲自指挥的组队大战，
-    // 未上阵则以 observe 观战模式全程 AI 自动演示，不再静默瞬间出结果。
+    // 战斗一律以野战演武（FieldBattle）演出：主角上阵（亲历或被抽中）即为可亲自指挥的排兵布阵/阵前斗将/挥军破阵全流程，
+    // 未上阵则全自动推演（无需任何点击，最高倍速跑完），不再静默瞬间出结果。
     resolveBorderWar(m, edge) {
       const [a, b] = edge;
       const sideA = cityOwnerSide(m, a), sideB = cityOwnerSide(m, b);
@@ -7477,7 +7555,7 @@
         heroPool.push(heroFighter);
         shuffle(heroPool);
       }
-      const count = Math.min(poolA.length, poolB.length, 10);   // 组队大战每方至多 10 将
+      const count = Math.min(poolA.length, poolB.length, 10);   // 野战演武每方最多五线十将
       // 城墙守备：本城一方全员六维 +2×城墙等级（攻守对称——敌占城市的城墙同样为敌所用）；主角自身战力已由 heroGeneral() 精算好，不叠加
       const wallA = Buildings.lv(m, a, "wall") * 2, wallB = Buildings.lv(m, b, "wall") * 2;
       const statBuff = (g, plus) => {
@@ -7493,11 +7571,9 @@
       const foeRoster = heroSide === sideA ? rosterB : rosterA;
       const heroIn = myRoster.some(g => g.id === -1);
 
-      TeamBattle.begin(myRoster, heroSide, {
-        exact: true,
-        enemies: foeRoster,
-        rpg: true,            // 返回键归属战役层（回天下地图而非首页）
-        observe: !heroIn,     // 主角未被抽中：己方全程 AI 代打，纯观战
+      FieldBattle.beginExternal(myRoster, foeRoster, heroSide, {
+        rpg: true,             // 返回键归属战役层（回天下地图而非首页）
+        observe: !heroIn,      // 主角未被抽中：全自动推演，无需任何点击
         onDone: (res) => {
           const winnerSide = res.playerWon ? heroSide : (heroSide === "cn" ? "jp" : "cn");
           const capturedCity = this.applyBorderWarOutcome(m, edge, winnerSide);

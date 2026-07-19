@@ -16,6 +16,12 @@
   --hp-low: #e53935;
 }
 
+/* 全局隐藏原生滚动条（触摸/滚轮滑动仍可用）——经典（非悬浮）滚动条会在内容增高时临时占据一段宽度、
+   内容变化后又释放，被感知为"页面变窄/变宽"的布局抖动（如野战总攻战报随战斗推进增多时）；隐藏后滚动条
+   不再挤占任何宽度，从根源避免该抖动 */
+* { scrollbar-width: none; -ms-overflow-style: none; }
+*::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body {
   margin: 0; padding: 0; height: 100%;
@@ -1269,7 +1275,8 @@ html, body {
   color: var(--paper); font-family: inherit; font-size: 13px; font-weight: 700; padding: 7px 10px; cursor: pointer; letter-spacing: 1px;
 }
 .fb-ord:disabled { opacity: .35; cursor: default; }
-/* 调速+暂停合一钮：未点「攻击」前以金色高亮吸引首击；进入 ×1/×2/×4/暂停循环后转为普通样式 */
+/* 调速+暂停合一钮：宽度比其余军令钮更大，未点「开始总攻」前以金色高亮吸引首击；进入 ×1/×2/×4/暂停循环后转为普通样式 */
+.fb-ord.ctrl { min-width: 96px; padding: 7px 14px; }
 .fb-ord.ctrl.primary { background: var(--cn-gold); color: #241a08; border-color: var(--cn-gold); }
 .fb-log {
   margin-top: 8px; max-height: 150px; overflow-y: auto; font-size: 12px; line-height: 1.55;
