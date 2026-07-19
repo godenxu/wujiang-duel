@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607200423";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607200549";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -2275,32 +2275,40 @@
       this.usedDuelists = new Set();   // 斗将三阵须各遣一将，胜者亦不得再出
       this.usedFoeDuelists = new Set();   // 敌方出阵搦战的武将同样不得重复出战
       this.lanes = null; this.orderMode = null; this.tickN = 0; this.logLines = [];
-      this.assault = false; this.paused = false;
+      this.assault = false; this.paused = false; this.everStarted = false; this.speed = 1;
       this.stats = { myFall: 0, foeFall: 0, myBreach: 0, foeBreach: 0 };
       this.swapSel = null;
       showScreen("field");
-      this.bindSpeedBtn();
+      this.applyTickMs();
       this.renderDeploy();
     },
     // 冷却环的 transition-duration 与实际刻间隔同步，使调速时动画节奏保持连续跟手（见 --fbtickms）
     applyTickMs() { document.documentElement.style.setProperty("--fbtickms", Math.round(1100 / (this.speed || 1)) + "ms"); },
-    // 总攻调速：×1/×2/×4 循环，与单挑调速钮同位（右上角音乐钮左侧）
-    bindSpeedBtn() {
-      this.speed = this.speed || 1;
+    // 总攻控制钮的当前文案：攻击（一次性初始态，此时全局暂停）→ ×1 → ×2 → ×4 → 暂停 → ×1 → …（循环）
+    assaultCtrlLabel() {
+      if (!this.everStarted) return "攻击";
+      return this.paused ? "暂停" : `×${this.speed}`;
+    },
+    // 总攻调速+暂停合一钮：去除原音乐钮左侧的独立倍速按钮，改与暂停功能合并为单钮循环
+    assaultCtrlClick() {
+      const wasStarted = this.everStarted;
+      if (!wasStarted || this.paused) {
+        this.everStarted = true; this.paused = false; this.speed = 1;
+        this.log(wasStarted ? "▶ 军令再起，厮杀继续！" : "⚔️ 传令攻击！全军压上，两军对圆！");
+      } else if (this.speed < 4) {
+        this.speed *= 2;
+      } else {
+        this.paused = true;
+        this.log("⏸ 传令暂歇——两军罢手对峙，从容运筹");
+      }
       this.applyTickMs();
-      const b = $("#fb-speed");
-      if (!b) return;
-      b.textContent = `×${this.speed}`;
-      b.onclick = () => {
-        this.speed = this.speed >= 4 ? 1 : this.speed * 2;
-        b.textContent = `×${this.speed}`;
-        this.applyTickMs();
-        if (this.assault && this.phase === "clash" && this.timer) {
-          clearInterval(this.timer);
-          const myGen = this.gen;
-          this.timer = setInterval(() => this.tick(myGen), Math.round(1100 / this.speed));
-        }
-      };
+      if (this.assault && this.phase === "clash" && this.timer) {
+        clearInterval(this.timer);
+        const myGen = this.gen;
+        this.timer = setInterval(() => this.tick(myGen), Math.round(1100 / (this.speed || 1)));
+      }
+      const b = $("#fb-ord-ctrl");
+      if (b) b.textContent = this.assaultCtrlLabel();
     },
     abort() { this.gen++; clearInterval(this.timer); this.timer = null; this.phase = null; },
     alive(g) { return !this.dead.has(g.id); },
@@ -2530,7 +2538,9 @@
     startClash() {
       this.phase = "clash";
       this.tickN = 0;
-      this.assault = true; this.paused = false;   // 斗将既毕即刻总攻，不再有中间确认页
+      // 斗将既毕即刻进入总攻页面（不再有中间确认页），但节奏本身先按下暂停——
+      // 待玩家点【攻击】钮亲自下令方才开打，钮上同时兼管调速（攻击→×1→×2→×4→暂停→循环）
+      this.assault = true; this.paused = true; this.everStarted = false;
       this.lanes = {};
       // 各线兵力 = 该线两将统帅×100；各线士气开局取全军总士气，此后独立涨落；
       // 战线只在该线兵力耗尽（或全军士气崩溃）时才告破
@@ -2549,7 +2559,7 @@
       // 敌我同享阵形加成——开战时把双方阵形效果都摆到明面上
       this.log(`🥁 战鼓雷动，五线接敌！我军${this.FORMS[this.myForm].n}阵（${this.FORMS[this.myForm].desc}） 对 敌军${this.FORMS[this.foeForm].n}阵（${this.FORMS[this.foeForm].desc}）${this.beats(this.myForm, this.foeForm) ? "——我阵克敌，全线攻 +12%！" : this.beats(this.foeForm, this.myForm) ? "——敌阵克我（敌攻 +12%），小心！" : ""}`);
       const myGen = this.gen;
-      // 基准刻 1100ms 留出下令余裕；右上角调速钮 ×1/×2/×4 可加速
+      // 基准刻 1100ms 留出下令余裕；tick() 内 this.paused 为真时直接跳过，故此刻虽已建好定时器但按兵不动，等玩家点【攻击】钮
       this.timer = setInterval(() => this.tick(myGen), Math.round(1100 / (this.speed || 1)));
     },
     beats(a, b) { return this.FORMS[a].beats === b; },
@@ -2831,18 +2841,14 @@
           <button class="fb-ord" id="fb-ord-scheme" ${this.orders ? "" : "disabled"} title="成败看战线上敌我智谋之和">🧠 计谋</button>
           <button class="fb-ord" id="fb-ord-fire" ${this.orders && (this.terrain === "pass" || this.armyHas("my", "firemaster")) ? "" : "disabled"} title="仅山道可用（军中有诸葛亮则不限地形）">🔥 火攻</button>
           <button class="fb-ord" id="fb-ord-raid" ${this.orders ? "" : "disabled"}>🐎 奇袭</button>
-          <button class="fb-ord" id="fb-ord-pause">${this.paused ? "▶ 继续" : "⏸ 暂停"}</button>
+          <button class="fb-ord ctrl ${!this.everStarted ? "primary" : ""}" id="fb-ord-ctrl">${this.assaultCtrlLabel()}</button>
         </div>
         <div class="fb-log" id="fb-log">${(this.logLines || []).join("")}</div>`;
       [["drum", "#fb-ord-drum"], ["hold", "#fb-ord-hold"], ["fire", "#fb-ord-fire"], ["scheme", "#fb-ord-scheme"], ["raid", "#fb-ord-raid"]].forEach(([kind, sel]) => {
         const b = $(sel); if (b) b.onclick = () => { if (this.orders <= 0) return; this.orderMode = this.orderMode === kind ? null : kind; this.renderClash(); };
       });
-      const pause = $("#fb-ord-pause");
-      if (pause) pause.onclick = () => {
-        this.paused = !this.paused;
-        pause.textContent = this.paused ? "▶ 继续" : "⏸ 暂停";
-        this.log(this.paused ? "⏸ 传令暂歇——两军罢手对峙，从容运筹" : "▶ 军令再起，厮杀继续！");
-      };
+      const ctrl = $("#fb-ord-ctrl");
+      if (ctrl) ctrl.onclick = () => { this.assaultCtrlClick(); ctrl.classList.toggle("primary", !this.everStarted); };
       $$(".fb-lane", $("#fb-content")).forEach(el => el.onclick = () => {
         if (this.assault && this.orderMode) this.useOrder(this.orderMode, el.dataset.lane);
       });

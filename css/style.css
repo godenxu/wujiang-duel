@@ -1223,8 +1223,8 @@ html, body {
 :root { --fbtickms: 1100ms; }
 /* 将魂主动技能钮：该线该方每员在世武将各占一枚，最多两枚竖直堆叠于战线最左/最右两端；
    冷却环随刻推进（冷却时长按持有者统帅浮动），冷却完毕自动发动并短暂闪光；被动型技能常驻生效，钮面呈灰环徽标 */
-.fb-skillstack { display: flex; flex-direction: column; gap: 3px; flex: none; }
-.fb-skillbtn, .fb-skillbtn-slot { width: 46px; height: 34px; flex: none; }
+.fb-skillstack { display: flex; flex-direction: row; gap: 3px; flex: none; }
+.fb-skillbtn, .fb-skillbtn-slot { width: 44px; height: 42px; flex: none; }
 .fb-skillbtn {
   border-radius: 9px; padding: 2px; cursor: default; transition: box-shadow .2s, --cdpct var(--fbtickms) linear;
   background: conic-gradient(var(--cn-gold) calc(360deg * (1 - var(--cdpct, 0))), rgba(0,0,0,.72) 0deg);
@@ -1238,8 +1238,8 @@ html, body {
 }
 .fb-skillbtn.foe .face { border-color: rgba(135,151,216,.5); }
 .fb-skillbtn.passive .face { border-color: rgba(200,200,200,.4); }
-.fb-skillbtn .ic { font-size: 12px; line-height: 1; }
-.fb-skillbtn .nm { font-size: 7px; font-weight: 700; line-height: 1; color: #f0dcae; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; padding: 0 1px; }
+.fb-skillbtn .ic { font-size: 16px; line-height: 1; }
+.fb-skillbtn .nm { font-size: 9px; font-weight: 700; line-height: 1.05; color: #f0dcae; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; padding: 0 1px; }
 .fb-skillbtn.foe .nm { color: #cfd8f5; }
 .fb-skillbtn.passive .nm { color: #d8d8d8; }
 .fb-skillbtn.fire { animation: fbSkillFire .7s ease-out; }
@@ -1269,6 +1269,8 @@ html, body {
   color: var(--paper); font-family: inherit; font-size: 13px; font-weight: 700; padding: 7px 10px; cursor: pointer; letter-spacing: 1px;
 }
 .fb-ord:disabled { opacity: .35; cursor: default; }
+/* 调速+暂停合一钮：未点「攻击」前以金色高亮吸引首击；进入 ×1/×2/×4/暂停循环后转为普通样式 */
+.fb-ord.ctrl.primary { background: var(--cn-gold); color: #241a08; border-color: var(--cn-gold); }
 .fb-log {
   margin-top: 8px; max-height: 150px; overflow-y: auto; font-size: 12px; line-height: 1.55;
   background: rgba(0,0,0,.25); border-radius: 8px; padding: 7px 9px;
