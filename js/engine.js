@@ -59,8 +59,20 @@ function computeDamage(attacker, defender, atkTactic, defTactic, charged) {
 
   let dmg = (base * 0.32) * counter * mitigation * critMul * luck * atkMul * power;
 
-  // 暴击：由攻方「魅力」决定暴击率（猛攻/普攻/谋攻皆可触发），奇珍「暴击率」宝物额外加成
-  const critChance = Math.min(0.6, a.mei / 280) + (charged ? 0.35 : 0) + (a.critBonus || 0) / 100;
+  // 将魂 · 攻方增伤：斩铁/军神常驻、无双前三回合、白衣渡江首回合、虎痴残血、日本一兵以下克上
+  let skMul = (a.skDmgMul || 1);
+  if (a.skFirst3 && (attacker.turns || 0) <= 3) skMul *= a.skFirst3;
+  if (a.skFirstStrike && (attacker.turns || 0) <= 1) skMul *= a.skFirstStrike;
+  if (a.skRage && attacker.hp < attacker.maxHp * 0.3) skMul *= a.skRage;
+  if (a.skGiant && defender.maxHp > attacker.maxHp) skMul *= a.skGiant;
+  // 将魂 · 守方减伤：铁壁/无伤常驻、风林火山前三回合、隐忍残血
+  let skDef = (d.skDefMul || 1);
+  if (d.skFirst3Def && (defender.turns || 0) <= 3) skDef *= d.skFirst3Def;
+  if (d.skLowDef && defender.hp < defender.maxHp * 0.35) skDef *= d.skLowDef;
+  dmg *= skMul * skDef;
+
+  // 暴击：由攻方「魅力」决定暴击率（猛攻/普攻/谋攻皆可触发），奇珍「暴击率」宝物额外加成，将魂「武圣」再加成
+  const critChance = Math.min(0.6, a.mei / 280) + (charged ? 0.35 : 0) + (a.critBonus || 0) / 100 + (a.skCrit || 0);
   let crit = false;
   if (Math.random() < critChance) { dmg *= 1.7; crit = true; }
 
@@ -72,7 +84,8 @@ function computeDamage(attacker, defender, atkTactic, defTactic, charged) {
 function schemeSuccess(self, foe, scheme) {
   const dz = self.g.zhi - foe.g.zhi;
   const base = { bind: 0.30, weaken: 0.45, heal: 0.62, charge: 0.66, strategy: 0.55 }[scheme] || 0.4;
-  return Math.max(0.12, Math.min(0.94, base + dz / 220));
+  // 将魂：借东风（己方计策 +15%）/ 看破·奸雄（对手计策成功率下降）
+  return Math.max(0.12, Math.min(0.94, base + dz / 220 + (self.g.skSchemeUp || 0) - (foe.g.skDodge || 0)));
 }
 
 // 格挡减伤比例：由「己方统帅」对抗「对方武力」决定（格挡必定成功，效果有强弱）
@@ -162,8 +175,9 @@ function aiChoosePlan(self, foe) {
   return { frees, main: aiChooseTactic(self, foe) };
 }
 
-// 创建一个战斗单位
+// 创建一个战斗单位（若「将魂」技能系统已加载，先在武将对象上盖章单挑侧技能旗标）
 function makeFighter(general) {
+  if (typeof window !== "undefined" && window.Skill && window.Skill.duelApply) window.Skill.duelApply(general);
   return {
     g: general,
     maxHp: general.ti,
@@ -176,7 +190,27 @@ function makeFighter(general) {
     atkMulT: 0,      // 弱化的剩余回合
     stance: "normal",// 最近一次的攻击姿态，作为对手下次攻击的相克对象
     guard: false,    // 格挡：为真时下一次受击大幅减伤
+    turns: 0,        // 已行动回合数（将魂「无双」等首几回合技能用）
+    revived: false,  // 将魂「七进七出」是否已发动
   };
+}
+
+// 将魂 · 开场技：威压/据水断桥（削减对手起始战意）、离间（对手开局被弱化）
+function applyDuelOpeners(p1, p2) {
+  [[p1, p2], [p2, p1]].forEach(([me, foe]) => {
+    if (me.g.skAwe) foe.stam = Math.max(10, foe.stam - me.g.skAwe);
+    if (me.g.skWeakenOpen) { foe.atkMul = Math.min(foe.atkMul || 1, 0.85); foe.atkMulT = Math.max(foe.atkMulT || 0, 2); }
+  });
+}
+
+// 将魂 · 七进七出：倒地瞬间杀出重围（体力回复五成，每场一次）；发动则免于 KO
+function tryRevive(defender, who, events) {
+  if (defender.hp > 0 || !defender.g.skRevive || defender.revived) return false;
+  defender.revived = true;
+  defender.hp = Math.round(defender.maxHp * 0.5);
+  events.push({ who, type: "skill", attacker: defender.g.name,
+    text: `⭐ ${defender.g.name}【七进七出】于乱军之中杀透重围，重整旗鼓再战（体力回复五成）！` });
+  return true;
 }
 
 // 将参数规整为行动计划：{ frees: [束缚/弱化...], main: 主行动 }
@@ -201,6 +235,7 @@ function firstMover(p1, p2) {
 function endTurn(f) {
   f.stam = Math.min(100, f.stam + staminaRegen(f.g));
   if (f.g.regenBonus) f.hp = Math.min(f.maxHp, f.hp + f.g.regenBonus);
+  if (f.g.skRegen) f.hp = Math.min(f.maxHp, f.hp + f.g.skRegen);   // 将魂「回气」
   if (f.atkMulT > 0) { f.atkMulT--; if (f.atkMulT === 0) f.atkMul = 1; }
 }
 
@@ -219,6 +254,7 @@ function resolveTurn(attacker, defender, plan, who) {
     endTurn(attacker);
     return events;
   }
+  attacker.turns = (attacker.turns || 0) + 1;   // 行动回合计数（将魂首几回合技能用）
 
   // 免费计策（束缚/弱化）：同回合两者皆可发动，各限一次；发动后仍可出招
   for (const fk of plan.frees) {
@@ -263,6 +299,7 @@ function resolveTurn(attacker, defender, plan, who) {
         attacker: attacker.g.name, defender: defender.g.name, defHp: defender.hp, defMax: defender.maxHp,
         text: buildHitText(attacker.g.name, defender.g.name, mk, res, wasCharged),
       });
+      tryRevive(defender, who, events);
       if (defender.hp <= 0) {
         events.push({ who, type: "ko", winner: attacker.g.name, loser: defender.g.name,
           text: `💥 ${defender.g.name} 体力归零，被 ${attacker.g.name} 一击 KO！` });
@@ -292,6 +329,20 @@ function resolveTurn(attacker, defender, plan, who) {
       attacker: attacker.g.name, defender: defender.g.name, defHp: defender.hp, defMax: defender.maxHp,
       text,
     });
+    tryRevive(defender, who, events);
+    // 将魂「二天一流/三段击」：概率追加一次半威力连击
+    if (defender.hp > 0 && attacker.g.skDouble && Math.random() < attacker.g.skDouble) {
+      const res2 = computeDamage(attacker, defender, mk, defender.stance || "normal", false);
+      res2.dmg = Math.max(1, Math.round(res2.dmg * 0.5));
+      defender.stam = Math.min(100, defender.stam + Math.round(res2.dmg * HIT_STAM_RATE));
+      defender.hp = Math.max(0, defender.hp - res2.dmg);
+      events.push({
+        who, type: "hit", dmg: res2.dmg, crit: res2.crit, counter: res2.counter, tactic: mk,
+        attacker: attacker.g.name, defender: defender.g.name, defHp: defender.hp, defMax: defender.maxHp,
+        text: `⭐ ${attacker.g.name} 技势不衰，追加连击，再造成 ${res2.dmg} 点伤害！`,
+      });
+      tryRevive(defender, who, events);
+    }
     if (defender.hp <= 0) {
       events.push({ who, type: "ko", winner: attacker.g.name, loser: defender.g.name,
         text: `💥 ${defender.g.name} 体力归零，被 ${attacker.g.name} 一击 KO！` });
@@ -305,7 +356,8 @@ function resolveTurn(attacker, defender, plan, who) {
 function staminaCost(tactic, g) {
   const base = TACTICS[tactic].stam || 0;
   if (base <= 0) return 0;
-  return Math.max(2, Math.round(base * (1 - Math.min(0.34, (g.zheng || 0) / 300))));
+  // 将魂「粮道」：出招战意消耗打八折
+  return Math.max(2, Math.round(base * (1 - Math.min(0.34, (g.zheng || 0) / 300)) * (g.skStamSave || 1)));
 }
 // 「政治」→ 每回合战意恢复，奇珍「气盛」宝物额外加成
 function staminaRegen(g) { return 2 + (g.zheng || 0) / 22 + (g.stamRegenBonus || 0); }
@@ -327,6 +379,7 @@ function buildHitText(atk, def, tactic, res, charged) {
 // 自动模拟整场对决（轮换出招；用于车轮/阵营/世界杯），返回 {winner, loser, rounds, log}
 function autoBattle(g1, g2, maxTurns = 160) {
   const p1 = makeFighter(g1), p2 = makeFighter(g2);
+  applyDuelOpeners(p1, p2);
   const log = [];
   // hpSeq：逐回合记录双方体力 [g1体力, g2体力]，供「体力数字逐次递减」动画使用
   const hpSeq = [[p1.hp, p2.hp]];
@@ -425,7 +478,7 @@ function applyTeamScheme(unit, target, key, ok) {
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    TACTICS, makeFighter, resolveTurn, firstMover, aiChooseTactic, aiChoosePlan, autoBattle, computeDamage, staminaCost, staminaRegen, schemeSuccess, guardBlockFrac, applyScheme,
+    TACTICS, makeFighter, resolveTurn, firstMover, aiChooseTactic, aiChoosePlan, autoBattle, computeDamage, staminaCost, staminaRegen, schemeSuccess, guardBlockFrac, applyScheme, applyDuelOpeners,
     maxTroops, troopQuality, recruitAmount, makeTroopUnit, troopClash, provokeSuccess, TEAM_TACTICS, applyTeamScheme,
   };
 }

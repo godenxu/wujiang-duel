@@ -210,6 +210,12 @@
   - FieldBattle 挂钩：`laneStat` def 侧坚壁/无伤乘区 + 风林火山限时全军乘区；tick 线循环内陷阵/三段击加伤、游击/隐忍减损、感召回士气、辎重补兵、据水断桥蚀敌士气（敌我对称两遍）；`schemeP` 统一计谋成功率（连环 ±15%、奸雄 ×0.5，玩家与敌 AI 同式）；`castOpeners` 开战一次性技（无双/离间/白衣渡江 30% 退场/风林火山宣示，双方各跑一遍）；火攻按钮借东风解锁不限地形+烧敌翻倍；`runDuel` 武圣/军神斩将士气翻倍（我方敌方对称）。
   - UI：布阵 chip、点将名单、敌方搦战卡均显技能标签（`.fb-skl`，门派浅金/名将亮橙 ⭐，title 带说明）；布阵页加一句将魂说明。
   - **验证**：test24 扩至 45 项全过——chip 技能标签 10/10、点将名单技能 10/10、搦战卡带技能断言。回归：test23 10 项、test22 14 项、test21 22 项全过。
+- **将魂二期：单挑侧技能 + 弹窗昭告 + 图鉴接入（第三十三轮）**（已完成，1~3 项来自用户反馈、第 4 项为用户点名开工的二期）：
+  - 「击鼓总攻」确认页移除：`startClash` 直接 `assault=true` 建线开打；开战一次性将魂经 `castOpeners`（改为返回发动清单）汇入 `skillPopup` modal 弹窗，关闭后才起 tick 定时器（`gen` 代际防串场）。
+  - 图鉴 `DBUI.render` 新增技能列（`.dt-skl` + `Skill.tag`），`showDetail` 新增 `.dc-skill` 将魂描述卡（名将橙框）；SCHOOLS/NAMED 描述改为「野战｜单挑」双域格式。
+  - 单挑侧（engine.js）：`makeFighter` 经 `window.Skill.duelApply` 盖 `sk*` 旗标（覆盖式、幂等）；`computeDamage` 攻方乘区（skDmgMul/skFirst3/skFirstStrike/skRage/skGiant）+守方乘区（skDefMul/skFirst3Def/skLowDef）+skCrit；`schemeSuccess` ±（skSchemeUp/skDodge）；`staminaCost` ×skStamSave；`endTurn` skRegen；`resolveTurn` 行动计数 turns、`tryRevive` 七进七出（体力五成、每场一次、strategy/物理/连击三处 KO 前判定）、skDouble 半威力连击；`applyDuelOpeners`（skAwe 削起始战意 / skWeakenOpen 开局弱化）挂 `autoBattle` 与 `enterBattle` 两个入口；app.js 战斗事件循环新增 `type:"skill"` 处理（提示行+音效+刷条）；开场战报列出双方将魂单挑侧效果。
+  - 新增四位双域名将：赵云七进七出/宫本武藏二天一流/许褚虎痴/真田幸村日本一兵（野战侧 rescue/dualblade/tiger/sanada 钩子同步接入 laneStat/tick）。
+  - **验证**：test24 扩至 47 项全过——图鉴技能列（200 行标签）+详情技能卡断言、无 #fb-assault 且军令台直接就位断言、将魂弹窗条件断言（有开战技则点掉再战）；第二局完整单挑走含技能钩子的引擎无异常。回归：test23 10 项、test22 14 项、test21 22 项全过。
 
 ## 〇、改造总目标
 

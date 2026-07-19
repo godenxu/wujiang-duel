@@ -1160,6 +1160,14 @@ html, body {
 .fb-skl { display: inline-block; font-size: 10px; font-weight: 700; color: #d8c27a; opacity: .95; }
 .fb-skl.named { color: #ffa94d; }
 .fb-chip .fb-skl { display: block; }
+.dt-skl .fb-skl { font-size: 11px; white-space: nowrap; }
+/* 武将详情：将魂技能说明卡 */
+.dc-skill {
+  margin: 8px 0; padding: 8px 12px; border-radius: 10px; font-size: 13px; line-height: 1.55; text-align: left;
+  background: rgba(216,194,122,.12); border: 1px solid rgba(216,194,122,.4); color: var(--ink);
+}
+.dc-skill.named { background: rgba(255,169,77,.12); border-color: rgba(255,169,77,.5); }
+.dc-skill small { margin-left: 6px; opacity: .7; }
 .fb-chip.cn { border-left: 3px solid var(--cn-red); }
 .fb-chip.jp { border-left: 3px solid var(--jp-indigo); }
 .fb-chip.sel { border-color: var(--cn-gold); background: rgba(244,196,48,.2); }
