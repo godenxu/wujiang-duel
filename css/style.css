@@ -1183,8 +1183,8 @@ html, body {
 .fb-duel-card.cn .fb-duel-av { background: linear-gradient(135deg, var(--cn-red), #7a1420); }
 .fb-duel-meta { font-size: 14px; line-height: 1.5; }
 .fb-duel-meta small { display: block; font-size: 12px; opacity: .7; }
-.fb-btnrow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.fb-btnrow .cup-go { flex: 1 1 auto; min-width: 100px; }
+.fb-btnrow { display: flex; gap: 8px; margin-top: 10px; }
+.fb-btnrow .cup-go { flex: 1 1 0; min-width: 0; }
 /* 士气条左右分列，如单挑血条般从两端向中央递减 */
 .fb-morales { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-weight: 400; }
 .fb-mor { flex: 1; display: flex; align-items: center; gap: 6px; font-size: 11px; min-width: 0; }
@@ -1200,22 +1200,20 @@ html, body {
 .fb-morales.big .fb-mor b.fb-trnum { font-size: 17px; min-width: 56px; }
 .fb-morales.big .fb-mor-bar { height: 10px; }
 .fb-lanes { display: flex; flex-direction: column; gap: 7px; margin: 8px 0; }
-/* 战线框：将魂技能钮分列框线左右两侧，中间是战线本体（战线名→士气→姓名→兵力条，自上而下更紧凑） */
+/* 战线框：将魂技能钮分列最左/最右，中间战线本体两行——上行姓名+士气+战线名一字排开，下行兵力色条 */
 .fb-lane { display: flex; align-items: center; gap: 5px; border-radius: 9px; padding: 5px; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12); }
 .fb-lane.pickable { cursor: pointer; border-color: var(--cn-gold); box-shadow: 0 0 8px rgba(244,196,48,.35); }
 .fb-lane.done { opacity: .65; }
-.fb-lane-body { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px; }
-.fb-lane-lbl { font-size: 15px; font-weight: 900; letter-spacing: 1px; text-align: center; }
-/* 士气行夹在战线名与姓名行之间 */
-.fb-lane-top2 { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.fb-lane-body { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 3px; }
+/* 上行：己方姓名 · 己方士气 · 战线名 · 敌方士气 · 敌方姓名，一字排开 */
+.fb-lane-row1 { display: flex; align-items: center; gap: 4px; }
+.fb-lane-lbl { flex: none; font-size: 14px; font-weight: 900; letter-spacing: 1px; text-align: center; padding: 0 2px; }
 .fb-lmor { font-size: 12px; font-weight: 900; flex: none; }
 .fb-lmor.my { color: #f0c9a0; }
 .fb-lmor.foe { color: #aeb9e8; }
-/* 姓名行移到兵力色条上方 */
-.fb-lane-gs { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; }
-.fb-lane-my { color: #f0c9a0; }
-.fb-lane-foe { color: #aeb9e8; text-align: right; }
-/* 将魂主动技能钮：移至战线框线左右两侧，按钮加大并写出技能名；冷却环随刻推进（冷却时长按持有者统帅浮动），冷却完毕自动发动并短暂闪光 */
+.fb-lane-my { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: #f0c9a0; }
+.fb-lane-foe { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: #aeb9e8; text-align: right; }
+/* 将魂主动技能钮：分列战线最左/最右两端，按钮加大并写出技能名；冷却环随刻推进（冷却时长按持有者统帅浮动），冷却完毕自动发动并短暂闪光 */
 .fb-skillbtn, .fb-skillbtn-slot { width: 50px; height: 52px; flex: none; }
 .fb-skillbtn {
   border-radius: 11px; padding: 3px; cursor: default; transition: box-shadow .2s;

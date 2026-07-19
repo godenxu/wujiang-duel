@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607191945";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607192114";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -2430,8 +2430,8 @@
         </div>
         <div class="section-hint">胜一阵敌胆寒（士气 ±6${this.terrain === "river" ? "，河畔 ×1.5" : ""}），连斩三将敌军未战先乱；避战不出则己方士气 -4，出阵者若被斩折损更重</div>
         <div class="fb-btnrow">
-          <button class="cup-go primary" id="fb-fight">出将应战</button>
           <button class="cup-go" id="fb-decline">避战不出（士气 -4）</button>
+          <button class="cup-go primary" id="fb-fight">出将应战</button>
         </div>`;
       $("#fb-fight").onclick = () => this.pickDuelist(foe);
       $("#fb-decline").onclick = () => {
@@ -2526,8 +2526,8 @@
     },
     beats(a, b) { return this.FORMS[a].beats === b; },
     SKILL_CD: 8,   // 主动将魂冷却兜底默认值（未及计算 warCD 时使用），下方 warCD() 才是实际取值
-    // 主动将魂冷却按持有者统帅浮动：统帅越高，将令传达越快，冷却越短——各名将不再统一同刻发动
-    warCD(g) { return Math.max(5, Math.min(12, Math.round(13 - (g.tong || 0) / 10))); },
+    // 主动将魂冷却按持有者统帅浮动：统帅越高，将令传达越快，冷却越短——4~14 刻宽幅拉开差距，避免各将扎堆同刻发动
+    warCD(g) { return Math.max(4, Math.min(14, Math.round(14 - ((g.tong || 0) - 40) / 7))); },
     // 各线攻/防 = 该线存活武将的平均武力/统帅（攻偏武、防偏统）× 阵形地形加成 × 该线士气
     laneStat(side, laneK, mode) {
       const pos = side === "my" ? this.myPos : this.foePos;
@@ -2763,16 +2763,17 @@
       const state = L.broken === "my" ? `<span class="fb-broke my">突破！</span>` : L.broken === "foe" ? `<span class="fb-broke foe">失守…</span>` : "";
       const pickable = this.orderMode && !L.broken;
       const w = this.laneW(L);
-      // 战线两侧化作将魂技能钮；框内自上而下：战线名 → 士气（夹在战线名与姓名之间）→ 姓名（移到兵力条上方）→ 兵力色条
+      // 最左/最右为将魂技能钮；中间两行：上行「己方姓名·己方士气·战线名·敌方士气·敌方姓名」，下行兵力色条
       return `<div class="fb-lane ${L.broken ? "done" : ""} ${pickable ? "pickable" : ""}" data-lane="${k}">
         ${this.skillBadgeHtml("my", k)}
         <div class="fb-lane-body">
-          <div class="fb-lane-lbl">${this.posName(k)}${state}</div>
-          <div class="fb-lane-top2">
+          <div class="fb-lane-row1">
+            <span class="fb-lane-my">${myGs}</span>
             <span class="fb-lmor my" id="fb-lmm-${k}">💪${Math.round(L.myMor)}</span>
+            <span class="fb-lane-lbl">${this.posName(k)}${state}</span>
             <span class="fb-lmor foe" id="fb-lmf-${k}">💪${Math.round(L.foeMor)}</span>
+            <span class="fb-lane-foe">${foeGs}</span>
           </div>
-          <div class="fb-lane-gs"><span class="fb-lane-my">${myGs}</span><span class="fb-lane-foe">${foeGs}</span></div>
           <div class="fb-push">
             <div class="fb-mass my" style="width:${w}%"><span class="fb-trin" id="fb-ltrm-${k}">${Math.round(L.myTr).toLocaleString()}</span></div>
             <div class="fb-clashpt" style="left:${w}%">${L.broken ? "" : "💥"}</div>
