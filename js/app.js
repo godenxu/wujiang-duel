@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607192114";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607200423";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -2161,13 +2161,33 @@
       "加藤清正": { n: "虎退治·熊本坚城", type: "adamant", desc: "野战【被动】：所在线守备常驻 +20%｜单挑受创 -15%" },
       "福岛正则": { n: "贱岳一番枪", type: "school-wu", desc: "野战【主动】：冷却完毕一番抢功，突击所在线斩敌｜单挑：暴击率 +14%" },
     },
+    // 六维分布并不对称（如体力普遍偏高且离散度小），直接取原始数值最大项会让"游击"门派严重扎堆；
+    // 改用 Z 分数（(数值-全库均值)/标准差）衡量"该维度相对该武将有多突出"，六门派归属显著更均衡
+    _dimStats: null,
+    _computeDimStats() {
+      const dims = ["wu", "tong", "zhi", "ti", "mei", "zheng"];
+      const pool = (typeof ALL_GENERALS !== "undefined" && ALL_GENERALS.length) ? ALL_GENERALS : (DB.list.length ? DB.list : []);
+      const stats = {};
+      dims.forEach(d => {
+        const vals = pool.map(g => g[d] || 0);
+        const mean = vals.reduce((s, v) => s + v, 0) / (vals.length || 1);
+        const variance = vals.reduce((s, v) => s + (v - mean) ** 2, 0) / (vals.length || 1);
+        stats[d] = { mean, std: Math.sqrt(variance) || 1 };
+      });
+      return stats;
+    },
     of(g) {
       const nm = this.NAMED[g.name];
       if (nm) return { ...nm, icon: "⭐", named: true };
-      const dims = [["wu", g.wu], ["tong", g.tong], ["zhi", g.zhi], ["ti", g.ti], ["mei", g.mei || 0], ["zheng", g.zheng || 0]];
-      let best = dims[0];
-      dims.forEach(d => { if (d[1] > best[1]) best = d; });
-      return { ...this.SCHOOLS[best[0]], type: "school-" + best[0], named: false };
+      if (!this._dimStats) this._dimStats = this._computeDimStats();
+      const dims = ["wu", "tong", "zhi", "ti", "mei", "zheng"];
+      let best = dims[0], bestZ = -Infinity;
+      dims.forEach(d => {
+        const st = this._dimStats[d];
+        const z = ((g[d] || 0) - st.mean) / st.std;
+        if (z > bestZ) { bestZ = z; best = d; }
+      });
+      return { ...this.SCHOOLS[best], type: "school-" + best, named: false };
     },
     tag(g) {
       const sk = this.of(g);
@@ -2262,15 +2282,19 @@
       this.bindSpeedBtn();
       this.renderDeploy();
     },
+    // 冷却环的 transition-duration 与实际刻间隔同步，使调速时动画节奏保持连续跟手（见 --fbtickms）
+    applyTickMs() { document.documentElement.style.setProperty("--fbtickms", Math.round(1100 / (this.speed || 1)) + "ms"); },
     // 总攻调速：×1/×2/×4 循环，与单挑调速钮同位（右上角音乐钮左侧）
     bindSpeedBtn() {
       this.speed = this.speed || 1;
+      this.applyTickMs();
       const b = $("#fb-speed");
       if (!b) return;
       b.textContent = `×${this.speed}`;
       b.onclick = () => {
         this.speed = this.speed >= 4 ? 1 : this.speed * 2;
         b.textContent = `×${this.speed}`;
+        this.applyTickMs();
         if (this.assault && this.phase === "clash" && this.timer) {
           clearInterval(this.timer);
           const myGen = this.gen;
@@ -2301,68 +2325,73 @@
       const arr = side === "my" ? this.mine : this.foes;
       return arr.some(g => this.alive(g) && (Skill.NAMED[g.name] || {}).type === type);
     },
-    // 该线该方持有「主动」将魂的武将：名将优先于门派通用，同档取靠前者
-    laneActiveHolder(side, laneK) {
-      const cands = this.laneSkilled(side, laneK).filter(x => Skill.ACTIVE_WAR_TYPES.has(x.sk.type));
-      if (!cands.length) return null;
-      cands.sort((a, b) => (b.sk.named ? 1 : 0) - (a.sk.named ? 1 : 0));
-      return cands[0];
+    // 该线该方全部持有「主动」将魂的武将（每线两将各自持技能钮，互不互斥）
+    laneActiveSkilled(side, laneK) {
+      return this.laneSkilled(side, laneK).filter(x => Skill.ACTIVE_WAR_TYPES.has(x.sk.type));
     },
-    // 每刻推进各线双方的将魂冷却；持有者阵亡/更替则重置，冷却见底即自动发动
+    // 每刻推进各线双方每员武将各自的将魂冷却（每将独立冷却，同线两将可各自反复触发）；阵亡即清除
     tickSkillCooldowns() {
       this.LANES.forEach(k => {
         const L = this.lanes[k];
         if (L.broken) return;
         ["my", "foe"].forEach(side => {
-          const holderKey = side + "SkillHolder", cdKey = side + "SkillCd", cdMaxKey = side + "SkillCdMax";
-          const found = this.laneActiveHolder(side, k);
-          if (!found) { L[holderKey] = null; return; }
-          if (L[holderKey] !== found.g.id) {
-            const cd = this.warCD(found.g);
-            L[holderKey] = found.g.id; L[cdKey] = cd; L[cdMaxKey] = cd;
-            return;   // 新任持有者：本刻先充能，不立即发动
-          }
-          L[cdKey]--;
-          if (L[cdKey] <= 0) {
-            this.fireWarSkill(side, k, found.g, found.sk.type);
-            L[cdKey] = L[cdMaxKey] || this.warCD(found.g);
-          }
+          const cdsKey = side + "SkillCds";
+          const map = L[cdsKey] = L[cdsKey] || {};
+          const active = this.laneActiveSkilled(side, k);
+          const aliveIds = new Set(active.map(x => x.g.id));
+          Object.keys(map).forEach(id => { if (!aliveIds.has(+id)) delete map[id]; });   // 该将阵亡：清除其冷却槽
+          active.forEach(({ g, sk }) => {
+            let st = map[g.id];
+            if (!st) { const cd = this.warCD(g); map[g.id] = { cd, cdMax: cd }; return; }   // 新入列先充能，不立即发动
+            st.cd--;
+            if (st.cd <= 0) {
+              this.fireWarSkill(side, k, g, sk.type);
+              st.cd = st.cdMax;
+            }
+          });
         });
       });
     },
-    // 主动将魂效果实装：小幅但频繁的“爆发”，配合冷却钮达成敌我对等、可反复触发的均衡强度
+    // 主动将魂效果实装：小幅但频繁的“爆发”，配合冷却钮达成敌我对等、可反复触发的均衡强度；
+    // 该线该方若两将同时持有主动将魂（现每将独立冷却，不再互斥），单次效果按 ×0.6 折算——
+    // 两名同时在线仍比单emitter更频繁生效（合计约 ×1.2），但避免总吞吐量翻倍冲垮阵形/军令等既有强度设定（如雁行乱箭）
     fireWarSkill(side, laneK, g, type) {
       const L = this.lanes[laneK];
       const we = side === "my" ? "我军" : "敌军", sk = Skill.of(g);
+      const scale = this.laneActiveSkilled(side, laneK).length > 1 ? 0.6 : 1;
       const dealDmg = amt => {
+        amt = Math.round(amt * scale);
         if (side === "my") { L.foeTr = Math.max(0, L.foeTr - amt); this.foeTroops = Math.max(0, this.foeTroops - amt); if (L.foeTr <= 0) this.breach("my", laneK); }
         else { L.myTr = Math.max(0, L.myTr - amt); this.myTroops = Math.max(0, this.myTroops - amt); if (L.myTr <= 0) this.breach("foe", laneK); }
+        return amt;
       };
       const healTr = amt => {
+        amt = Math.round(amt * scale);
         if (side === "my") { const add = Math.min(amt, L.myTr0 - L.myTr); if (add > 0) { L.myTr += add; this.myTroops += add; } }
         else { const add = Math.min(amt, L.foeTr0 - L.foeTr); if (add > 0) { L.foeTr += add; this.foeTroops += add; } }
+        return amt;
       };
-      const dropFoeMor = amt => { if (side === "my") L.foeMor = Math.max(5, L.foeMor - amt); else L.myMor = Math.max(5, L.myMor - amt); };
-      const boostMyMor = amt => { if (side === "my") L.myMor = Math.min(100, L.myMor + amt); else L.foeMor = Math.min(100, L.foeMor + amt); };
+      const dropFoeMor = amt => { amt = Math.round(amt * scale); if (side === "my") L.foeMor = Math.max(5, L.foeMor - amt); else L.myMor = Math.max(5, L.myMor - amt); return amt; };
+      const boostMyMor = amt => { amt = Math.round(amt * scale); if (side === "my") L.myMor = Math.min(100, L.myMor + amt); else L.foeMor = Math.min(100, L.foeMor + amt); return amt; };
       const pos = this.posName(laneK);
       let msg = "";
-      if (type === "school-wu") { const dmg = Math.round(g.wu * 2.8); dealDmg(dmg); msg = `${g.name}【${sk.n}】陷阵突击，${pos}线斩敌 ${dmg.toLocaleString()} 众！`; }
-      else if (type === "school-ti") { const amt = Math.round(g.ti * 8); healTr(amt); msg = `${g.name}【${sk.n}】游走整军，${pos}线补充兵力 ${amt.toLocaleString()}！`; }
-      else if (type === "school-mei") { const amt = Math.max(5, Math.round(g.mei / 10)); boostMyMor(amt); msg = `${g.name}【${sk.n}】振臂高呼，${pos}线士气 +${amt}！`; }
-      else if (type === "school-zheng") { const amt = Math.round(g.zheng * 1.3); healTr(amt); msg = `${g.name}【${sk.n}】调度粮秣，${pos}线补充兵力 ${amt.toLocaleString()}！`; }
-      else if (type === "awe") { dropFoeMor(10); msg = `⭐ ${g.name}【${sk.n}】横戟怒喝，${pos}线对面为之胆寒（士气 -10）！`; }
-      else if (type === "discord") { dropFoeMor(12); msg = `⭐ ${g.name}【${sk.n}】暗施连环，${pos}线对面自乱阵脚（士气 -12）！`; }
-      else if (type === "roar") { dropFoeMor(10); msg = `⭐ ${g.name}【${sk.n}】断喝如雷，${pos}线敌军肝胆俱裂（士气 -10）！`; }
-      else if (type === "infiltrate") { const dmg = randInt(700, 1200); dealDmg(dmg); msg = `⭐ ${g.name}【${sk.n}】潜行突袭，${pos}线偷袭得手，斩敌 ${dmg.toLocaleString()} 众！`; }
-      else if (type === "volley") { const dmg = randInt(190, 320); dealDmg(dmg); msg = `⭐ ${g.name}【${sk.n}】连番齐射，${pos}线重创敌军 ${dmg.toLocaleString()} 众！`; }
-      else if (type === "dualblade") { const dmg = Math.round(g.wu * 3.2); dealDmg(dmg); msg = `⭐ ${g.name}【${sk.n}】连番猛击，${pos}线斩敌 ${dmg.toLocaleString()} 众！`; }
-      else if (type === "tempo") { const dmg = Math.round(g.wu); dealDmg(dmg); boostMyMor(8); msg = `⭐ ${g.name}【${sk.n}】临阵调度，${pos}线我方士气 +8、敌军受挫 ${dmg.toLocaleString()} 众！`; }
-      if (msg) { this.log("🌟 " + msg); toast("🌟 " + msg); this.flashLane(laneK, side); }
+      if (type === "school-wu") { const dmg = dealDmg(g.wu * 2.8); msg = `${g.name}【${sk.n}】陷阵突击，${pos}线斩敌 ${dmg.toLocaleString()} 众！`; }
+      else if (type === "school-ti") { const amt = healTr(g.ti * 8); msg = `${g.name}【${sk.n}】游走整军，${pos}线补充兵力 ${amt.toLocaleString()}！`; }
+      else if (type === "school-mei") { const amt = boostMyMor(Math.max(5, g.mei / 10)); msg = `${g.name}【${sk.n}】振臂高呼，${pos}线士气 +${amt}！`; }
+      else if (type === "school-zheng") { const amt = healTr(g.zheng * 1.3); msg = `${g.name}【${sk.n}】调度粮秣，${pos}线补充兵力 ${amt.toLocaleString()}！`; }
+      else if (type === "awe") { const amt = dropFoeMor(10); msg = `⭐ ${g.name}【${sk.n}】横戟怒喝，${pos}线对面为之胆寒（士气 -${amt}）！`; }
+      else if (type === "discord") { const amt = dropFoeMor(12); msg = `⭐ ${g.name}【${sk.n}】暗施连环，${pos}线对面自乱阵脚（士气 -${amt}）！`; }
+      else if (type === "roar") { const amt = dropFoeMor(10); msg = `⭐ ${g.name}【${sk.n}】断喝如雷，${pos}线敌军肝胆俱裂（士气 -${amt}）！`; }
+      else if (type === "infiltrate") { const dmg = dealDmg(randInt(700, 1200)); msg = `⭐ ${g.name}【${sk.n}】潜行突袭，${pos}线偷袭得手，斩敌 ${dmg.toLocaleString()} 众！`; }
+      else if (type === "volley") { const dmg = dealDmg(randInt(190, 320)); msg = `⭐ ${g.name}【${sk.n}】连番齐射，${pos}线重创敌军 ${dmg.toLocaleString()} 众！`; }
+      else if (type === "dualblade") { const dmg = dealDmg(g.wu * 3.2); msg = `⭐ ${g.name}【${sk.n}】连番猛击，${pos}线斩敌 ${dmg.toLocaleString()} 众！`; }
+      else if (type === "tempo") { const dmg = dealDmg(g.wu); const mor = boostMyMor(8); msg = `⭐ ${g.name}【${sk.n}】临阵调度，${pos}线我方士气 +${mor}、敌军受挫 ${dmg.toLocaleString()} 众！`; }
+      if (msg) { this.log("🌟 " + msg); toast("🌟 " + msg); this.flashLane(laneK, side, g.id); }
     },
-    flashLane(laneK, side) {
+    flashLane(laneK, side, genId) {
       const el = document.querySelector(`.fb-lane[data-lane="${laneK}"]`);
       if (!el) return;
-      const badge = el.querySelector(side === "my" ? ".fb-skillbtn.my" : ".fb-skillbtn.foe");
+      const badge = document.getElementById(`fb-sk-${side}-${laneK}-${genId}`);
       const target = badge || el;
       target.classList.remove("fire"); void target.offsetWidth; target.classList.add("fire");
       setTimeout(() => target.classList && target.classList.remove("fire"), 700);
@@ -2384,7 +2413,7 @@
         <div class="fb-sect">敌军阵形：${this.foeFormKnown
           ? `<b>${this.FORMS[this.foeForm].icon} ${this.FORMS[this.foeForm].n}</b>（${this.FORMS[this.foeForm].desc}）`
           : `旌旗蔽日看不真切 <button class="cup-go" id="fb-scout" ${this.orders > 0 ? "" : "disabled"} style="padding:4px 10px">🕵️ 斥候探阵（耗 1 军令）</button>`}</div>
-        <div class="fb-sect">我方布阵（敌军在上方——点两名武将互换位置，文官压前锋是要吃败仗的）<br><small style="font-weight:400;opacity:.75">每员武将按六维之长自带「将魂」技能（⭐ 为名将专属，长按可看说明）；主动型技能会在总攻各战线两端化作技能钮，冷却完毕自动发动（战报+提示+闪光三重提醒）</small></div>
+        <div class="fb-sect">我方布阵（敌军在上方——点两名武将互换位置，文官压前锋是要吃败仗的）<br><small style="font-weight:400;opacity:.75">每员武将按六维之长自带「将魂」技能（⭐ 为名将专属，长按可看说明）；主动型技能会在总攻各战线两端化作技能钮（该线两将各占一枚、各自独立冷却），冷却完毕自动发动（战报+提示+闪光三重提醒）；被动型技能常驻生效，以灰环徽标标出</small></div>
         <div class="fb-board2">${this.POSITIONS.map(([k, n]) => `
           <div class="fb-slot fb-slot-${k}"><span class="fb-pos-lbl">${n}</span>
             ${this.myPos[k].map((g, i) => this.chip(g, k, i, this.swapSel && this.swapSel.pos === k && this.swapSel.idx === i)).join("")}
@@ -2512,9 +2541,8 @@
           broken: null, myHold: 0,
           myTr, myTr0: myTr, foeTr, foeTr0: foeTr,
           myMor: this.myMorale, foeMor: this.foeMorale,
-          // 将魂主动技能：战线旁按钮自动冷却发动，冷却完毕即触发（见 tickSkillCooldowns）
-          mySkillHolder: null, mySkillCd: 0, mySkillCdMax: 1,
-          foeSkillHolder: null, foeSkillCd: 0, foeSkillCdMax: 1,
+          // 将魂主动技能：战线旁每将各占一枚按钮自动冷却发动，冷却完毕即触发（见 tickSkillCooldowns），键为武将 id
+          mySkillCds: {}, foeSkillCds: {},
         };
       });
       this.renderClash();
@@ -2525,7 +2553,6 @@
       this.timer = setInterval(() => this.tick(myGen), Math.round(1100 / (this.speed || 1)));
     },
     beats(a, b) { return this.FORMS[a].beats === b; },
-    SKILL_CD: 8,   // 主动将魂冷却兜底默认值（未及计算 warCD 时使用），下方 warCD() 才是实际取值
     // 主动将魂冷却按持有者统帅浮动：统帅越高，将令传达越快，冷却越短——4~14 刻宽幅拉开差距，避免各将扎堆同刻发动
     warCD(g) { return Math.max(4, Math.min(14, Math.round(14 - ((g.tong || 0) - 40) / 7))); },
     // 各线攻/防 = 该线存活武将的平均武力/统帅（攻偏武、防偏统）× 阵形地形加成 × 该线士气
@@ -2741,20 +2768,29 @@
       if (this.armyHas(def, "counterspy")) p *= 0.5;
       return p;
     },
-    // 战线框线左右两侧的将魂技能钮：图标+技能名 + 冷却环（--cdpct 0=就绪满环，1=刚触发空环），无持有者则不渲染
+    // 战线框线左右两侧的将魂技能钮堆叠：该线该方每员在世武将各占一枚（最多2枚）——
+    // 主动型显示冷却环（--cdpct 0=就绪满环，1=刚触发空环，独立冷却）；被动型显示常驻徽标（无冷却，效果已生效）
     skillBadgeHtml(side, laneK) {
       const L = this.lanes[laneK];
-      const holderKey = side + "SkillHolder", cdKey = side + "SkillCd", cdMaxKey = side + "SkillCdMax";
-      if (!L[holderKey]) return `<span class="fb-skillbtn-slot"></span>`;
       const pos = side === "my" ? this.myPos[laneK] : this.foePos[laneK];
-      const g = pos.find(x => x.id === L[holderKey]);
-      if (!g || !this.alive(g)) return `<span class="fb-skillbtn-slot"></span>`;
-      const sk = Skill.of(g);
-      const cdMax = L[cdMaxKey] || this.warCD(g);
-      const pct = Math.max(0, Math.min(1, L[cdKey] / cdMax));
-      return `<span class="fb-skillbtn ${side}" id="fb-sk-${side}-${laneK}" style="--cdpct:${pct}" title="${g.name}【${sk.n}】冷却完毕自动发动（冷却 ${cdMax} 刻，随统帅浮动）">
-        <span class="face"><b class="ic">${sk.icon}</b><b class="nm">${sk.n}</b></span>
-      </span>`;
+      const gens = pos.filter(g => g && this.alive(g));
+      if (!gens.length) return `<span class="fb-skillbtn-slot"></span>`;
+      const cds = L[side + "SkillCds"] || {};
+      const items = gens.map(g => {
+        const sk = Skill.of(g);
+        if (Skill.ACTIVE_WAR_TYPES.has(sk.type)) {
+          const st = cds[g.id];
+          const cdMax = (st && st.cdMax) || this.warCD(g);
+          const pct = st ? Math.max(0, Math.min(1, st.cd / cdMax)) : 1;
+          return `<span class="fb-skillbtn ${side}" id="fb-sk-${side}-${laneK}-${g.id}" style="--cdpct:${pct}" title="${g.name}【${sk.n}】冷却完毕自动发动（冷却 ${cdMax} 刻，随统帅浮动）">
+            <span class="face"><b class="ic">${sk.icon}</b><b class="nm">${sk.n}</b></span>
+          </span>`;
+        }
+        return `<span class="fb-skillbtn passive ${side}" title="${g.name}【${sk.n}】被动常驻，无需发动、持续生效">
+          <span class="face"><b class="ic">${sk.icon}</b><b class="nm">${sk.n}</b></span>
+        </span>`;
+      });
+      return `<span class="fb-skillstack ${side}">${items.join("")}</span>`;
     },
     laneHtml(k) {
       const L = this.lanes[k];
@@ -2828,16 +2864,24 @@
         const mm2 = $(`#fb-lmm-${k}`), mf2 = $(`#fb-lmf-${k}`);
         if (mm2) mm2.textContent = `💪${Math.round(L.myMor)}`;
         if (mf2) mf2.textContent = `💪${Math.round(L.foeMor)}`;
-        // 将魂技能钮：冷却环随刻推进；持有者刚出现/消失（DOM 尚无/多余该钮）时整线重绘一次
+        // 将魂技能钮堆叠：冷却环随刻推进；该线在世武将数变化（阵亡）导致钮数不符时整线重绘一次
         let badgeMismatch = false;
         ["my", "foe"].forEach(side => {
-          const holder = L[side + "SkillHolder"];
-          const badge = document.getElementById(`fb-sk-${side}-${k}`);
-          if (!!holder !== !!badge) { badgeMismatch = true; return; }
-          if (badge) {
-            const pct = Math.max(0, Math.min(1, L[side + "SkillCd"] / (L[side + "SkillCdMax"] || this.SKILL_CD)));
+          const pos = side === "my" ? this.myPos[k] : this.foePos[k];
+          const gens = pos.filter(g => g && this.alive(g));
+          const stack = el.querySelector(`.fb-skillstack.${side}`);
+          if (gens.length !== (stack ? stack.children.length : 0)) { badgeMismatch = true; return; }
+          const cds = L[side + "SkillCds"] || {};
+          gens.forEach(g => {
+            const sk = Skill.of(g);
+            if (!Skill.ACTIVE_WAR_TYPES.has(sk.type)) return;
+            const badge = document.getElementById(`fb-sk-${side}-${k}-${g.id}`);
+            if (!badge) { badgeMismatch = true; return; }
+            const st = cds[g.id];
+            const cdMax = (st && st.cdMax) || this.warCD(g);
+            const pct = st ? Math.max(0, Math.min(1, st.cd / cdMax)) : 1;
             badge.style.setProperty("--cdpct", pct);
-          }
+          });
         });
         if (badgeMismatch) { this.renderClash(); return; }
         if (L.broken && !el.classList.contains("done")) this.renderClash();
