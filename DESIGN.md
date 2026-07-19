@@ -214,6 +214,13 @@
   - 「击鼓总攻」确认页移除：`startClash` 直接 `assault=true` 建线开打；开战一次性将魂经 `castOpeners`（改为返回发动清单）汇入 `skillPopup` modal 弹窗，关闭后才起 tick 定时器（`gen` 代际防串场）。
   - 图鉴 `DBUI.render` 新增技能列（`.dt-skl` + `Skill.tag`），`showDetail` 新增 `.dc-skill` 将魂描述卡（名将橙框）；SCHOOLS/NAMED 描述改为「野战｜单挑」双域格式。
   - 单挑侧（engine.js）：`makeFighter` 经 `window.Skill.duelApply` 盖 `sk*` 旗标（覆盖式、幂等）；`computeDamage` 攻方乘区（skDmgMul/skFirst3/skFirstStrike/skRage/skGiant）+守方乘区（skDefMul/skFirst3Def/skLowDef）+skCrit；`schemeSuccess` ±（skSchemeUp/skDodge）；`staminaCost` ×skStamSave；`endTurn` skRegen；`resolveTurn` 行动计数 turns、`tryRevive` 七进七出（体力五成、每场一次、strategy/物理/连击三处 KO 前判定）、skDouble 半威力连击；`applyDuelOpeners`（skAwe 削起始战意 / skWeakenOpen 开局弱化）挂 `autoBattle` 与 `enterBattle` 两个入口；app.js 战斗事件循环新增 `type:"skill"` 处理（提示行+音效+刷条）；开场战报列出双方将魂单挑侧效果。
+- **将魂三期：战线技能钮 + 冷却自动发动 + 双域可见性打磨 + 名将倍增（第三十四轮）**（已完成，用户点名三项反馈：①野战/单挑双域发动提醒不够醒目 ②名将专属技能数量偏少 ③主动型技能应做成战线旁按钮、带冷却环、冷却完毕自动发动，且需评估反复发动的平衡性）：
+  - **架构调整——废弃一次性 modal，改为主动/被动二分**：`castOpeners`/`skillPopup` 整体删除；`Skill.ACTIVE_WAR_TYPES` 划出 11 种"读作一次具体出击"的技能类型进入战线旁按钮系统（`laneActiveHolder` 判定当前持有者、`tickSkillCooldowns` 每刻推进冷却、冷却完毕调用 `fireWarSkill`），其余保持常驻被动乘区不动；`laneStat()` 中原属于 tempo 的被动时间窗口逻辑随之移除（tempo 改为纯主动）。
+  - **UI**：`skillBadgeHtml` 渲染 `.fb-skillbtn`（`conic-gradient` 冷却环，`--cdpct` 由 `updateClashDom` 每次 DOM 刷新时同步）+ `.fb-skillbtn.fire` 发动闪光（`flashLane`，700ms 自愈）；`laneHtml` 在每条战线底部并排放置己方/敌方两枚技能钮。
+  - **单挑侧可见性打磨**：`computeDamage` 收集 `skillTags` 并由 `buildHitText` 追加到命中文案末尾（「（⭐武将名将魂发动）」）；`endTurn` 的 `skRegen` 回复量改为有返回值，`resolveTurn` 据此推入 `type:"skill"` 战斗事件，复用既有的七进七出提示通道，不新增弹窗打断连续回合。
+  - **平衡评估与幅度调整**：四类校级主动技能（陷阵/游击/感召/辎重）按"8 刻一轮的累计量对齐一期常驻贡献"取值；三类原本"一次性/更强"的名将技能明确降幅——无双 -15→-10、离间 -20→-12（并改为固定作用于持有者所在线而非随机敌线，行为更可预期）；**白衣渡江/本能寺之变系（infiltrate）是本轮平衡上的重点**：一期是开战 30% 概率直接令敌大将退场的一次性效果，若原样按 8 刻一轮重复发动，长战中会演变成反复消灭敌方武将的破坏性效果，故重做为有界的兵力突袭（`随机 700~1200`），明确记为"重大削弱，以避免游戏崩坏"。
+  - **名将扩容至 28 位**：三国新增周瑜/陆逊/黄忠/姜维/张辽/司马懿，日本新增伊达政宗/石田三成/前田利家/明智光秀/立花宗茂/岛津义弘，均复用已平衡过的技能类型配以史实典故命名，控制新增复杂度。
+  - **验证**：test24 扩至 49 项全过（新增 3 项断言：名将扩容计数、战线技能钮存在且无旧版弹窗、战报含 🌟 自动发动记录）；曾遇到一次 test24 计时性失败（`.fb-skillbtn` 断言在首个 tick 尚未跑完时就检查，导致持有者尚未认领、DOM 仅有空占位符），诊断为测试时序问题而非产品缺陷，补一次 `waitForTimeout` 待首刻推进后再断言即解决，非代码改动。回归 test21 22 项、test22、test23 全过。
   - 新增四位双域名将：赵云七进七出/宫本武藏二天一流/许褚虎痴/真田幸村日本一兵（野战侧 rescue/dualblade/tiger/sanada 钩子同步接入 laneStat/tick）。
   - **验证**：test24 扩至 47 项全过——图鉴技能列（200 行标签）+详情技能卡断言、无 #fb-assault 且军令台直接就位断言、将魂弹窗条件断言（有开战技则点掉再战）；第二局完整单挑走含技能钩子的引擎无异常。回归：test23 10 项、test22 14 项、test21 22 项全过。
 

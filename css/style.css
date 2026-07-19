@@ -1212,6 +1212,21 @@ html, body {
 .fb-lane-gs { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; margin-top: 3px; }
 .fb-lane-my { color: #f0c9a0; }
 .fb-lane-foe { color: #aeb9e8; text-align: right; }
+/* 将魂主动技能钮：战线两端各一枚，冷却环随刻推进，冷却完毕自动发动并短暂闪光 */
+.fb-lane-skl { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; height: 26px; }
+.fb-skillbtn, .fb-skillbtn-slot { width: 24px; height: 24px; flex: none; }
+.fb-skillbtn {
+  border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px;
+  background: conic-gradient(var(--cn-gold) calc(360deg * (1 - var(--cdpct, 0))), rgba(0,0,0,.72) 0deg);
+  border: 1px solid rgba(212,175,55,.6); cursor: default; transition: box-shadow .2s;
+}
+.fb-skillbtn.foe { background: conic-gradient(#8797d8 calc(360deg * (1 - var(--cdpct, 0))), rgba(0,0,0,.72) 0deg); border-color: rgba(135,151,216,.6); }
+.fb-skillbtn.fire { animation: fbSkillFire .7s ease-out; }
+@keyframes fbSkillFire {
+  0% { box-shadow: 0 0 0 0 rgba(244,196,48,.9); transform: scale(1); }
+  35% { box-shadow: 0 0 10px 4px rgba(244,196,48,.85); transform: scale(1.35); }
+  100% { box-shadow: 0 0 0 0 rgba(244,196,48,0); transform: scale(1); }
+}
 .fb-broke { font-weight: 900; font-size: 13px; margin-left: 4px; }
 .fb-broke.my { color: #ffd75e; }
 .fb-broke.foe { color: #ff8a8a; }

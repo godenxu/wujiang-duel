@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607191756";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607191836";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -2107,31 +2107,47 @@
    *  全部被动自动发动，发动时入战报。
    * ============================================================ */
   const Skill = {
+    // 主动技能（ACTIVE）：野战总攻中以战线旁的技能钮呈现，冷却完毕自动发动，一场战斗可反复触发；
+    // 被动技能（其余）：常驻加成，不占技能钮位。
+    ACTIVE_WAR_TYPES: new Set(["awe", "discord", "infiltrate", "roar", "volley", "dualblade", "tempo",
+      "school-wu", "school-ti", "school-mei", "school-zheng"]),
     SCHOOLS: {
-      wu: { n: "陷阵", icon: "🗡️", desc: "野战：所在线每刻额外斩敌（幅度随武力）｜单挑：伤害 +10%" },
-      tong: { n: "坚壁", icon: "🛡️", desc: "野战：所在线守备 +10%｜单挑：受创 -10%" },
-      zhi: { n: "连环", icon: "🧠", desc: "野战：所在线我计谋 +15%、敌计谋 -15%｜单挑：敌计策成功率 -15%" },
-      ti: { n: "游击", icon: "🐎", desc: "野战：所在线兵力折损 -12%｜单挑：每回合回复体力 2" },
-      mei: { n: "感召", icon: "👑", desc: "野战：所在线士气每刻回升｜单挑：威压使对手起始战意 -15" },
-      zheng: { n: "辎重", icon: "📜", desc: "野战：所在线每刻补充兵力｜单挑：出招战意消耗打八折" },
+      wu: { n: "陷阵", icon: "🗡️", desc: "野战【主动】：冷却完毕自动突击所在线，斩敌兵力（幅度随武力）｜单挑：伤害 +10%" },
+      tong: { n: "坚壁", icon: "🛡️", desc: "野战【被动】：所在线守备常驻 +10%｜单挑：受创 -10%" },
+      zhi: { n: "连环", icon: "🧠", desc: "野战【被动】：所在线我计谋 +15%、敌计谋 -15%｜单挑：敌计策成功率 -15%" },
+      ti: { n: "游击", icon: "🐎", desc: "野战【主动】：冷却完毕自动整军，为所在线补充兵力｜单挑：每回合回复体力 2" },
+      mei: { n: "感召", icon: "👑", desc: "野战【主动】：冷却完毕自动振奋，提振所在线士气｜单挑：威压使对手起始战意 -15" },
+      zheng: { n: "辎重", icon: "📜", desc: "野战【主动】：冷却完毕自动调度，为所在线补充兵力｜单挑：出招战意消耗打八折" },
     },
     NAMED: {
-      "吕布": { n: "无双", type: "awe", desc: "野战开战震慑：所在线敌军士气 -15｜单挑前三回合伤害 ×1.5" },
-      "关羽": { n: "武圣", type: "duelmorale", desc: "野战阵前斩将士气收益翻倍｜单挑暴击率 +15%" },
-      "张飞": { n: "据水断桥", type: "roar", desc: "野战所在线敌士气每刻流失｜单挑一声断喝，敌起始战意 -20" },
-      "诸葛亮": { n: "借东风", type: "firemaster", desc: "野战火攻不限地形且威力翻倍｜单挑计策成功率 +15%" },
-      "曹操": { n: "奸雄", type: "counterspy", desc: "野战敌计谋对我全军减半｜单挑敌计策成功率 -20%" },
-      "吕蒙": { n: "白衣渡江", type: "infiltrate", desc: "野战开战三成机会令敌一将退场｜单挑首回合奇袭伤害 ×1.4" },
-      "貂蝉": { n: "离间", type: "discord", desc: "野战开战敌随机一线内讧 -20｜单挑开局魅惑，敌攻击 -15%（2 回合）" },
-      "织田信长": { n: "三段击", type: "volley", desc: "野战所在线概率齐射加伤｜单挑 20% 概率追加连击" },
-      "武田信玄": { n: "风林火山", type: "tempo", desc: "野战前 30 刻全军攻守 +10%｜单挑前三回合受创 -20%" },
-      "上杉谦信": { n: "军神", type: "duelmorale", desc: "野战阵前斩将士气收益翻倍｜单挑伤害 +12%" },
-      "本多忠胜": { n: "无伤", type: "adamant", desc: "野战所在线守备 +20%｜单挑受创 -15%" },
-      "德川家康": { n: "隐忍", type: "endure", desc: "野战所在线兵力折损 -20%｜单挑残血时受创 -30%" },
-      "赵云": { n: "七进七出", type: "rescue", desc: "野战所在线兵力折损 -10%｜单挑首次倒地杀出重围（回复五成体力）" },
-      "宫本武藏": { n: "二天一流", type: "dualblade", desc: "野战所在线双刀斩敌加伤｜单挑 25% 概率追加连击" },
-      "许褚": { n: "虎痴", type: "tiger", desc: "野战所在线守备 +15%｜单挑残血时裸衣暴走，伤害 ×1.5" },
-      "真田幸村": { n: "日本一兵", type: "sanada", desc: "野战所在线攻守 +8%｜单挑对体力更雄厚的强敌伤害 ×1.2" },
+      "吕布": { n: "无双", type: "awe", desc: "野战【主动】：冷却完毕自动震慑，所在线敌军士气骤降｜单挑前三回合伤害 ×1.5" },
+      "关羽": { n: "武圣", type: "duelmorale", desc: "野战【被动】：阵前斩将士气收益翻倍｜单挑暴击率 +15%" },
+      "张飞": { n: "据水断桥", type: "roar", desc: "野战【主动】：冷却完毕一声断喝，所在线敌军士气重挫｜单挑：敌起始战意 -20" },
+      "诸葛亮": { n: "借东风", type: "firemaster", desc: "野战【被动】：火攻不限地形且威力翻倍｜单挑计策成功率 +15%" },
+      "曹操": { n: "奸雄", type: "counterspy", desc: "野战【被动】：敌计谋对我全军减半｜单挑敌计策成功率 -20%" },
+      "吕蒙": { n: "白衣渡江", type: "infiltrate", desc: "野战【主动】：冷却完毕潜行突袭，偷袭所在线敌军兵力｜单挑首回合奇袭伤害 ×1.4" },
+      "貂蝉": { n: "离间", type: "discord", desc: "野战【主动】：冷却完毕巧施连环，令所在线敌军自乱｜单挑开局魅惑，敌攻击 -15%（2 回合）" },
+      "织田信长": { n: "三段击", type: "volley", desc: "野战【主动】：冷却完毕连番齐射，重创所在线敌军｜单挑 20% 概率追加连击" },
+      "武田信玄": { n: "风林火山", type: "tempo", desc: "野战【主动】：冷却完毕临阵调度，振我军挫敌军｜单挑前三回合受创 -20%" },
+      "上杉谦信": { n: "军神", type: "duelmorale", desc: "野战【被动】：阵前斩将士气收益翻倍｜单挑伤害 +12%" },
+      "本多忠胜": { n: "无伤", type: "adamant", desc: "野战【被动】：所在线守备常驻 +20%｜单挑受创 -15%" },
+      "德川家康": { n: "隐忍", type: "endure", desc: "野战【被动】：所在线兵力折损 -20%｜单挑残血时受创 -30%" },
+      "赵云": { n: "七进七出", type: "rescue", desc: "野战【被动】：所在线兵力折损 -10%｜单挑首次倒地杀出重围（回复五成体力）" },
+      "宫本武藏": { n: "二天一流", type: "dualblade", desc: "野战【主动】：冷却完毕双刀连斩，重创所在线敌军｜单挑 25% 概率追加连击" },
+      "许褚": { n: "虎痴", type: "tiger", desc: "野战【被动】：所在线守备常驻 +15%｜单挑残血时裸衣暴走，伤害 ×1.5" },
+      "真田幸村": { n: "日本一兵", type: "sanada", desc: "野战【被动】：所在线攻守常驻 +8%｜单挑对体力更雄厚的强敌伤害 ×1.2" },
+      "周瑜": { n: "火烧赤壁", type: "volley", desc: "野战【主动】：冷却完毕纵火奇计，重创所在线敌军｜单挑 20% 概率追加连击" },
+      "陆逊": { n: "火烧连营", type: "dualblade", desc: "野战【主动】：冷却完毕连营纵火，重创所在线敌军｜单挑 25% 概率追加连击" },
+      "黄忠": { n: "老当益壮", type: "school-wu", desc: "野战【主动】：冷却完毕宝刀不老，突击所在线斩敌｜单挑：暴击率 +12%" },
+      "姜维": { n: "九伐中原", type: "dualblade", desc: "野战【主动】：冷却完毕连番进击，重创所在线敌军｜单挑 22% 概率追加连击" },
+      "张辽": { n: "威震逍遥津", type: "roar", desc: "野战【主动】：冷却完毕仲达破胆，所在线敌军士气重挫｜单挑：敌起始战意 -22" },
+      "司马懿": { n: "鹰视狼顾", type: "tempo", desc: "野战【主动】：冷却完毕后发制人，振我军挫敌军｜单挑前三回合受创 -22%" },
+      "伊达政宗": { n: "独眼龙的野望", type: "volley", desc: "野战【主动】：冷却完毕孤军突进，重创所在线敌军｜单挑 20% 概率追加连击" },
+      "石田三成": { n: "智略关原", type: "discord", desc: "野战【主动】：冷却完毕运筹帷幄，令所在线敌军自乱｜单挑开局魅惑，敌攻击 -15%（2 回合）" },
+      "前田利家": { n: "槍の又左", type: "dualblade", desc: "野战【主动】：冷却完毕长枪连突，重创所在线敌军｜单挑 25% 概率追加连击" },
+      "明智光秀": { n: "本能寺之变", type: "infiltrate", desc: "野战【主动】：冷却完毕暗谋突变，偷袭所在线敌军兵力｜单挑首回合奇袭伤害 ×1.45" },
+      "立花宗茂": { n: "西国无双", type: "adamant", desc: "野战【被动】：所在线守备常驻 +20%｜单挑受创 -15%" },
+      "岛津义弘": { n: "捨て奸", type: "endure", desc: "野战【被动】：所在线兵力折损 -22%｜单挑残血时受创 -32%" },
     },
     of(g) {
       const nm = this.NAMED[g.name];
@@ -2152,7 +2168,7 @@
       g.skFirst3 = 0; g.skFirst3Def = 0; g.skFirstStrike = 0; g.skDouble = 0;
       g.skLowDef = 0; g.skRevive = false; g.skRage = 0; g.skGiant = 0;
       const t = this.of(g).type;
-      if (t === "school-wu") g.skDmgMul = 1.1;
+      if (t === "school-wu") { if (g.name === "黄忠") g.skCrit = 0.12; else g.skDmgMul = 1.1; }
       else if (t === "school-tong") g.skDefMul = 0.9;
       else if (t === "school-zhi") g.skDodge = 0.15;
       else if (t === "school-ti") g.skRegen = 2;
@@ -2160,17 +2176,17 @@
       else if (t === "school-zheng") g.skStamSave = 0.8;
       else if (t === "awe") g.skFirst3 = 1.5;
       else if (t === "duelmorale") { if (g.name === "关羽") g.skCrit = 0.15; else g.skDmgMul = 1.12; }
-      else if (t === "roar") g.skAwe = 20;
+      else if (t === "roar") g.skAwe = g.name === "张辽" ? 22 : 20;
       else if (t === "firemaster") g.skSchemeUp = 0.15;
       else if (t === "counterspy") g.skDodge = 0.2;
-      else if (t === "infiltrate") g.skFirstStrike = 1.4;
+      else if (t === "infiltrate") g.skFirstStrike = g.name === "明智光秀" ? 1.45 : 1.4;
       else if (t === "discord") g.skWeakenOpen = true;
       else if (t === "volley") g.skDouble = 0.2;
-      else if (t === "tempo") g.skFirst3Def = 0.8;
+      else if (t === "tempo") g.skFirst3Def = g.name === "司马懿" ? 0.78 : 0.8;
       else if (t === "adamant") g.skDefMul = 0.85;
-      else if (t === "endure") g.skLowDef = 0.7;
+      else if (t === "endure") g.skLowDef = g.name === "岛津义弘" ? 0.68 : 0.7;
       else if (t === "rescue") g.skRevive = true;
-      else if (t === "dualblade") g.skDouble = 0.25;
+      else if (t === "dualblade") g.skDouble = g.name === "姜维" ? 0.22 : 0.25;
       else if (t === "tiger") g.skRage = 1.5;
       else if (t === "sanada") g.skGiant = 1.2;
       return g;
@@ -2273,6 +2289,71 @@
       const arr = side === "my" ? this.mine : this.foes;
       return arr.some(g => this.alive(g) && (Skill.NAMED[g.name] || {}).type === type);
     },
+    // 该线该方持有「主动」将魂的武将：名将优先于门派通用，同档取靠前者
+    laneActiveHolder(side, laneK) {
+      const cands = this.laneSkilled(side, laneK).filter(x => Skill.ACTIVE_WAR_TYPES.has(x.sk.type));
+      if (!cands.length) return null;
+      cands.sort((a, b) => (b.sk.named ? 1 : 0) - (a.sk.named ? 1 : 0));
+      return cands[0];
+    },
+    // 每刻推进各线双方的将魂冷却；持有者阵亡/更替则重置，冷却见底即自动发动
+    tickSkillCooldowns() {
+      this.LANES.forEach(k => {
+        const L = this.lanes[k];
+        if (L.broken) return;
+        ["my", "foe"].forEach(side => {
+          const holderKey = side + "SkillHolder", cdKey = side + "SkillCd", cdMaxKey = side + "SkillCdMax";
+          const found = this.laneActiveHolder(side, k);
+          if (!found) { L[holderKey] = null; return; }
+          if (L[holderKey] !== found.g.id) {
+            L[holderKey] = found.g.id; L[cdKey] = this.SKILL_CD; L[cdMaxKey] = this.SKILL_CD;
+            return;   // 新任持有者：本刻先充能，不立即发动
+          }
+          L[cdKey]--;
+          if (L[cdKey] <= 0) {
+            this.fireWarSkill(side, k, found.g, found.sk.type);
+            L[cdKey] = this.SKILL_CD;
+          }
+        });
+      });
+    },
+    // 主动将魂效果实装：小幅但频繁的“爆发”，配合冷却钮达成敌我对等、可反复触发的均衡强度
+    fireWarSkill(side, laneK, g, type) {
+      const L = this.lanes[laneK];
+      const we = side === "my" ? "我军" : "敌军", sk = Skill.of(g);
+      const dealDmg = amt => {
+        if (side === "my") { L.foeTr = Math.max(0, L.foeTr - amt); this.foeTroops = Math.max(0, this.foeTroops - amt); if (L.foeTr <= 0) this.breach("my", laneK); }
+        else { L.myTr = Math.max(0, L.myTr - amt); this.myTroops = Math.max(0, this.myTroops - amt); if (L.myTr <= 0) this.breach("foe", laneK); }
+      };
+      const healTr = amt => {
+        if (side === "my") { const add = Math.min(amt, L.myTr0 - L.myTr); if (add > 0) { L.myTr += add; this.myTroops += add; } }
+        else { const add = Math.min(amt, L.foeTr0 - L.foeTr); if (add > 0) { L.foeTr += add; this.foeTroops += add; } }
+      };
+      const dropFoeMor = amt => { if (side === "my") L.foeMor = Math.max(5, L.foeMor - amt); else L.myMor = Math.max(5, L.myMor - amt); };
+      const boostMyMor = amt => { if (side === "my") L.myMor = Math.min(100, L.myMor + amt); else L.foeMor = Math.min(100, L.foeMor + amt); };
+      const pos = this.posName(laneK);
+      let msg = "";
+      if (type === "school-wu") { const dmg = Math.round(g.wu * 2.8); dealDmg(dmg); msg = `${g.name}【${sk.n}】陷阵突击，${pos}线斩敌 ${dmg.toLocaleString()} 众！`; }
+      else if (type === "school-ti") { const amt = Math.round(g.ti * 8); healTr(amt); msg = `${g.name}【${sk.n}】游走整军，${pos}线补充兵力 ${amt.toLocaleString()}！`; }
+      else if (type === "school-mei") { const amt = Math.max(5, Math.round(g.mei / 10)); boostMyMor(amt); msg = `${g.name}【${sk.n}】振臂高呼，${pos}线士气 +${amt}！`; }
+      else if (type === "school-zheng") { const amt = Math.round(g.zheng * 1.3); healTr(amt); msg = `${g.name}【${sk.n}】调度粮秣，${pos}线补充兵力 ${amt.toLocaleString()}！`; }
+      else if (type === "awe") { dropFoeMor(10); msg = `⭐ ${g.name}【${sk.n}】横戟怒喝，${pos}线对面为之胆寒（士气 -10）！`; }
+      else if (type === "discord") { dropFoeMor(12); msg = `⭐ ${g.name}【${sk.n}】暗施连环，${pos}线对面自乱阵脚（士气 -12）！`; }
+      else if (type === "roar") { dropFoeMor(10); msg = `⭐ ${g.name}【${sk.n}】断喝如雷，${pos}线敌军肝胆俱裂（士气 -10）！`; }
+      else if (type === "infiltrate") { const dmg = randInt(700, 1200); dealDmg(dmg); msg = `⭐ ${g.name}【${sk.n}】潜行突袭，${pos}线偷袭得手，斩敌 ${dmg.toLocaleString()} 众！`; }
+      else if (type === "volley") { const dmg = randInt(190, 320); dealDmg(dmg); msg = `⭐ ${g.name}【${sk.n}】连番齐射，${pos}线重创敌军 ${dmg.toLocaleString()} 众！`; }
+      else if (type === "dualblade") { const dmg = Math.round(g.wu * 3.2); dealDmg(dmg); msg = `⭐ ${g.name}【${sk.n}】连番猛击，${pos}线斩敌 ${dmg.toLocaleString()} 众！`; }
+      else if (type === "tempo") { const dmg = Math.round(g.wu); dealDmg(dmg); boostMyMor(8); msg = `⭐ ${g.name}【${sk.n}】临阵调度，${pos}线我方士气 +8、敌军受挫 ${dmg.toLocaleString()} 众！`; }
+      if (msg) { this.log("🌟 " + msg); toast("🌟 " + msg); this.flashLane(laneK, side); }
+    },
+    flashLane(laneK, side) {
+      const el = document.querySelector(`.fb-lane[data-lane="${laneK}"]`);
+      if (!el) return;
+      const badge = el.querySelector(side === "my" ? ".fb-skillbtn.my" : ".fb-skillbtn.foe");
+      const target = badge || el;
+      target.classList.remove("fire"); void target.offsetWidth; target.classList.add("fire");
+      setTimeout(() => target.classList && target.classList.remove("fire"), 700);
+    },
     chip(g, posK, idx, sel) {
       const dead = !this.alive(g);
       return `<button class="fb-chip ${g.side} ${sel ? "sel" : ""} ${dead ? "dead" : ""}" data-pos="${posK}" data-idx="${idx}" ${dead ? "disabled" : ""}>
@@ -2290,7 +2371,7 @@
         <div class="fb-sect">敌军阵形：${this.foeFormKnown
           ? `<b>${this.FORMS[this.foeForm].icon} ${this.FORMS[this.foeForm].n}</b>（${this.FORMS[this.foeForm].desc}）`
           : `旌旗蔽日看不真切 <button class="cup-go" id="fb-scout" ${this.orders > 0 ? "" : "disabled"} style="padding:4px 10px">🕵️ 斥候探阵（耗 1 军令）</button>`}</div>
-        <div class="fb-sect">我方布阵（敌军在上方——点两名武将互换位置，文官压前锋是要吃败仗的）<br><small style="font-weight:400;opacity:.75">每员武将按六维之长自带「将魂」技能（⭐ 为名将专属，长按可看说明），开战自动发动</small></div>
+        <div class="fb-sect">我方布阵（敌军在上方——点两名武将互换位置，文官压前锋是要吃败仗的）<br><small style="font-weight:400;opacity:.75">每员武将按六维之长自带「将魂」技能（⭐ 为名将专属，长按可看说明）；主动型技能会在总攻各战线两端化作技能钮，冷却完毕自动发动（战报+提示+闪光三重提醒）</small></div>
         <div class="fb-board2">${this.POSITIONS.map(([k, n]) => `
           <div class="fb-slot fb-slot-${k}"><span class="fb-pos-lbl">${n}</span>
             ${this.myPos[k].map((g, i) => this.chip(g, k, i, this.swapSel && this.swapSel.pos === k && this.swapSel.idx === i)).join("")}
@@ -2418,66 +2499,20 @@
           broken: null, myHold: 0,
           myTr, myTr0: myTr, foeTr, foeTr0: foeTr,
           myMor: this.myMorale, foeMor: this.foeMorale,
+          // 将魂主动技能：战线旁按钮自动冷却发动，冷却完毕即触发（见 tickSkillCooldowns）
+          mySkillHolder: null, mySkillCd: 0, mySkillCdMax: 1,
+          foeSkillHolder: null, foeSkillCd: 0, foeSkillCdMax: 1,
         };
       });
       this.renderClash();
       // 敌我同享阵形加成——开战时把双方阵形效果都摆到明面上
       this.log(`🥁 战鼓雷动，五线接敌！我军${this.FORMS[this.myForm].n}阵（${this.FORMS[this.myForm].desc}） 对 敌军${this.FORMS[this.foeForm].n}阵（${this.FORMS[this.foeForm].desc}）${this.beats(this.myForm, this.foeForm) ? "——我阵克敌，全线攻 +12%！" : this.beats(this.foeForm, this.myForm) ? "——敌阵克我（敌攻 +12%），小心！" : ""}`);
-      const procs = [...this.castOpeners("my"), ...this.castOpeners("foe")];
       const myGen = this.gen;
-      const begin = () => {
-        if (this.gen !== myGen) return;
-        // 基准刻 1100ms 留出下令余裕；右上角调速钮 ×1/×2/×4 可加速
-        this.timer = setInterval(() => this.tick(myGen), Math.round(1100 / (this.speed || 1)));
-      };
-      if (procs.length) this.skillPopup(procs, begin);   // 有将魂发动：弹窗昭告，关闭后开打
-      else begin();
+      // 基准刻 1100ms 留出下令余裕；右上角调速钮 ×1/×2/×4 可加速
+      this.timer = setInterval(() => this.tick(myGen), Math.round(1100 / (this.speed || 1)));
     },
     beats(a, b) { return this.FORMS[a].beats === b; },
-    // 将魂·开战一次性技能：无双震慑 / 离间 / 白衣渡江 / 风林火山（入报并返回发动清单供弹窗）
-    castOpeners(side) {
-      const we = side === "my" ? "我军" : "敌军";
-      const pos = side === "my" ? this.myPos : this.foePos;
-      const foes = side === "my" ? this.foes : this.mine;
-      const procs = [];
-      const fire = msg => { procs.push(msg); this.log(msg); };
-      this.LANES.forEach(k => {
-        pos[k].filter(g => this.alive(g)).forEach(g => {
-          const t = (Skill.NAMED[g.name] || {}).type;
-          const L = this.lanes[k];
-          if (t === "awe") {
-            if (side === "my") L.foeMor = Math.max(5, L.foeMor - 15); else L.myMor = Math.max(5, L.myMor - 15);
-            fire(`⭐ ${we} ${g.name}【无双】横戟立马，${this.posName(k)}线对面未战先怯（士气 -15）`);
-          }
-          if (t === "discord") {
-            const open = this.LANES.filter(x => !this.lanes[x].broken);
-            const tk = open[randInt(0, open.length - 1)], TL = this.lanes[tk];
-            if (side === "my") TL.foeMor = Math.max(5, TL.foeMor - 20); else TL.myMor = Math.max(5, TL.myMor - 20);
-            fire(`⭐ ${we} ${g.name}【离间】巧施连环，对方${this.posName(tk)}线两将内讧（士气 -20）`);
-          }
-          if (t === "infiltrate" && Math.random() < 0.3) {
-            const cands = foes.filter(x => this.alive(x));
-            if (cands.length) {
-              const victim = cands[randInt(0, cands.length - 1)];
-              this.dead.add(victim.id);
-              if (side === "my") this.stats.foeFall++; else this.stats.myFall++;
-              fire(`⭐ ${we} ${g.name}【白衣渡江】暗渡奇袭，对方大将 ${victim.name} 悄然退场！`);
-            }
-          }
-          if (t === "tempo") fire(`⭐ ${we} ${g.name}【风林火山】军旗如林——${we}前 30 刻全军攻守 +10%`);
-        });
-      });
-      return procs;
-    },
-    // 将魂发动弹窗（modal）：关闭后才继续战局
-    skillPopup(lines, onClose) {
-      openOverlay(`<div class="result-card">
-        <h1>⭐ 将魂发动</h1>
-        <div class="wdesc" style="text-align:left">${lines.join("<br>")}</div>
-        <div class="btns"><button class="btn-primary" id="fb-skok">知道了</button></div>
-      </div>`, { modal: true });
-      $("#fb-skok").onclick = () => { closeOverlay(); onClose && onClose(); };
-    },
+    SKILL_CD: 8,   // 将魂主动技能冷却（刻），双方各线通用
     // 各线攻/防 = 该线存活武将的平均武力/统帅（攻偏武、防偏统）× 阵形地形加成 × 该线士气
     laneStat(side, laneK, mode) {
       const pos = side === "my" ? this.myPos : this.foePos;
@@ -2495,7 +2530,7 @@
         if (this.beats(form, foeForm)) p *= 1.12;
       } else {
         if (form === "round") p *= 1.25;   // 方圆阵长于守
-        // 将魂：坚壁（帅才 +10%）/ 无伤（本多忠胜 +20%）/ 虎痴（许褚 +15%）
+        // 将魂被动：坚壁（帅才 +10%）/ 无伤·西国无双（+20%）/ 虎痴（+15%）
         pos[laneK].filter(g => this.alive(g)).forEach(g => {
           const t = Skill.of(g).type;
           if (t === "school-tong") p *= 1.1;
@@ -2503,10 +2538,8 @@
           if (t === "tiger") p *= 1.15;
         });
       }
-      // 将魂：日本一兵（真田幸村所在线攻守 +8%）
+      // 将魂被动：日本一兵（真田幸村所在线攻守 +8%）
       if (pos[laneK].some(g => this.alive(g) && Skill.of(g).type === "sanada")) p *= 1.08;
-      // 将魂：风林火山——开战前 30 刻全军攻守 +10%
-      if (this.assault && this.tickN <= 30 && this.armyHas(side, "tempo")) p *= 1.1;
       const L = this.lanes && this.lanes[laneK];
       const mor = L ? (side === "my" ? L.myMor : L.foeMor) : (side === "my" ? this.myMorale : this.foeMorale);
       p *= 0.5 + 0.8 * mor / 100;
@@ -2527,28 +2560,14 @@
         const foeDef = this.laneStat("foe", k, "def");
         let myLoss = 220 * foeAtk / Math.max(myDef, 1) * (0.9 + Math.random() * 0.2) * sd;
         let foeLoss = 220 * myAtk / Math.max(foeDef, 1) * (0.9 + Math.random() * 0.2) * sd;
-        // 将魂·每刻被动：陷阵/三段击加伤，游击/隐忍减损，感召回士气，辎重补兵，据水断桥蚀敌士气
+        // 将魂被动：游击/隐忍持续减损（主动型将魂改由战线旁技能钮冷却自动发动，见 tickSkillCooldowns）
         this.laneSkilled("my", k).forEach(({ g, sk }) => {
-          if (sk.type === "school-wu") foeLoss += g.wu * 0.35 * sd;
-          if (sk.type === "dualblade") foeLoss += g.wu * 0.4 * sd;
-          if (sk.type === "volley" && Math.random() < 0.35) foeLoss += randInt(60, 120) * sd;
-          if (sk.type === "school-ti") myLoss *= 0.88;
           if (sk.type === "rescue") myLoss *= 0.9;
           if (sk.type === "endure") myLoss *= 0.8;
-          if (sk.type === "school-mei") L.myMor = Math.min(100, L.myMor + 0.2);
-          if (sk.type === "school-zheng") { const add = Math.min(15, L.myTr0 - L.myTr); if (add > 0) { L.myTr += add; this.myTroops += add; } }
-          if (sk.type === "roar") L.foeMor = Math.max(5, L.foeMor - 0.3);
         });
         this.laneSkilled("foe", k).forEach(({ g, sk }) => {
-          if (sk.type === "school-wu") myLoss += g.wu * 0.35 * sd;
-          if (sk.type === "dualblade") myLoss += g.wu * 0.4 * sd;
-          if (sk.type === "volley" && Math.random() < 0.35) myLoss += randInt(60, 120) * sd;
-          if (sk.type === "school-ti") foeLoss *= 0.88;
           if (sk.type === "rescue") foeLoss *= 0.9;
           if (sk.type === "endure") foeLoss *= 0.8;
-          if (sk.type === "school-mei") L.foeMor = Math.min(100, L.foeMor + 0.2);
-          if (sk.type === "school-zheng") { const add = Math.min(15, L.foeTr0 - L.foeTr); if (add > 0) { L.foeTr += add; this.foeTroops += add; } }
-          if (sk.type === "roar") L.myMor = Math.max(5, L.myMor - 0.3);
         });
         myLoss = Math.min(L.myTr, myLoss); foeLoss = Math.min(L.foeTr, foeLoss);
         L.myTr -= myLoss; L.foeTr -= foeLoss;
@@ -2569,6 +2588,8 @@
       if (this.foeForm === "goose") {
         this.LANES.forEach(k => { const L = this.lanes[k]; if (!L.broken) L.myMor = Math.max(5, L.myMor - 0.4); });
       }
+      // 将魂主动技能：战线旁按钮冷却推进，冷却完毕自动发动（含视觉/日志/toast 提醒）
+      this.tickSkillCooldowns();
       // 敌军军令 AI：军令未罄时择机擂鼓或施计（计谋成败看战线上敌我智谋之和）
       if (this.tickN % 5 === 0 && this.foeOrders > 0 && Math.random() < 0.4) {
         const open = this.LANES.filter(k => !this.lanes[k].broken);
@@ -2705,6 +2726,18 @@
       if (this.armyHas(def, "counterspy")) p *= 0.5;
       return p;
     },
+    // 战线旁的将魂技能钮：图标 + 冷却环（--cdpct 0=就绪满环，1=刚触发空环），无持有者则不渲染
+    skillBadgeHtml(side, laneK) {
+      const L = this.lanes[laneK];
+      const holderKey = side + "SkillHolder", cdKey = side + "SkillCd", cdMaxKey = side + "SkillCdMax";
+      if (!L[holderKey]) return `<span class="fb-skillbtn-slot"></span>`;
+      const pos = side === "my" ? this.myPos[laneK] : this.foePos[laneK];
+      const g = pos.find(x => x.id === L[holderKey]);
+      if (!g || !this.alive(g)) return `<span class="fb-skillbtn-slot"></span>`;
+      const sk = Skill.of(g);
+      const pct = Math.max(0, Math.min(1, L[cdKey] / (L[cdMaxKey] || this.SKILL_CD)));
+      return `<span class="fb-skillbtn ${side}" id="fb-sk-${side}-${laneK}" style="--cdpct:${pct}" title="${g.name}【${sk.n}】冷却完毕自动发动">${sk.icon}</span>`;
+    },
     laneHtml(k) {
       const L = this.lanes[k];
       const myGs = this.myPos[k].map(g => this.alive(g) ? g.name : `<s>${g.name}</s>`).join("、");
@@ -2724,6 +2757,7 @@
           <div class="fb-mass foe" style="width:${100 - w}%"><span class="fb-trin" id="fb-ltrf-${k}">${Math.round(L.foeTr).toLocaleString()}</span></div>
         </div>
         <div class="fb-lane-gs"><span class="fb-lane-my">${myGs}</span><span class="fb-lane-foe">${foeGs}</span></div>
+        <div class="fb-lane-skl">${this.skillBadgeHtml("my", k)}${this.skillBadgeHtml("foe", k)}</div>
       </div>`;
     },
     renderClash() {
@@ -2771,6 +2805,18 @@
         const mm2 = $(`#fb-lmm-${k}`), mf2 = $(`#fb-lmf-${k}`);
         if (mm2) mm2.textContent = `💪${Math.round(L.myMor)}`;
         if (mf2) mf2.textContent = `💪${Math.round(L.foeMor)}`;
+        // 将魂技能钮：冷却环随刻推进；持有者刚出现/消失（DOM 尚无/多余该钮）时整线重绘一次
+        let badgeMismatch = false;
+        ["my", "foe"].forEach(side => {
+          const holder = L[side + "SkillHolder"];
+          const badge = document.getElementById(`fb-sk-${side}-${k}`);
+          if (!!holder !== !!badge) { badgeMismatch = true; return; }
+          if (badge) {
+            const pct = Math.max(0, Math.min(1, L[side + "SkillCd"] / (L[side + "SkillCdMax"] || this.SKILL_CD)));
+            badge.style.setProperty("--cdpct", pct);
+          }
+        });
+        if (badgeMismatch) { this.renderClash(); return; }
         if (L.broken && !el.classList.contains("done")) this.renderClash();
       });
       const mm = $("#fb-mor-my"), mf = $("#fb-mor-foe");

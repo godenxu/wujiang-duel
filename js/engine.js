@@ -60,24 +60,30 @@ function computeDamage(attacker, defender, atkTactic, defTactic, charged) {
   let dmg = (base * 0.32) * counter * mitigation * critMul * luck * atkMul * power;
 
   // 将魂 · 攻方增伤：斩铁/军神常驻、无双前三回合、白衣渡江首回合、虎痴残血、日本一兵以下克上
+  // skillTags 记录本次实际触发的将魂效果，供战报明示「特别提醒」
+  const skillTags = [];
   let skMul = (a.skDmgMul || 1);
-  if (a.skFirst3 && (attacker.turns || 0) <= 3) skMul *= a.skFirst3;
-  if (a.skFirstStrike && (attacker.turns || 0) <= 1) skMul *= a.skFirstStrike;
-  if (a.skRage && attacker.hp < attacker.maxHp * 0.3) skMul *= a.skRage;
-  if (a.skGiant && defender.maxHp > attacker.maxHp) skMul *= a.skGiant;
+  if (a.skFirst3 && (attacker.turns || 0) <= 3) { skMul *= a.skFirst3; skillTags.push(`⭐${a.name}`); }
+  if (a.skFirstStrike && (attacker.turns || 0) <= 1) { skMul *= a.skFirstStrike; skillTags.push(`⭐${a.name}`); }
+  if (a.skRage && attacker.hp < attacker.maxHp * 0.3) { skMul *= a.skRage; skillTags.push(`⭐${a.name}`); }
+  if (a.skGiant && defender.maxHp > attacker.maxHp) { skMul *= a.skGiant; skillTags.push(`⭐${a.name}`); }
   // 将魂 · 守方减伤：铁壁/无伤常驻、风林火山前三回合、隐忍残血
   let skDef = (d.skDefMul || 1);
-  if (d.skFirst3Def && (defender.turns || 0) <= 3) skDef *= d.skFirst3Def;
-  if (d.skLowDef && defender.hp < defender.maxHp * 0.35) skDef *= d.skLowDef;
+  if (d.skFirst3Def && (defender.turns || 0) <= 3) { skDef *= d.skFirst3Def; skillTags.push(`⭐${d.name}守`); }
+  if (d.skLowDef && defender.hp < defender.maxHp * 0.35) { skDef *= d.skLowDef; skillTags.push(`⭐${d.name}守`); }
   dmg *= skMul * skDef;
 
   // 暴击：由攻方「魅力」决定暴击率（猛攻/普攻/谋攻皆可触发），奇珍「暴击率」宝物额外加成，将魂「武圣」再加成
-  const critChance = Math.min(0.6, a.mei / 280) + (charged ? 0.35 : 0) + (a.critBonus || 0) / 100 + (a.skCrit || 0);
+  const skCritBonus = a.skCrit || 0;
+  const critChance = Math.min(0.6, a.mei / 280) + (charged ? 0.35 : 0) + (a.critBonus || 0) / 100 + skCritBonus;
   let crit = false;
-  if (Math.random() < critChance) { dmg *= 1.7; crit = true; }
+  if (Math.random() < critChance) {
+    dmg *= 1.7; crit = true;
+    if (skCritBonus > 0 && Math.random() < skCritBonus / critChance) skillTags.push(`⭐${a.name}`);
+  }
 
   dmg = Math.max(1, Math.round(dmg));
-  return { dmg, crit, counter, evaded: false };
+  return { dmg, crit, counter, evaded: false, skillTags: [...new Set(skillTags)] };
 }
 
 // 计策成功率：以双方「智力」差为主，各计策有不同基准；夹在 12%~92%
@@ -235,8 +241,13 @@ function firstMover(p1, p2) {
 function endTurn(f) {
   f.stam = Math.min(100, f.stam + staminaRegen(f.g));
   if (f.g.regenBonus) f.hp = Math.min(f.maxHp, f.hp + f.g.regenBonus);
-  if (f.g.skRegen) f.hp = Math.min(f.maxHp, f.hp + f.g.skRegen);   // 将魂「回气」
+  let skHeal = 0;
+  if (f.g.skRegen && f.hp < f.maxHp) {   // 将魂「回气」
+    skHeal = Math.min(f.g.skRegen, f.maxHp - f.hp);
+    f.hp += skHeal;
+  }
   if (f.atkMulT > 0) { f.atkMulT--; if (f.atkMulT === 0) f.atkMul = 1; }
+  return skHeal;
 }
 
 // 结算「一名武将的一个回合」（轮换出招）：可选免费计策(束缚/弱化) + 一个主行动。
@@ -251,7 +262,9 @@ function resolveTurn(attacker, defender, plan, who) {
     attacker.bound--;
     events.push({ who, type: "bound", attacker: attacker.g.name,
       text: `${attacker.g.name} 被束缚，本回合暂停出招！` });
-    endTurn(attacker);
+    const skHeal = endTurn(attacker);
+    if (skHeal > 0) events.push({ who, type: "skill", attacker: attacker.g.name,
+      text: `⭐ ${attacker.g.name} 将魂发动，运功调息恢复体力 ${skHeal}！` });
     return events;
   }
   attacker.turns = (attacker.turns || 0) + 1;   // 行动回合计数（将魂首几回合技能用）
@@ -348,7 +361,11 @@ function resolveTurn(attacker, defender, plan, who) {
         text: `💥 ${defender.g.name} 体力归零，被 ${attacker.g.name} 一击 KO！` });
     }
   }
-  endTurn(attacker);
+  const skHeal = endTurn(attacker);
+  if (skHeal > 0) {
+    events.push({ who, type: "skill", attacker: attacker.g.name,
+      text: `⭐ ${attacker.g.name} 将魂发动，运功调息恢复体力 ${skHeal}！` });
+  }
   return events;
 }
 
@@ -373,6 +390,7 @@ function buildHitText(atk, def, tactic, res, charged) {
   else if (res.counter <= 0.7) s += `，却被巧妙化解`;
   s += `，造成 ${res.dmg} 点伤害`;
   if (res.crit) s += " 💥暴击！";
+  if (res.skillTags && res.skillTags.length) s += `（${res.skillTags.join("、")}将魂发动）`;
   return s;
 }
 
