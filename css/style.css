@@ -1183,6 +1183,10 @@ html, body {
 .fb-mor-bar i { display: block; height: 100%; width: 100%; background: var(--hp-good); transition: width .4s, background .4s; }
 .fb-mor.foe .fb-mor-bar i { margin-left: auto; }
 .fb-mor b.fb-trnum { width: auto; min-width: 48px; }
+/* 总攻页只留兵力行：字体放大 */
+.fb-morales.big .fb-mor { font-size: 13px; }
+.fb-morales.big .fb-mor b.fb-trnum { font-size: 17px; min-width: 56px; }
+.fb-morales.big .fb-mor-bar { height: 10px; }
 .fb-lanes { display: flex; flex-direction: column; gap: 7px; margin: 8px 0; }
 .fb-lane { border-radius: 9px; padding: 6px 8px; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12); }
 .fb-lane.pickable { cursor: pointer; border-color: var(--cn-gold); box-shadow: 0 0 8px rgba(244,196,48,.35); }

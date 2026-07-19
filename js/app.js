@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607191335";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607191439";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -2081,10 +2081,10 @@
     POSITIONS: [["van", "前锋"], ["left", "左翼"], ["right", "右翼"], ["center", "中军"], ["reserve", "后路"]],
     LANES: ["van", "left", "right", "center", "reserve"],   // 五条战线全员接敌（后路亦是一线）
     FORMS: {
-      cone: { n: "锥形", icon: "🔺", desc: "前锋/中军战力 +20%", beats: "round" },
-      crane: { n: "鹤翼", icon: "🕊️", desc: "左右两翼战力 +20%", beats: "cone" },
-      round: { n: "方圆", icon: "🛡️", desc: "被推挤幅度 -25%", beats: "goose" },
-      goose: { n: "雁行", icon: "🏹", desc: "乱箭蚀敌：敌军士气持续流失", beats: "crane" },
+      cone: { n: "锥形", icon: "🔺", desc: "前锋/中军攻击 +20%", beats: "round" },
+      crane: { n: "鹤翼", icon: "🕊️", desc: "左右两翼攻击 +20%", beats: "cone" },
+      round: { n: "方圆", icon: "🛡️", desc: "全军守备 +25%", beats: "goose" },
+      goose: { n: "雁行", icon: "🏹", desc: "乱箭蚀敌：敌各线士气持续流失", beats: "crane" },
     },
     TERRAINS: {
       plain: { n: "平原", icon: "🌾", desc: "堂堂之阵，正面对决，无特殊规则" },
@@ -2158,6 +2158,10 @@
     laneZhi(side, laneK) {
       const pos = side === "my" ? this.myPos : this.foePos;
       return pos[laneK].filter(g => this.alive(g)).reduce((s, g) => s + g.zhi, 0);
+    },
+    laneMei(side, laneK) {
+      const pos = side === "my" ? this.myPos : this.foePos;
+      return pos[laneK].filter(g => this.alive(g)).reduce((s, g) => s + (g.mei || 0), 0);
     },
     chip(g, posK, idx, sel) {
       const dead = !this.alive(g);
@@ -2296,7 +2300,7 @@
         const myTr = this.myPos[k].reduce((s, g) => s + g.tong * 100, 0);
         const foeTr = this.foePos[k].reduce((s, g) => s + g.tong * 100, 0);
         this.lanes[k] = {
-          broken: null, myBoost: 0, foeBoost: 0, myHold: 0,
+          broken: null, myHold: 0,
           myTr, myTr0: myTr, foeTr, foeTr0: foeTr,
           myMor: this.myMorale, foeMor: this.foeMorale,
         };
@@ -2347,9 +2351,9 @@
       this.LANES.forEach(k => {
         const L = this.lanes[k];
         if (L.broken) return;
-        // 攻方战力打对方，守方战力抵折损：折损 ∝ 敌攻/我守；擂鼓攻倍增、鸣金守倍增
-        const myAtk = this.laneStat("my", k, "atk") * (now < L.myBoost ? 2 : 1);
-        const foeAtk = this.laneStat("foe", k, "atk") * (now < L.foeBoost ? 1.5 : 1);
+        // 攻方战力打对方，守方战力抵折损：折损 ∝ 敌攻/我守；鸣金守倍增（擂鼓改为振奋该线士气）
+        const myAtk = this.laneStat("my", k, "atk");
+        const foeAtk = this.laneStat("foe", k, "atk");
         const myDef = this.laneStat("my", k, "def") * (now < L.myHold ? 2 : 1);
         const foeDef = this.laneStat("foe", k, "def");
         const myLoss = Math.min(L.myTr, 220 * foeAtk / Math.max(myDef, 1) * (0.9 + Math.random() * 0.2) * sd);
@@ -2365,14 +2369,12 @@
         else if (L.myTr <= 0 && L.foeTr > 0) this.breach("foe", k);
         else if (L.myTr <= 0 && L.foeTr <= 0) this.breach(L.myMor >= L.foeMor ? "my" : "foe", k);
       });
-      // 雁行乱箭：敌方全军与各线士气持续流失
+      // 雁行乱箭：敌方各线士气持续流失（每刻 -0.4，肉眼可见地蚀敌）
       if (this.myForm === "goose") {
-        this.foeMorale = Math.max(0, this.foeMorale - 0.15);
-        this.LANES.forEach(k => { const L = this.lanes[k]; if (!L.broken) L.foeMor = Math.max(5, L.foeMor - 0.15); });
+        this.LANES.forEach(k => { const L = this.lanes[k]; if (!L.broken) L.foeMor = Math.max(5, L.foeMor - 0.4); });
       }
       if (this.foeForm === "goose") {
-        this.myMorale = Math.max(0, this.myMorale - 0.15);
-        this.LANES.forEach(k => { const L = this.lanes[k]; if (!L.broken) L.myMor = Math.max(5, L.myMor - 0.15); });
+        this.LANES.forEach(k => { const L = this.lanes[k]; if (!L.broken) L.myMor = Math.max(5, L.myMor - 0.4); });
       }
       // 敌军军令 AI：军令未罄时择机擂鼓或施计（计谋成败看战线上敌我智谋之和）
       if (this.tickN % 5 === 0 && this.foeOrders > 0 && Math.random() < 0.4) {
@@ -2381,8 +2383,9 @@
           this.foeOrders--;
           if (Math.random() < 0.5) {
             const losing = open.slice().sort((a, b) => (this.lanes[a].foeTr / this.lanes[a].foeTr0) - (this.lanes[b].foeTr / this.lanes[b].foeTr0))[0];
-            this.lanes[losing].foeBoost = now + 8000;
-            this.log(`🥁 敌阵中军擂鼓，${this.posName(losing)}线敌兵狂攻！（敌令余 ${this.foeOrders}）`);
+            const gain = Math.max(3, Math.round(this.laneMei("foe", losing) / 12));
+            this.lanes[losing].foeMor = Math.min(100, this.lanes[losing].foeMor + gain);
+            this.log(`🥁 敌阵中军擂鼓，${this.posName(losing)}线敌军士气大振（+${gain}，敌令余 ${this.foeOrders}）`);
           } else {
             const target = open.slice().sort((a, b) =>
               (this.laneZhi("foe", b) - this.laneZhi("my", b)) - (this.laneZhi("foe", a) - this.laneZhi("my", a)))[0];
@@ -2390,11 +2393,11 @@
             if (Math.random() < p) {
               const L = this.lanes[target];
               L.myMor = Math.max(5, L.myMor - 15);
-              this.myMorale = Math.max(0, this.myMorale - 5);
-              this.log(`🧠 敌军诡计得逞！${this.posName(target)}线我军中计大乱（该线士气 -15、全军 -5，敌令余 ${this.foeOrders}）`);
+              this.log(`🧠 敌军诡计得逞！${this.posName(target)}线我军中计大乱（该线士气 -15，敌令余 ${this.foeOrders}）`);
             } else {
-              this.foeMorale = Math.max(0, this.foeMorale - 5);
-              this.log(`🛡️ 敌军诡计被我军看破，敌全军士气 -5（敌令余 ${this.foeOrders}）`);
+              const L = this.lanes[target];
+              L.foeMor = Math.max(5, L.foeMor - 5);
+              this.log(`🛡️ 敌军诡计被我军看破，${this.posName(target)}线敌军自乱（该线敌士气 -5，敌令余 ${this.foeOrders}）`);
             }
           }
         }
@@ -2409,28 +2412,21 @@
       const nbs = { van: ["left", "right"], left: ["van", "center"], right: ["van", "center"], center: ["left", "right", "reserve"], reserve: ["center"] }[laneK] || [];
       if (winner === "my") {
         this.stats.myBreach++;
-        this.foeMorale = Math.max(0, this.foeMorale - 15);
-        this.myMorale = Math.min(100, this.myMorale + 8);
         nbs.forEach(n => { const N = this.lanes[n]; if (!N.broken) N.foeMor = Math.max(5, N.foeMor - 8); });
-        this.log(`💥 敌军${this.posName(laneK)}线兵力耗尽，全线告破！溃兵冲乱敌军邻线（邻线敌士气 -8），敌全军 -15`);
+        this.log(`💥 敌军${this.posName(laneK)}线兵力耗尽，全线告破！溃兵冲乱敌军邻线（邻线敌士气 -8）`);
       } else {
         this.stats.foeBreach++;
-        this.myMorale = Math.max(0, this.myMorale - 15);
-        this.foeMorale = Math.min(100, this.foeMorale + 8);
         nbs.forEach(n => { const N = this.lanes[n]; if (!N.broken) N.myMor = Math.max(5, N.myMor - 8); });
-        this.log(`⚠️ 我军${this.posName(laneK)}线兵力耗尽，战线失守！溃兵冲乱邻线（邻线我士气 -8），全军 -15`);
+        this.log(`⚠️ 我军${this.posName(laneK)}线兵力耗尽，战线失守！溃兵冲乱邻线（邻线我士气 -8）`);
       }
     },
     checkClashEnd() {
+      // 战线士气再低也不判负：唯兵力耗尽定胜负——一方五线兵力尽墨即败
+      if (this.foeTroops <= 0) { this.finish(true, "敌军五线兵力折损殆尽，全军覆没"); return true; }
+      if (this.myTroops <= 0) { this.finish(false, "我军五线兵力折损殆尽，力竭而败"); return true; }
       const myB = this.LANES.filter(k => this.lanes[k].broken === "my").length;
       const foeB = this.LANES.filter(k => this.lanes[k].broken === "foe").length;
-      if (this.foeMorale <= 0) { this.finish(true, "敌军士气崩溃，全线弃甲曳兵"); return true; }
-      if (this.myMorale <= 0) { this.finish(false, "我军士气崩溃，全线溃退"); return true; }
-      if (this.foeTroops <= 0) { this.finish(true, "敌军兵力折损殆尽，无力再战"); return true; }
-      if (this.myTroops <= 0) { this.finish(false, "我军兵力折损殆尽，力竭而退"); return true; }
-      if (myB >= 3) { this.finish(true, `连破敌军 ${myB} 线，敌阵土崩瓦解`); return true; }
-      if (foeB >= 3) { this.finish(false, `我军 ${foeB} 线失守，阵脚大乱`); return true; }
-      if (myB + foeB >= 5) { this.finish(myB > foeB, "五线战罢，胜负已分"); return true; }
+      if (myB + foeB >= 5) { this.finish(this.myTroops > this.foeTroops, "五线战罢，存兵多者胜"); return true; }
       return false;
     },
     /* 军令：点军令钮再点目标战线（含奇袭） */
@@ -2450,18 +2446,23 @@
           L.foeTr = Math.max(0, L.foeTr - kill);
           this.foeTroops = Math.max(0, this.foeTroops - kill);
           L.foeMor = Math.max(5, L.foeMor - 10);
-          this.foeMorale = Math.max(0, this.foeMorale - 6);
-          this.log(`🐎 ${g.name} 奇袭${this.posName(laneK)}线侧后得手！焚粮劫寨斩 ${kill.toLocaleString()} 众（该线敌士气 -10、全军 -6）`);
+          this.log(`🐎 ${g.name} 奇袭${this.posName(laneK)}线侧后得手！焚粮劫寨斩 ${kill.toLocaleString()} 众（该线敌士气 -10）`);
           if (L.foeTr <= 0) this.breach("my", laneK);
         } else {
           this.dead.add(g.id); this.stats.myFall++;
-          this.myMorale = Math.max(0, this.myMorale - 10);
-          this.log(`💀 ${g.name} 奇袭${this.posName(laneK)}线被敌军识破，力战殉国——我军士气 -10`);
+          const RL = this.lanes.reserve;
+          if (RL && !RL.broken) RL.myMor = Math.max(5, RL.myMor - 10);
+          this.log(`💀 ${g.name} 奇袭${this.posName(laneK)}线被敌军识破，力战殉国——后路军心动摇（该线士气 -10）`);
         }
         this.afterOrder(); return;
       }
       this.orders--;
-      if (kind === "drum") { L.myBoost = now + 9000; this.log(`🥁 擂鼓！${this.posName(laneK)}线我军攻势倍增（9 秒）`); }
+      if (kind === "drum") {
+        // 擂鼓振军：提振该线士气，幅度取决于该线武将魅力总值
+        const gain = Math.max(3, Math.round(this.laneMei("my", laneK) / 12));
+        L.myMor = Math.min(100, L.myMor + gain);
+        this.log(`🥁 擂鼓！${this.posName(laneK)}线将士闻声振奋（魅力合计 ${this.laneMei("my", laneK)}，该线士气 +${gain}）`);
+      }
       if (kind === "hold") { L.myHold = now + 9000; this.log(`🛡️ 鸣金稳守！${this.posName(laneK)}线我军守备倍增、结阵如山（9 秒）`); }
       if (kind === "fire") {
         const burn = randInt(800, 1500);
@@ -2477,27 +2478,28 @@
         const p = Math.max(0.15, Math.min(0.85, 0.45 + (myZ - foeZ) / 150));
         if (Math.random() < p) {
           L.foeMor = Math.max(5, L.foeMor - 15);
-          this.foeMorale = Math.max(0, this.foeMorale - 5);
-          this.log(`🧠 计谋得手！${this.posName(laneK)}线敌军中计大乱（该线士气 -15、全军 -5，我智 ${myZ} 对敌智 ${foeZ}）`);
+          this.log(`🧠 计谋得手！${this.posName(laneK)}线敌军中计大乱（该线士气 -15，我智 ${myZ} 对敌智 ${foeZ}）`);
         } else {
-          this.myMorale = Math.max(0, this.myMorale - 5);
-          this.log(`💫 计谋被敌军看破，反损我军士气 -5（我智 ${myZ} 对敌智 ${foeZ}）`);
+          L.myMor = Math.max(5, L.myMor - 5);
+          this.log(`💫 计谋被敌军看破，${this.posName(laneK)}线我军反受其乱（该线士气 -5，我智 ${myZ} 对敌智 ${foeZ}）`);
         }
       }
       this.afterOrder();
     },
     afterOrder() { this.orderMode = null; this.renderClash(); },
-    moraleBarHtml() {
-      // 兵力条在上、士气条在下；双方同一套配色，按数值高低变色（如单挑体力条：过半绿、中段黄、危殆红）
+    // showMorale=false（总攻页）：各线士气各自为战，总士气已无意义——只留兵力行并放大字体
+    moraleBarHtml(showMorale = true) {
       const trMy = Math.max(0, this.myTroops / this.myTroops0), trFoe = Math.max(0, this.foeTroops / this.foeTroops0);
-      return `<div class="fb-morales">
+      // 兵力条在上、士气条在下；双方同一套配色，按数值高低变色（如单挑体力条：过半绿、中段黄、危殆红）
+      let h = `<div class="fb-morales ${showMorale ? "" : "big"}">
         <div class="fb-mor my"><span>我军兵力</span><div class="fb-mor-bar"><i id="fb-trbar-my" style="width:${trMy * 100}%;background:${hpColor(trMy)}"></i></div><b class="fb-trnum" id="fb-tr-my">${Math.max(0, Math.round(this.myTroops)).toLocaleString()}</b></div>
-        <div class="fb-mor foe"><b class="fb-trnum" id="fb-tr-foe">${Math.max(0, Math.round(this.foeTroops)).toLocaleString()}</b><div class="fb-mor-bar foe"><i id="fb-trbar-foe" style="width:${trFoe * 100}%;background:${hpColor(trFoe)}"></i></div><span>敌军兵力</span></div>
-      </div>
-      <div class="fb-morales">
+        <div class="fb-mor foe"><span>敌军兵力</span><div class="fb-mor-bar foe"><i id="fb-trbar-foe" style="width:${trFoe * 100}%;background:${hpColor(trFoe)}"></i></div><b class="fb-trnum" id="fb-tr-foe">${Math.max(0, Math.round(this.foeTroops)).toLocaleString()}</b></div>
+      </div>`;
+      if (showMorale) h += `<div class="fb-morales">
         <div class="fb-mor my"><span>我军士气</span><div class="fb-mor-bar"><i id="fb-morbar-my" style="width:${this.myMorale}%;background:${hpColor(this.myMorale / 100)}"></i></div><b id="fb-mor-my">${Math.round(this.myMorale)}</b></div>
         <div class="fb-mor foe"><b id="fb-mor-foe">${Math.round(this.foeMorale)}</b><div class="fb-mor-bar foe"><i id="fb-morbar-foe" style="width:${this.foeMorale}%;background:${hpColor(this.foeMorale / 100)}"></i></div><span>敌军士气</span></div>
       </div>`;
+      return h;
     },
     laneW(L) { const tot = L.myTr + L.foeTr; return tot > 0 ? L.myTr / tot * 100 : 50; },
     laneHtml(k) {
@@ -2526,7 +2528,7 @@
         ? `🚩 点选一条战线为<b>主攻</b>（战力 +12%），再击鼓总攻`
         : `🥁 挥军破阵${this.orderMode ? ` · 请点选【${{ drum: "擂鼓强攻", hold: "鸣金稳守", fire: "火攻", scheme: "计谋", raid: "奇袭" }[this.orderMode]}】的目标战线` : ""}`;
       $("#fb-content").innerHTML = `
-        <div class="fb-banner">${banner}${this.moraleBarHtml()}</div>
+        <div class="fb-banner">${banner}${this.moraleBarHtml(false)}</div>
         <div class="fb-lanes" id="fb-lanes">${this.LANES.map(k => this.laneHtml(k)).join("")}</div>
         ${this.assault ? `<div class="fb-orders">
           <span class="fb-ord-left">军令 <b id="fb-orders-left">${this.orders}</b> · 敌令 <b id="fb-orders-foe">${this.foeOrders}</b></span>
@@ -2621,8 +2623,7 @@
           ⚔️ 阵前斗将：${this.myDuelWins} 胜 ${this.foeDuelWins} 负<br>
           💥 破阵：突破 ${this.stats.myBreach} 线 · 失守 ${this.stats.foeBreach} 线<br>
           💀 阵亡：我方 ${this.stats.myFall} 将 · 敌方 ${this.stats.foeFall} 将<br>
-          ⚔️ 余兵：我 ${Math.max(0, Math.round(this.myTroops)).toLocaleString()} / ${this.myTroops0.toLocaleString()} · 敌 ${Math.max(0, Math.round(this.foeTroops)).toLocaleString()} / ${this.foeTroops0.toLocaleString()}<br>
-          🚩 终局士气：我 ${Math.round(this.myMorale)} · 敌 ${Math.round(this.foeMorale)}</div>
+          ⚔️ 余兵：我 ${Math.max(0, Math.round(this.myTroops)).toLocaleString()} / ${this.myTroops0.toLocaleString()} · 敌 ${Math.max(0, Math.round(this.foeTroops)).toLocaleString()} / ${this.foeTroops0.toLocaleString()}</div>
         <div class="btns">
           <button class="btn-primary" id="fb-again">再战一场</button>
           <button class="btn-ghost" id="fb-home">返回菜单</button>
