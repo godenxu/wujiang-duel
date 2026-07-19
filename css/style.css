@@ -1156,6 +1156,10 @@ html, body {
   background: rgba(255,255,255,.06); color: var(--paper); font-family: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
 }
 .fb-chip small { display: block; font-weight: 400; font-size: 11px; opacity: .65; }
+/* 将魂技能标签：门派浅金、名将专属亮橙 */
+.fb-skl { display: inline-block; font-size: 10px; font-weight: 700; color: #d8c27a; opacity: .95; }
+.fb-skl.named { color: #ffa94d; }
+.fb-chip .fb-skl { display: block; }
 .fb-chip.cn { border-left: 3px solid var(--cn-red); }
 .fb-chip.jp { border-left: 3px solid var(--jp-indigo); }
 .fb-chip.sel { border-color: var(--cn-gold); background: rgba(244,196,48,.2); }
