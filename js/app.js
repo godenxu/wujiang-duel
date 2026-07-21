@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607200654";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607212244";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -69,13 +69,9 @@
   const DIMS = [["ti", "体力"], ["wu", "武力"], ["tong", "统帅"], ["zhi", "智力"], ["zheng", "政治"], ["mei", "魅力"]];
   function sumStats(g) { return g.ti + g.wu + g.tong + g.zhi + g.zheng + g.mei; }
   function gradeChip(v) { const r = rateLetter(v); return `<span class="g grade-${r}">${r}</span>`; }
-  // 武将评分 = 六维之和 + 单项突出加成（每项达 A 及以上：(该项数值-90)×5，未达 A 不加分）
-  function ratingScore(g) {
-    let s = sumStats(g);
-    DIMS.forEach(([k]) => { s += Math.max(0, (g[k] - 90) * 5); });
-    return s;
-  }
-  // 武将评级：武将评分（含突出加成）÷6，再套用与单项相同的评级阈值
+  // 武将评分 = 六维之和，不设单项突出加成
+  function ratingScore(g) { return sumStats(g); }
+  // 武将评级：武将评分（即六维之和）÷6，再套用与单项相同的评级阈值
   function warriorRating(g) { return rateLetter(Math.round(ratingScore(g) / 6)); }
   function ratingChip(g) { const r = warriorRating(g); return `<span class="g grade-${r}">${r}</span>`; }
   const GRADE_COLOR = { SS: "#f4c430", S: "#ff4d3d", A: "#ff9020", B: "#3b9aff", C: "#46c357", D: "#c7923f", E: "#b0705a" };
@@ -279,7 +275,7 @@
       <div class="dc-body">
         <div class="radar-wrap dc-radar">${radarSVG(hg, 168)}</div>
         <div class="dc-stats">
-          <div class="overall-line">评分 <b class="ov-sum">${ratingScore(hg)}</b> <span class="ov-num">(六维${sumStats(hg)}+突出${Math.round(ratingScore(hg) - sumStats(hg))})</span> ${ratingChip(hg)}</div>
+          <div class="overall-line">评分 <b class="ov-sum">${ratingScore(hg)}</b> ${ratingChip(hg)}</div>
           <div class="stat-rows">${statRow('体力', hg.ti, hg.ti - raw.ti)}${statRow('武力', hg.wu, hg.wu - raw.wu)}${statRow('统帅', hg.tong, hg.tong - raw.tong)}${statRow('智力', hg.zhi, hg.zhi - raw.zhi)}${statRow('政治', hg.zheng, hg.zheng - raw.zheng)}${statRow('魅力', hg.mei, hg.mei - raw.mei)}</div>
         </div>
       </div>
@@ -510,8 +506,12 @@
     el.className = `fighter ${isLeft ? 'left' : 'right'} ${sideClass}`;
     const g = fighter.g;
     $(".favatar", el).textContent = avatarChar(g.name);
-    $(".fname", el).textContent = g.name;
-    $(".ftotal", el).innerHTML = `<span class="ft-lbl">总</span><span class="ft-row"><b>${ratingScore(g)}</b>${ratingChip(g)}</span>`;
+    const fnameEl = $(".fname", el);
+    fnameEl.textContent = g.name;
+    // 姓名过长时逐级缩小字体，确保单行显示不被卡片边界截断（原字号 16px 恰容 4 字）
+    fnameEl.style.fontSize = g.name.length >= 7 ? "10px" : g.name.length >= 5 ? "12px" : "";
+    const sk = Skill.of(g);
+    $(".ftotal", el).innerHTML = `<span class="ft-lbl" title="${sk.n}：${sk.desc}">${sk.n}</span><span class="ft-row"><b>${ratingScore(g)}</b>${ratingChip(g)}</span>`;
     // 头像/姓名右侧的五维（评级 + 数值彩条 + 数值；体力另以下方血条呈现）
     $(".fstats", el).innerHTML = DIMS.filter(([k]) => k !== "ti").map(([k, label]) =>
       `<div class="fs-row"><span class="fs-lbl">${label[0]}</span>` +
@@ -2183,6 +2183,9 @@
       return stats;
     },
     of(g) {
+      // 自建武将可指定「将魂来源」：习得武将库中某将的将魂（见 RPG.create 的 skillGeneralId），
+      // heroGeneral() 据此在 g.skillOverride 上挂好已算出的技能对象，此处优先读取
+      if (g.skillOverride) return g.skillOverride;
       const nm = this.NAMED[g.name];
       if (nm) return { ...nm, icon: "⭐", named: true };
       if (!this._dimStats) this._dimStats = this._computeDimStats();
@@ -2231,6 +2234,30 @@
     },
   };
   window.Skill = Skill;   // 供 engine.js 的 makeFighter 挂载单挑侧技能旗标
+
+  // 自建武将「将魂来源」选择器：列出武将库全员供搜索挑选，选定后回调 onPick(id)（id 为 null 表示不指定，
+  // 按自身六维最突出一项自动归派门派技能，即维持原有默认行为）；供开局向导与旧版创建入口共用
+  function openSkillGenPicker(curId, onPick) {
+    const render = (kw) => {
+      let arr = DB.list.slice().sort((a, b) => ratingScore(b) - ratingScore(a));
+      if (kw) arr = arr.filter(g => g.name.includes(kw));
+      return arr.slice(0, 80).map(g => { const sk = Skill.of(g);
+        return `<div class="card ${g.side} ${g.id === curId ? 'selected' : ''}" data-id="${g.id}">
+          <div class="avatar">${avatarChar(g.name)}</div>
+          <div class="cname">${g.name}</div><div class="cwu">⭐${sk.n}</div></div>`; }).join("");
+    };
+    openOverlay(`<div class="result-card detail-card">
+      <h1>选择将魂来源</h1>
+      <div class="wdesc">从武将库挑一位武将，习得其「将魂」技能（单挑/野战皆生效）。</div>
+      <div class="search-box"><input id="skg-search" placeholder="搜索…"></div>
+      <div class="grid" id="skg-grid" style="max-height:50vh;overflow-y:auto">${render("")}</div>
+      <div class="btns"><button class="btn-ghost" id="skg-clear">不指定（按自身六维自动归派）</button></div>
+    </div>`, { modal: true });
+    const bind = () => $$("#skg-grid .card").forEach(c => c.onclick = () => { onPick(+c.dataset.id); closeOverlay(); });
+    bind();
+    $("#skg-search").oninput = () => { $("#skg-grid").innerHTML = render($("#skg-search").value.trim()); bind(); };
+    $("#skg-clear").onclick = () => { onPick(null); closeOverlay(); };
+  }
 
   const FieldBattle = {
     gen: 0, phase: null, timer: null, side: "cn",
@@ -3932,6 +3959,14 @@
       return `<br>💰 金币 ${gain > 0 ? `<b style="color:#b8860b">+${gain}</b> · ` : ""}现有 <b style="color:#b8860b">${this.gold()}</b>`;
     },
     spend(n) { if (this.data.gold < n) return false; this.data.gold -= n; this.save(); return true; },
+    // 强制扣减金币（不同于 spend：余额不足也照扣，封底 0）；返回实际扣减额，供边境战败绩赔付等场景使用
+    loseGold(n) {
+      if (!RPG.char || n <= 0) return 0;
+      n = Math.round(n);
+      const actual = Math.min(this.data.gold, n);
+      this.data.gold -= actual; this.save();
+      return actual;
+    },
     pts(id) { return this.data.friends[id] || 0; },
     MAX_FRIEND: 300,
     // 返回实际增加量（可能因已达/接近上限而低于 n，甚至为 0）
@@ -4487,6 +4522,11 @@
       const c = this.char;
       const g = { id: -1, name: c.name, side: c.side, title: `Lv.${c.level} 历练者`, intro: c.intro || "你亲手培养的武将。" };
       DIMS.forEach(([k]) => g[k] = this.eff(c, k));
+      // 自建时若指定了「将魂来源」，习得该武将库武将的将魂技能（覆盖按自身六维自动归派的默认行为）
+      if (c.skillGeneralId != null) {
+        const src = DB.get(c.skillGeneralId);
+        if (src) g.skillOverride = Skill.of(src);
+      }
       const gg = Armory.geared(g, "hero");
       // 医馆驻城加成：单挑体力（气血）回复，与奇珍「气血回复」叠加；gg 必是本次调用新建的对象（g 未被共享），可直接改写
       const m = typeof Campaign !== "undefined" && Campaign.mapState();
@@ -4494,10 +4534,10 @@
       if (hp) gg.regenBonus = (gg.regenBonus || 0) + hp;
       return gg;
     },
-    // 随机生成基线六维(最大不超过80) + 一笔由玩家自行分配的加点(最多30)
+    // 随机生成基线六维(最大不超过60) + 一笔由玩家自行分配的加点(最多30)
     rollStats() {
       const base = {};
-      DIMS.forEach(([k]) => base[k] = randInt(45, 80));
+      DIMS.forEach(([k]) => base[k] = randInt(30, 60));
       return { base, points: randInt(18, 30) };
     },
 
@@ -4538,6 +4578,8 @@
           }).join("")}
             <div class="rr-sum">基线评分 <b>${ratingScore(r.base)}</b> ${ratingChip(r.base)} · 可分配加点 <b style="color:var(--cn-gold)">${r.points}</b></div>
           </div>
+          <div class="rf-row"><label>将魂</label>
+            <button class="cup-go" id="rpg-skill-pick" style="flex:1">${this._skillGenId != null ? `⭐ 习得「${(DB.get(this._skillGenId) || {}).name}」的将魂` : "选择武将库中一将，习得其将魂（可不选）"}</button></div>
           <div class="rpg-create-btns">
             <button class="cup-go" id="rpg-reroll">🎲 重新随机</button>
             <button class="cup-go primary" id="rpg-create-go">✓ 出道（去分配加点）</button>
@@ -4552,9 +4594,10 @@
       $$(".rpg-ctab").forEach(t => t.onclick = () => { this._roll = null; this.renderCreate(t.dataset.tab); });
       if (tab === "custom") {
         $("#rpg-reroll").onclick = () => { this._name = $("#rpg-name").value; this._roll = this.rollStats(); this.renderCreate("custom"); };
+        $("#rpg-skill-pick").onclick = () => { this._name = $("#rpg-name").value; openSkillGenPicker(this._skillGenId, id => { this._skillGenId = id; this.renderCreate("custom"); }); };
         $("#rpg-create-go").onclick = () => {
           const name = ($("#rpg-name").value || "").trim() || "无名客";
-          this.create(name, $("#rpg-side").value, this._roll.base, this._roll.points);
+          this.create(name, $("#rpg-side").value, this._roll.base, this._roll.points, undefined, this._skillGenId);
         };
       } else {
         this.renderPickGrid();
@@ -4574,10 +4617,10 @@
         this.create(g.name, g.side, base, 15, g.title); // 名将以其属性为基线，另赠 15 加点
       });
     },
-    create(name, side, base, points, title) {
+    create(name, side, base, points, title, skillGeneralId) {
       const alloc = {}; DIMS.forEach(([k]) => alloc[k] = 0);
-      this.char = { name, side, title: title || "", base: clone(base), alloc, level: 1, exp: 0, points: points || 0, wins: 0, losses: 0, growthMul: 1, talents: [] };
-      this._roll = null; this._name = "";
+      this.char = { name, side, title: title || "", base: clone(base), alloc, level: 1, exp: 0, points: points || 0, wins: 0, losses: 0, growthMul: 1, talents: [], skillGeneralId: skillGeneralId != null ? skillGeneralId : null };
+      this._roll = null; this._name = ""; this._skillGenId = null;
       this.save(); AudioSystem.sfx.victory(); this.renderHub();
     },
     // 扮演史实武将开局：少年模式(young)按默认值60%起步、最高两项属性定为本命天赋(成长+50%、可破默认上限)；
@@ -4602,7 +4645,6 @@
       const c = this.char, C = $("#rpg-content");
       const need = this.expNeed(c.level), expPct = Math.min(100, c.exp / need * 100);
       const hg = this.heroGeneral();   // 含已装备宝物的加成，用于展示当前真实作战数值
-      const sum = DIMS.reduce((s, [k]) => s + hg[k], 0);
       const dims = DIMS.map(([k, l]) => {
         const raw = this.eff(c, k), v = hg[k], gear = v - raw;
         const isTalent = c.talents && c.talents.includes(k);
@@ -4632,7 +4674,6 @@
               <span class="rsm-num">${ratingScore(hg)}</span>
               ${ratingChip(hg)}
               <span class="rsm-points">可分配加点：<b>${c.points}</b>${c.points > 0 ? '（点 ＋ 分配）' : ''}</span>
-              <span class="rsm-sub">六维 ${sum} + 突出 ${Math.round(ratingScore(hg) - sum)}</span>
             </div>
             <div class="rpg-dims">${dims}</div>
           </div>
@@ -5250,8 +5291,8 @@
   }
   function calLabel(day) { const d = calYMD(day); return `${d.year}年${d.month}月${d.dom}日`; }
   function isMonthEnd(day) { return day % 30 === 0; }
-  // 武将大会：每季度第二月（2/5/8/11 月）第 1 天举行
-  function isTournamentDay(day) { const d = calYMD(day); return [2, 5, 8, 11].includes(d.month) && d.dom === 1; }
+  // 武将大会：每月 15 日举行
+  function isTournamentDay(day) { const d = calYMD(day); return d.dom === 15; }
   // 城池归属（可随边境阵营大战易主，独立于武将分布用的静态 c.side）：对马岛海路中转站初始划归战国一方，
   // 其余城池按其固有阵营起始归属
   function initCityOwner() {
@@ -5404,6 +5445,17 @@
       const n = this.npcGet(m, cityId);
       if (!n) return 0;
       return Math.round(ESTATE_TYPES[CITY_ESTATE[cityId]].rate * this.LV_MULT[n.lv - 1] * Prosper.mult(m, cityId));
+    },
+    // 不论城池当前处于何种产业状态（己方已置办 / 敌营经营中 / 尚未置办 / 无产业位），统一估算其金币日产出，
+    // 供边境战事按「所夺/被夺城池日产出」结算战果犒赏/赔付（见 rowData 同款兜底逻辑）
+    cityDailyGold(m, cityId) {
+      const t = this.typeOf(cityId);
+      if (!t) return 0;
+      const est = this.get(m, cityId);
+      if (est) return this.dailyRate(m, cityId);
+      const npc = this.npcGet(m, cityId);
+      if (npc) return this.npcDailyRate(m, cityId);
+      return Math.round(t.rate * Prosper.mult(m, cityId));
     },
     // 懒结算：按距上次结算的天数计入；被敌方占据期间颗粒无收（天数照样翻篇）。
     // 有掌柜时金币由掌柜逐日代收直接入账（不进待收、不受 15 天积攒上限，商队行情按整段一次判定），
@@ -6258,8 +6310,8 @@
       if (changed) this.save();
       return m;
     },
-    // 名声九阶：数值上限 9999，各阶对应行动力上限/历练/武道会/集市/悬赏/铁匠铺渐进解锁（见 recalcApMax 与各处 fameTierIndex 判定）
-    FAME_MAX: 9999,
+    // 名声九阶：数值上限 10000，各阶对应行动力上限/历练/武道会/集市/悬赏/铁匠铺渐进解锁（见 recalcApMax 与各处 fameTierIndex 判定）
+    FAME_MAX: 10000,
     FAME_TIERS: [
       { n: "无名之辈", min: 0 },
       { n: "略有耳闻", min: 150 },
@@ -6281,10 +6333,11 @@
     // 名动一国（第 5 阶）解锁时：眼线渐广，每城悬赏榜永久 +1 条空缺（仅触发一次，直接补进当前各城悬赏列表）
     BOUNTY_BONUS_TIER: 5,
     // 增加名声；跨阶时提示，重算行动力上限，并在特定阶梯触发一次性福利
+    // 各处调用方仍按原数值传参，此处统一减半入账，使名声整体积累速度放缓一倍
     addFame(n) {
       const m = this.mapState(); if (!m || !n) return;
       const before = this.fameTierIndex(m.fame || 0);
-      m.fame = Math.min(this.FAME_MAX, (m.fame || 0) + n);
+      m.fame = Math.min(this.FAME_MAX, (m.fame || 0) + Math.round(n / 2));
       const after = this.fameTierIndex(m.fame);
       this.recalcApMax();
       if (after >= this.BOUNTY_BONUS_TIER && before < this.BOUNTY_BONUS_TIER && m.bounties) {
@@ -6346,7 +6399,7 @@
     open() {
       this.step = 1;
       this.state = { charType: null, generalId: null, difficulty: null, custom: null, distribution: "historical" };
-      this._roll = null; this._name = ""; this._genSearch = "";
+      this._roll = null; this._name = ""; this._genSearch = ""; this._skillGenId = null;
       this.render();
       showScreen("onboard");
     },
@@ -6392,6 +6445,8 @@
           }).join("")}
             <div class="rr-sum">基线评分 <b>${ratingScore(r.base)}</b> ${ratingChip(r.base)} · 可分配加点 <b style="color:var(--cn-gold)">${r.points}</b></div>
           </div>
+          <div class="rf-row"><label>将魂</label>
+            <button class="cup-go" id="ob-skill-pick" style="flex:1">${this._skillGenId != null ? `⭐ 习得「${(DB.get(this._skillGenId) || {}).name}」的将魂` : "选择武将库中一将，习得其将魂（可不选）"}</button></div>
           <div class="rpg-create-btns">
             <button class="cup-go" id="ob-reroll">🎲 重新随机</button>
           </div>
@@ -6433,7 +6488,8 @@
       if (s.charType === "custom") {
         av = avatarChar(s.custom.name); name = s.custom.name;
         bg = s.custom.side === 'cn' ? 'linear-gradient(135deg,var(--cn-red),#7a1420)' : 'linear-gradient(135deg,var(--jp-indigo),#141e3c)';
-        desc = `自创武将 · ${s.custom.side === 'cn' ? '三国风' : '战国风'} · 基线评分 ${ratingScore(s.custom.base)}`;
+        const skillSrc = s.custom.skillGeneralId != null ? DB.get(s.custom.skillGeneralId) : null;
+        desc = `自创武将 · ${s.custom.side === 'cn' ? '三国风' : '战国风'} · 基线评分 ${ratingScore(s.custom.base)}${skillSrc ? ` · 将魂习自「${skillSrc.name}」（${Skill.of(skillSrc).n}）` : ''}`;
       } else {
         const g = DB.get(s.generalId);
         av = avatarChar(g.name); name = g.name;
@@ -6492,11 +6548,15 @@
       const nameInput = $("#ob-name"); if (nameInput) nameInput.oninput = () => { this._name = nameInput.value; };
       const sideSel = $("#ob-side"); if (sideSel) sideSel.onchange = () => { this._side = sideSel.value; };
       const reroll = $("#ob-reroll"); if (reroll) reroll.onclick = () => { this._name = $("#ob-name").value; this._side = $("#ob-side").value; this._roll = RPG.rollStats(); this.render(); };
+      const skillPick = $("#ob-skill-pick"); if (skillPick) skillPick.onclick = () => {
+        this._name = $("#ob-name").value; this._side = $("#ob-side").value;
+        openSkillGenPicker(this._skillGenId, id => { this._skillGenId = id; this.render(); });
+      };
       const customNext = $("#ob-custom-next"); if (customNext) customNext.onclick = () => {
         const name = ($("#ob-name").value || "").trim() || "无名客";
         const side = $("#ob-side").value;
-        this.state.custom = { name, side, base: this._roll.base, points: this._roll.points };
-        this._roll = null; this._name = ""; this.render();
+        this.state.custom = { name, side, base: this._roll.base, points: this._roll.points, skillGeneralId: this._skillGenId };
+        this._roll = null; this._name = ""; this._skillGenId = null; this.render();
       };
       const genSearch = $("#ob-gen-search");
       if (genSearch) { genSearch.oninput = () => { this._genSearch = genSearch.value; $("#ob-gen-grid").innerHTML = this.genGridHtml(); this.bindGenCards(); }; this.bindGenCards(); }
@@ -6517,7 +6577,7 @@
       const s = this.state;
       const side = s.charType === "custom" ? s.custom.side : (DB.get(s.generalId) || {}).side;
       Campaign.reset({ charType: s.charType, difficulty: s.difficulty || null, distribution: s.distribution, side });
-      if (s.charType === "custom") RPG.create(s.custom.name, s.custom.side, s.custom.base, s.custom.points);
+      if (s.charType === "custom") RPG.create(s.custom.name, s.custom.side, s.custom.base, s.custom.points, undefined, s.custom.skillGeneralId);
       else RPG.createFromGeneral(DB.get(s.generalId), s.difficulty);
       toast(`🎉 ${RPG.char.name}，你的武将人生开始了！`);
       MapUI.open();
@@ -6532,7 +6592,8 @@
   const JAPAN_LAND_PATH = "M90,18 L94,26 L92,34 L90,42 L88,50 L84,56 L80,62 L74,68 L70,74 L68,80 L66,86 L58,88 L54,84 L50,78 L52,70 L56,62 L60,54 L62,46 L66,38 L68,30 L70,22 L74,16 L82,14 Z";
   const MapZoom = { scale: 1, x: 0, y: 0 };
   const MapUI = {
-    BORDER_WAR_WIN_BONUS: 1000,   // 己方边境战获胜的特殊犒赏（不小于1000，无论亲征与否）
+    // 边境战胜负犒赏/赔付：不再是固定数额，改为所夺/被夺城池金币日产出的倍数（约合一月产出），见 resolveBorderWar 的 onDone
+    BORDER_WAR_GOLD_DAYS: 30,
     open() {
       const m = Campaign.ensureMap();   // 旧版本存档自动补建地图状态，保证"继续游戏"总能进入
       if (!m || !RPG.char) { showScreen("home"); return; }
@@ -6642,7 +6703,7 @@
         <div class="mc-roster narrow triple">${appearedHere.map(g => `<button class="mc-gen ${g.side}" data-id="${g.id}">
           <span class="mcg-name">${g.name}</span>
         </button>`).join("") || '<div class="empty" style="grid-column:1/-1;width:100%;padding:14px 4px;white-space:normal;">这座城暂无现身的武将，游历天下终会遇见他们。</div>'}</div>
-        <button class="cup-go allgen-btn" id="map-visit-all">🚶 一键拜访</button>`;
+        <button class="cup-go allgen-btn" id="map-visit-all" ${m.ap <= 0 ? "disabled" : ""}>🚶 一键拜访（耗 1⚡）</button>`;
     },
     cityPanelHtml(m) {
       const c = cityDef(m.curCity);
@@ -7194,23 +7255,27 @@
       DIMS.forEach(([k]) => { g[k] = Math.max(40, Math.min(110, hg[k] - randInt(0, 12) + randInt(0, 8))); });
       return g;
     },
-    // 一键拜访：本城所有可拜访（己方阵营、友谊未满、今日未访）的已现身武将一次访遍，汇总提示
+    // 一键拜访：本城所有可拜访（己方阵营、友谊未满、今日未访）的已现身武将一次访遍，汇总提示；耗 1 点行动力
     oneClickVisit() {
       const m = Campaign.mapState();
+      if (m.ap <= 0) { toast(`今日行动力已耗尽，请先宿营`); return; }
       const today = Bond.dayKey();
       if (!Bond.data.visitDay) Bond.data.visitDay = {};
       const targets = DB.list.filter(g => m.assign[g.id] === m.curCity && m.appeared.includes(g.id)
         && g.side === RPG.char.side && Bond.pts(g.id) < Bond.MAX_FRIEND && Bond.data.visitDay[g.id] !== today);
       if (!targets.length) { toast(`本城暂无可拜访的武将（敌将不可访，或今日均已拜访/友谊已满）`); return; }
+      m.ap--;
       const lines = targets.map(g => {
         Bond.data.visitDay[g.id] = today;
         const add = Bond.addF(g.id, randInt(1, 2));
         return `${g.name} +${add}`;
       });
       Bond.save();
+      Campaign.save();
       AudioSystem.sfx.select();
       const shown = lines.slice(0, 8).join("、");
-      toast(`🚶 一键拜访 ${targets.length} 位武将：${shown}${lines.length > 8 ? ` 等 ${lines.length} 位` : ""}`);
+      toast(`🚶 一键拜访 ${targets.length} 位武将（-1⚡）：${shown}${lines.length > 8 ? ` 等 ${lines.length} 位` : ""}`);
+      this.render();
     },
     acceptBounty(cityId, uid) {
       const m = Campaign.mapState();
@@ -7464,8 +7529,8 @@
       });
       return count;
     },
-    // 月末边境大战：owner 不同的相邻城池间，每月最多只爆发一场（随机挑一条边），
-    // 双方各出「已现身武将」中随机等量人马（不限本地武将，每方至多 10 将），以野战演武（FieldBattle）开打；
+    // 月末边境大战：owner 不同的相邻城池间，每月最多只爆发一场（随机挑一条边）；
+    // 我方自选出战武将（不限本地武将，每方至多 10 将，未选者由候选池自动抽点补满），以野战演武（FieldBattle）开打；
     // 胜方夺取败方该城；返回 true 表示已接管本次宿营流程
     checkBorderWar(m) {
       const edges = borderEdges(m).filter(([a, b]) => {
@@ -7478,14 +7543,33 @@
       return true;
     },
     openBorderWarPicker(m, edge) {
+      this._bwPicks = new Set();
+      this.renderBorderWarPicker(m, edge);
+    },
+    // 自选出战：列出主角一方全部「已现身」武将（含主角本人）供勾选，玩家自行决定谁出战、是否亲自带兵；
+    // 未勾选者一概不派（不再由「主角恰好站在城中」自动强征全队），出战名单不足十员由候选池自动抽点补满
+    renderBorderWarPicker(m, edge) {
       const [a, b] = edge;
       const sideA = cityOwnerSide(m, a), sideB = cityOwnerSide(m, b);
+      const heroSide = RPG.char.side;
+      const picks = this._bwPicks;
+      const pool = DB.list.filter(g => g.side === heroSide && m.appeared.includes(g.id)).slice().sort((x, y) => ratingScore(y) - ratingScore(x));
+      const heroRow = `<button class="buff-btn bw-pick ${picks.has(-1) ? 'active' : ''}" data-id="-1"><span class="bi">👑</span><span class="bt"><b>${RPG.char.name}（你）</b><small>评分 ${ratingScore(RPG.heroGeneral())}</small></span></button>`;
+      const rows = [heroRow].concat(pool.map(g => `<button class="buff-btn bw-pick ${picks.has(g.id) ? 'active' : ''}" data-id="${g.id}"><span class="bi">${avatarChar(g.name)}</span><span class="bt"><b>${g.name}</b><small>评分 ${ratingScore(g)}</small></span></button>`));
       openOverlay(`<div class="result-card detail-card">
         <h1>⚔️ 边境战事</h1>
-        <div class="wdesc">边境爆发冲突：<b>${cityName(a)}（${sideName(sideA)}）</b> vs <b>${cityName(b)}（${sideName(sideB)}）</b>，两军以野战演武方式厮杀，胜方夺取败方城池。</div>
+        <div class="wdesc">边境爆发冲突：<b>${cityName(a)}（${sideName(sideA)}）</b> vs <b>${cityName(b)}（${sideName(sideB)}）</b>。自选出战武将（可不选，交由麾下自动接战）：出战获胜可得所夺城池金币日产出 <b>${this.BORDER_WAR_GOLD_DAYS}</b> 倍犒赏（约合一月产出），落败则须赔付被夺城池金币日产出 <b>${this.BORDER_WAR_GOLD_DAYS}</b> 倍。</div>
+        <div class="buff-list" style="max-height:38vh;overflow-y:auto">${rows.join("")}</div>
+        <div class="wdesc">已选 <b>${picks.size}</b> 员（至多 10 员；勾选自己即视为亲历此战，可亲自排兵布阵、阵前斗将）</div>
         <div class="btns"><button class="btn-primary" id="bw-go">开战</button></div>
       </div>`, { modal: true });
-      $("#bw-go").onclick = () => { closeOverlay(); this.resolveBorderWar(m, edge); };
+      $$(".bw-pick").forEach(btn => btn.onclick = () => {
+        const id = +btn.dataset.id;
+        if (picks.has(id)) picks.delete(id);
+        else { if (picks.size >= 10) { toast(`最多派遣 10 员出战`); return; } picks.add(id); }
+        this.renderBorderWarPicker(m, edge);
+      });
+      $("#bw-go").onclick = () => { const ids = [...picks]; closeOverlay(); this.resolveBorderWar(m, edge, ids); };
     },
     // 共用：胜方夺城，同时调整双方部署——败方原驻守此城的武将退守至己方相邻城池，
     // 胜方随机挑选若干已现身武将进驻新占领的城池；返回被占领的城池 id
@@ -7517,16 +7601,15 @@
       Campaign.save();
       return capturedCity;
     },
-    // 是否亲历此战不再询问，而由主角当前所在城池自动判定：站在交战两城之一（且归属己方）即视为亲历，
-    // 队伍随之强制上阵；不在场则与其余已现身武将一视同仁，混入候选池随机抽点才会上场。
-    // 战斗一律以野战演武（FieldBattle）演出：主角上阵（亲历或被抽中）即为可亲自指挥的排兵布阵/阵前斗将/挥军破阵全流程，
+    // 是否亲历此战由玩家在 openBorderWarPicker 自行勾选出战名单决定（pickedIds，-1 代表主角本人）；
+    // 勾选者强制排到本方阵前，其余名额由候选池自动抽点补满；不再由「主角是否恰好站在城中」自动强征。
+    // 战斗一律以野战演武（FieldBattle）演出：主角上阵（被勾选）即为可亲自指挥的排兵布阵/阵前斗将/挥军破阵全流程，
     // 未上阵则全自动推演（无需任何点击，最高倍速跑完），不再静默瞬间出结果。
-    resolveBorderWar(m, edge) {
+    resolveBorderWar(m, edge, pickedIds) {
       const [a, b] = edge;
       const sideA = cityOwnerSide(m, a), sideB = cityOwnerSide(m, b);
       const heroSide = RPG.char.side;
-      const heroCity = m.curCity;
-      const heroForced = (heroCity === a || heroCity === b) && cityOwnerSide(m, heroCity) === heroSide;
+      const pickedSet = new Set(pickedIds || []);
 
       let poolA = DB.list.filter(g => g.side === sideA && m.appeared.includes(g.id)).map(clone);
       let poolB = DB.list.filter(g => g.side === sideB && m.appeared.includes(g.id)).map(clone);
@@ -7542,19 +7625,12 @@
       };
       poolA = guardFirst(poolA, a, sideA);
       poolB = guardFirst(poolB, b, sideB);
-      // 主角亲历：本人与队友强制排到本方阵前；未亲历：混入本方候选池听凭抽点（无特殊礼遇、不带队伍）
-      const heroFighter = RPG.heroGeneral();
+      // 自选出战：玩家勾选的己方武将（含主角，id -1）强制排到本方阵前，其余候选听凭抽点补满
       const heroPool = heroSide === sideA ? poolA : poolB;
-      if (heroForced) {
-        const mates = Bond.teamGenerals().filter(g => g.side === heroSide).map(clone);
-        const ids = new Set(mates.map(g => g.id));
-        const rest = heroPool.filter(g => !ids.has(g.id));
-        heroPool.length = 0;
-        heroPool.push(heroFighter, ...mates, ...rest);
-      } else {
-        heroPool.push(heroFighter);
-        shuffle(heroPool);
-      }
+      const pickedGens = heroPool.filter(g => pickedSet.has(g.id));
+      const rest = heroPool.filter(g => !pickedSet.has(g.id));
+      heroPool.length = 0;
+      heroPool.push(...(pickedSet.has(-1) ? [RPG.heroGeneral()] : []), ...pickedGens, ...rest);
       const count = Math.min(poolA.length, poolB.length, 10);   // 野战演武每方最多五线十将
       // 城墙守备：本城一方全员六维 +2×城墙等级（攻守对称——敌占城市的城墙同样为敌所用）；主角自身战力已由 heroGeneral() 精算好，不叠加
       const wallA = Buildings.lv(m, a, "wall") * 2, wallB = Buildings.lv(m, b, "wall") * 2;
@@ -7577,12 +7653,16 @@
         onDone: (res) => {
           const winnerSide = res.playerWon ? heroSide : (heroSide === "cn" ? "jp" : "cn");
           const capturedCity = this.applyBorderWarOutcome(m, edge, winnerSide);
+          const heroWon = winnerSide === heroSide;
+          // 战果金币：不再是固定犒赏，改为所夺/被夺城池金币日产出的 BORDER_WAR_GOLD_DAYS 倍（约合一月产出）
+          const warGold = this.BORDER_WAR_GOLD_DAYS * Estate.cityDailyGold(m, capturedCity);
           let heroHtml;
           if (heroIn) {
             const c = RPG.char;
             const heroAlive = res.mySurvivors.some(g => g.id === -1);
-            const goldGain = res.playerWon ? Bond.addGold(30 + res.kills * 4) : Bond.addGold(10);
-            const bonusGold = res.playerWon ? Bond.addGold(this.BORDER_WAR_WIN_BONUS) : 0;
+            const goldGain = res.playerWon ? Bond.addGold(30 + res.kills * 4) : 0;
+            const bonusGold = heroWon ? Bond.addGold(warGold) : 0;
+            const penalty = !heroWon ? Bond.loseGold(warGold) : 0;
             if (res.playerWon) Campaign.addFame(20);
             const exp = res.kills * 12 + (res.playerWon ? 60 : 15);
             c.exp += exp;
@@ -7590,9 +7670,11 @@
             while (c.exp >= RPG.expNeed(c.level)) { c.exp -= RPG.expNeed(c.level); c.level++; c.points += 1; lvUp++; }
             RPG.save();
             heroHtml = `<div class="mc-sect">🎖️ 你的战果</div>
-              <div class="wdesc">${heroAlive ? '全身而退' : '力战倒下（阵中负伤）'}，你方共歼敌将 <b style="color:var(--cn-red)">${res.kills}</b> 员${res.playerWon ? `，己方 ${sideName(heroSide)} 全线告捷！夺取【${cityName(capturedCity)}】，名声 <b style="color:var(--cn-red)">+20</b>` : '，惜未能扭转战局。'}<br>获得经验 <b style="color:var(--cn-red)">+${exp}</b>${Bond.goldLine(goldGain)}${bonusGold ? `<br>🏆 边境犒赏 <b style="color:#b8860b">+${bonusGold}</b> 金（现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : ''}${lvUp ? `<br>🎉 升级 ${lvUp} 级！` : ''}</div>`;
+              <div class="wdesc">${heroAlive ? '全身而退' : '力战倒下（阵中负伤）'}，你方共歼敌将 <b style="color:var(--cn-red)">${res.kills}</b> 员${res.playerWon ? `，己方 ${sideName(heroSide)} 全线告捷！夺取【${cityName(capturedCity)}】，名声 <b style="color:var(--cn-red)">+20</b>` : '，惜未能扭转战局。'}<br>获得经验 <b style="color:var(--cn-red)">+${exp}</b>${goldGain ? Bond.goldLine(goldGain) : ''}${bonusGold ? `<br>🏆 边境犒赏 <b style="color:#b8860b">+${bonusGold}</b> 金（所夺城池日产出 ${this.BORDER_WAR_GOLD_DAYS} 倍 · 现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : ''}${penalty ? `<br>💸 战败赔付 <b style="color:var(--cn-red)">-${penalty}</b> 金（被夺城池日产出 ${this.BORDER_WAR_GOLD_DAYS} 倍 · 现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : ''}${lvUp ? `<br>🎉 升级 ${lvUp} 级！` : ''}</div>`;
           } else {
-            const bonusHtml = winnerSide === heroSide ? `<br>🏆 己方大捷，边境犒赏 <b style="color:#b8860b">+${Bond.addGold(this.BORDER_WAR_WIN_BONUS)}</b> 金（现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : "";
+            let bonusHtml = "";
+            if (heroWon) { const g = Bond.addGold(warGold); bonusHtml = g ? `<br>🏆 己方大捷，边境犒赏 <b style="color:#b8860b">+${g}</b> 金（所夺城池日产出 ${this.BORDER_WAR_GOLD_DAYS} 倍 · 现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : ""; }
+            else { const p = Bond.loseGold(warGold); bonusHtml = p ? `<br>💸 己方战败，赔付 <b style="color:var(--cn-red)">-${p}</b> 金（被夺城池日产出 ${this.BORDER_WAR_GOLD_DAYS} 倍 · 现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : ""; }
             heroHtml = `<div class="wdesc">${bonusHtml || "本场未见你的身影，前线战报照常传回。"}</div>`;
           }
           openOverlay(`<div class="result-card detail-card">
@@ -7625,7 +7707,7 @@
       };
       return true;
     },
-    // 武将大会（季度武将世界杯）：询问主角是否报名（较高报名费，杀入四强全额退还）；
+    // 武将大会（每月 15 日举行的武将世界杯）：询问主角是否报名（较高报名费，杀入四强全额退还）；
     // 无论主角是否参加，其余 31 席都从已现身武将中随机抽取（不含主角，不足 32 人以「轮空」占位替补，
     // 队友与其他已现身武将一视同仁、独立参赛），冠亚军照常产生并发放奖励
     checkTournament(m) {
@@ -7634,7 +7716,7 @@
       const fee = Math.round(ratingScore(RPG.heroGeneral()) * 2);
       openOverlay(`<div class="result-card detail-card">
         <h1>🏆 武将大会</h1>
-        <div class="wdesc">四方豪杰云集，本季武将大会即将开幕（32 强淘汰赛）。是否报名参加？报名费 <b style="color:var(--cn-red)">${fee}</b> 金（现有 💰${Bond.gold()}），若能杀入四强将全额退还。</div>
+        <div class="wdesc">四方豪杰云集，本月武将大会即将开幕（32 强淘汰赛）。是否报名参加？报名费 <b style="color:var(--cn-red)">${fee}</b> 金（现有 💰${Bond.gold()}），若能杀入四强将全额退还。</div>
         <div class="btns">
           <button class="btn-primary" id="tn-join" ${Bond.gold() < fee ? "disabled" : ""}>报名参加</button>
           <button class="btn-ghost" id="tn-skip">不参加，静观其变</button>

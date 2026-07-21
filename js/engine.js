@@ -13,8 +13,8 @@ const TACTICS = {
   // 束缚 / 弱化为「计策(免费)」：发动后不占用本回合行动，仍可再出招，但每回合只能发动一个
   bind:    { key: "bind",    name: "束缚", icon: "🪢", desc: "计策(免费)：使敌方下一回合暂停出招；发动后仍可出招，每回合限一计", stam: 12, type: "scheme", scheme: "bind", free: true },
   weaken:  { key: "weaken",  name: "弱化", icon: "🌀", desc: "计策(免费)：削弱敌方攻击力，时长随智力而定；发动后仍可出招，每回合限一计", stam: 10, type: "scheme", scheme: "weaken", free: true },
-  heal:    { key: "heal",    name: "疗伤", icon: "💊", desc: "计策：运功恢复自身体力（占用行动）；成败与回复随智力而定",          stam: 11, type: "scheme", scheme: "heal" },
-  charge:  { key: "charge",  name: "蓄力", icon: "🔥", desc: "计策：凝气蓄力（消耗大量战意）、下次出招暴发（占用行动）；成败随智力而定", stam: 24, type: "scheme", scheme: "charge" },
+  heal:    { key: "heal",    name: "疗伤", icon: "💊", desc: "计策：运功恢复自身体力（占用行动）；成败取决于魅力，回复量取决于政治",          stam: 11, type: "scheme", scheme: "heal" },
+  charge:  { key: "charge",  name: "蓄力", icon: "🔥", desc: "计策：凝气蓄力（消耗大量战意）、下次出招暴发（占用行动）；成败取决于武力/智力中较高者", stam: 24, type: "scheme", scheme: "charge" },
 };
 
 // 相克关系：attacker 战术 对 defender 战术的倍率
@@ -43,8 +43,8 @@ function computeDamage(attacker, defender, atkTactic, defTactic, charged) {
   }
   // 相克倍率（依守方最近姿态）
   const counter = (COUNTER[atkTactic] && COUNTER[atkTactic][defTactic]) || 1.0;
-  // 蓄力暴发
-  const critMul = charged ? 2.0 : 1.0;
+  // 蓄力暴发：谋攻无视格挡、必定全额命中，暴发倍率略低以求平衡；猛攻/普攻可被格挡卸力，暴发倍率维持更高
+  const critMul = charged ? (atkTactic === "strategy" ? 1.7 : 2.0) : 1.0;
   // 随机浮动
   const luck = rand(0.82, 1.18);
   // 被「弱化」计策削弱的攻击力
@@ -86,12 +86,17 @@ function computeDamage(attacker, defender, atkTactic, defTactic, charged) {
   return { dmg, crit, counter, evaded: false, skillTags: [...new Set(skillTags)] };
 }
 
-// 计策成功率：以双方「智力」差为主，各计策有不同基准；夹在 12%~92%
+// 计策成功率：夹在 12%~92%；束缚/弱化/谋攻仍以双方「智力」差为主，
+// 蓄力改以己方「武力/智力」两者较高者对抗对方智力（武将偏武偏智皆有蓄力成算），
+// 疗伤改以双方「魅力」差衡量（运功疗伤讲究心境从容，取决于己方风范气度）
 function schemeSuccess(self, foe, scheme) {
-  const dz = self.g.zhi - foe.g.zhi;
   const base = { bind: 0.30, weaken: 0.45, heal: 0.62, charge: 0.66, strategy: 0.55 }[scheme] || 0.4;
+  let diff;
+  if (scheme === "charge") diff = Math.max(self.g.wu, self.g.zhi) - Math.max(foe.g.wu, foe.g.zhi);
+  else if (scheme === "heal") diff = self.g.mei - foe.g.mei;
+  else diff = self.g.zhi - foe.g.zhi;
   // 将魂：借东风（己方计策 +15%）/ 看破·奸雄（对手计策成功率下降）
-  return Math.max(0.12, Math.min(0.94, base + dz / 220 + (self.g.skSchemeUp || 0) - (foe.g.skDodge || 0)));
+  return Math.max(0.12, Math.min(0.94, base + diff / 220 + (self.g.skSchemeUp || 0) - (foe.g.skDodge || 0)));
 }
 
 // 格挡减伤比例：由「己方统帅」对抗「对方武力」决定（格挡必定成功，效果有强弱）
@@ -130,9 +135,9 @@ function applyScheme(o, scheme, ok) {
     return { who: o.label, type: "charge", scheme, ok: true, attacker: an,
       text: `${an} 凝气蓄力，蓄势待发！` };
   }
-  // heal（回复量较此前下调）
+  // heal（回复量较此前下调；成败取决于魅力，回复量取决于政治——运功疗伤，贵在统御气血、调度得法）
   const before = a.hp;
-  const amount = Math.round(a.g.zhi * (0.26 + Math.random() * 0.2));
+  const amount = Math.round(a.g.zheng * (0.26 + Math.random() * 0.2));
   a.hp = Math.min(a.maxHp, a.hp + amount);
   const healed = Math.round(a.hp - before);
   return { who: o.label, type: "scheme", scheme, ok: true, attacker: an, heal: healed,

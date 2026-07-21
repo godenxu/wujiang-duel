@@ -219,14 +219,14 @@ html, body {
 .fighter.cn .favatar { background: linear-gradient(135deg, var(--cn-red), #7a1420); }
 .fighter.jp .favatar { background: linear-gradient(135deg, var(--jp-indigo), #141e3c); }
 .fighter .fname { font-size: 16px; font-weight: 700; color: var(--cn-gold); line-height: 1.15;
-  margin-top: 3px; text-align: center; width: 100%; word-break: break-word; }
+  margin-top: 3px; text-align: center; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fighter .ftitle { font-size: 10px; color: #c9b890; opacity: .8; line-height: 1.2; text-align: center;
   width: 100%; word-break: break-word; }
 /* 五维区整体收窄，字号加大 */
 .fstats-wrap { flex: 1; min-width: 0; }
 /* 总评：置于头像列底部（与「魅力」行齐平），即体力条上方 */
 .fighter .ftotal { display: flex; flex-direction: column; align-items: center; gap: 1px; font-size: 11px; color: #c9b890; text-align: center; margin-top: auto; padding-top: 4px; width: 100%; white-space: nowrap; line-height: 1.2; }
-.fighter .ftotal .ft-lbl { font-size: 13px; opacity: .85; }
+.fighter .ftotal .ft-lbl { font-size: 11px; opacity: .85; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fighter .ftotal .ft-row { display: flex; align-items: center; justify-content: center; gap: 5px; }
 .fighter.right .ftotal .ft-row { flex-direction: row-reverse; }
 .fighter .ftotal b { color: var(--cn-gold); font-size: 14px; font-family: "DotGothic16", monospace; }

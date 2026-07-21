@@ -251,6 +251,21 @@
   - **边境战事改走野战演武**：`FieldBattle` 新增 `beginExternal(myRoster, foeRoster, heroSide, opts)`（与标准入口 `setup(side)` 共用重构出的 `_setupCommon()`），`RPG.resolveBorderWar()` 里的 `TeamBattle.begin(...)` 直接换成 `FieldBattle.beginExternal(...)`，`myRoster`/`foeRoster` 构建逻辑（城墙/守将加成、主角强制编入）原样复用不改。主角亲历时体验与自由试玩野战演武完全一致（阵形/地形/军令等策略维度均新引入边境战事）；主角未上阵时新增全自动推演模式（`external.auto`）——跳过排兵布阵画面、自动抽点应战武将并强制 spectate、自动点火总攻且倍速拉满 ×4、终局跳过追亡逐北二次确认直接结算，全程零点击。`finishExternal()` 把野战自身状态折算为与组队大战同形的 `{playerWon,mySurvivors,kills}` 结果对象，`resolveBorderWar` 的经验/金币/夺城结算逻辑不必改动；另在 `finishExternal()` 里补一份等价的「历战成长」调用（`Growth.battle`），避免这项原本挂在 `TeamBattle.finish()` 上的机制随引擎切换而失效。`FieldBattle` 新增 `this.rpg` 标记驱动返回键路由（回天下地图还是回首页），`_setupCommon()` 的 `deploy()` 改用 `filter(Boolean)` 容错人数不足 10 的外部战场。
   - **联调顺手修复**：发现 `FieldBattle` 此前从未导出到 `window`（只有 `Skill` 导出了），任何外部脚本都读不到 `FieldBattle.xxx`；比照 `Skill` 补上 `window.FieldBattle = FieldBattle;`。
   - **验证**：test21 重写「边境战 A（亲历）」「边境战 B（观战）」两场景共 6 项断言（弹窗文案改"野战演武"、主角编入我方阵容、三阵斗将走完进入挥军破阵、点【开始总攻】后加速跑到边境战报、观战全自动推演不卡死、城池按胜负易主），21 项全过。调试中两处测试脚本自身问题已修正（均非产品缺陷）：`FieldBattle` 未导出问题直接在产品代码里补 `window.FieldBattle` 导出解决；观战分支最初断言点开战后应立即出现 `#screen-field.active`，但全自动推演一开场就直接跳进第一场斗将子画面 `#screen-battle`，改为两画面其一出现即算进场+另加 `external.auto` 状态断言。回归 test22 14 项、test23 10 项、test24 62 项全过。
+- **名声/评分/自建/单挑细节等十三项调整（第四十轮）**（已完成，用户点名十三项反馈，横跨 `js/app.js`、`js/engine.js`、`data/generals.js`、`css/style.css`）：
+  - **名声上限 10000 + 任务名声减半**：`FAME_MAX` 9999→10000；`Campaign.addFame(n)` 改为 `Math.round(n/2)` 入账，单一汇入口统一覆盖全部名声来源，无需逐处改动。
+  - **一键拜访耗 1⚡**：`oneClickVisit()` 前置行动力校验并扣减，按钮文案追加"（耗 1⚡）"且行动力不足时置灰；单人拜访仍免费。
+  - **自建武将可指定将魂来源**：`Skill.of(g)` 新增 `g.skillOverride` 最高优先级判定；`RPG.heroGeneral()` 据 `c.skillGeneralId` 取源武将 `Skill.of()` 结果挂上去；新增共用组件 `openSkillGenPicker()`，接入开局向导与旧版创建入口的自创武将表单。
+  - **总评分改纯六维总和**：`ratingScore(g)` 由"六维和+突出加成"简化为 `sumStats(g)`；两处"六维X+突出Y"分解展示精简为单一数字。
+  - **修正 8 处武将姓名错误拼接**：`data/generals.js` 中"职务·姓名"误拼接的姓名字段逐条核实史实后改回单独姓名（职务信息保留在各自 `title`）。
+  - **武将世界杯改每月 15 日**：`isTournamentDay(day)` 由季度判定改为 `calYMD(day).dom===15`。
+  - **自建武将六维上限 60**：`RPG.rollStats()` 基线区间 `randInt(45,80)`→`randInt(30,60)`；加点区间维持 `randInt(18,30)`（本就以 30 封顶）。
+  - **蓄力成功率改依武力/智力较高者**：`schemeSuccess()` 中 `charge` 改用 `max(己武,己智)-max(敌武,敌智)` 之差，不再是智力系专属。
+  - **蓄力暴发按招式区分倍率**：`computeDamage()` 蓄力暴发倍率由统一 ×2.0 改为 `atkTactic==="strategy"?1.7:2.0`，用不对等倍率补偿谋攻"无视格挡必定命中"的天生优势。
+  - **疗伤改依魅力/政治**：`schemeSuccess()` 中 `heal` 成功率差值由智力差改魅力差；`applyScheme()` 回复量公式由 `zhi*(...)` 改 `zheng*(...)`。
+  - **单挑卡片"总"字改将魂名**：`renderFighter()` 的 `.ft-lbl` 固定文字改为 `Skill.of(g).n` 并加悬浮描述；CSS 字号 13px→11px 加省略号容错。
+  - **单挑卡片姓名过长自动缩字号**：按 `g.name.length` 分级设置行内 `font-size`（≥7 字 10px、≥5 字 12px）；CSS `.fname` 由允许折行改为强制单行+省略号双重兜底。
+  - **边境大战改自选出战+金币日产出倍数奖惩**：`openBorderWarPicker` 改为可勾选出战名单（含主角，`.bw-pick` 多选，最多 10 员）取代原先"站在城中即强征"的 `heroForced` 判定；新增 `Estate.cityDailyGold()`（三态兼容的城池日产出估算）与 `Bond.loseGold()`（强制扣减封底 0）；原固定 1000 金犒赏改为 `BORDER_WAR_GOLD_DAYS(30) × 所夺/被夺城池日产出`，胜负皆与城池经济价值挂钩。
+  - **验证**：test21 重写"边境战 A/B"两场景适配自选出战弹窗（勾选主角 `.bw-pick[data-id="-1"]` 再开战 / 不勾选任何人直接开战），断言"自选出战"+"日产出"字样，21 项全过（含新增赔付金额校验）；test24 独立回归确认 62 项全过（`.ftotal`/`.fname` 改动不在该套件覆盖范围但无副作用）；test22 14 项、test23 10 项全过；engine.js 侧改动未变更函数签名，仅改判定用的数值来源。
 
 ## 〇、改造总目标
 
