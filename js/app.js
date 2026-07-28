@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607282216";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607282231";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -6969,10 +6969,15 @@
         sold.push(i); Campaign.save();
         AudioSystem.sfx.select();
         toast(`已购得 ${item.icon}「${item.name}」（${Armory.rarityDef(s.rarity).n}）-${price}金`);
+        this.render();       // 集市悬浮层之下的城池面板不在 openMarket 的重绘范围内，需单独刷新其金币显示
         this.openMarket();   // 重开以刷新售罄状态与余额
       });
       $$(".market-sell").forEach(b => b.onclick = () => {
-        if (Armory.tradeSell(+b.dataset.uid, m.curCity)) { AudioSystem.sfx.select(); this.openMarket(); }
+        if (Armory.tradeSell(+b.dataset.uid, m.curCity)) {
+          AudioSystem.sfx.select();
+          this.render();     // 同上：贩卖后同样要刷新集市悬浮层背后的城池面板金币数
+          this.openMarket();
+        }
       });
       $("#market-close").onclick = () => { closeOverlay(); this.render(); };
     },
