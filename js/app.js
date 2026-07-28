@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607282231";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607282255";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -6947,6 +6947,9 @@
         const price = Armory.tradeSellPrice(item, m.curCity);
         return `<button class="buff-btn market-sell" data-uid="${item.uid}"><span class="bi">${item.icon}</span><span class="bt"><b style="color:${rar.color}">${item.name}</b><small>${rar.n} · ${item.intro}</small></span><span class="mkt-price">💰${price}</span></button>`;
       }).join("") : `<div class="empty">身上暂无可贩卖的宝物</div>`;
+      // 一键卖出：仅批量处理非传奇宝物（传奇宝物贵重，须逐件亲自确认，不纳入一键批处理，避免误卖）
+      const bulkTargets = tradable.filter(item => item.rarity !== "legend");
+      const bulkTotal = bulkTargets.reduce((s, item) => s + Armory.tradeSellPrice(item, m.curCity), 0);
       openOverlay(`<div class="result-card detail-card market-card">
         <h1>🏪 ${c.n}集市</h1>
         <div class="wdesc">💰 现有 ${Bond.gold()} 金 · 货摊每日更新</div>
@@ -6957,6 +6960,7 @@
         <div class="wdesc mkt-hint">${marketTab === "buy"
           ? `本地行情：${factor <= 0.85 ? "🈹 黑市/折扣价" : factor < 1 ? "💰 偏低" : factor > 1.1 ? "📈 偏贵" : "⚖️ 公道"}（约 ${Math.round(factor * 100)}% 市价）`
           : `按本城真实行情结算（本城约 ${Math.round(cityPriceFactor(m.curCity) * 100)}% 市价 × 85%）；低价城买、高价城卖方能赚得差价`}</div>
+        ${marketTab === "sell" && bulkTargets.length ? `<div class="btns" style="margin:6px 0 0"><button class="btn-ghost" id="market-sell-all">🚢 一键卖出非传奇宝物（${bulkTargets.length} 件 · 约 ${bulkTotal} 金）</button></div>` : ""}
         <div class="buff-list mkt-list">${marketTab === "buy" ? buyHtml : sellHtml}</div>
         <div class="btns"><button class="btn-ghost" id="market-close">离开集市</button></div></div>`);
       $$(".mkt-tab").forEach(t => t.onclick = () => this.openMarket(t.dataset.tab));
@@ -6972,13 +6976,25 @@
         this.render();       // 集市悬浮层之下的城池面板不在 openMarket 的重绘范围内，需单独刷新其金币显示
         this.openMarket();   // 重开以刷新售罄状态与余额
       });
+      // 传奇宝物贩卖须二次确认，避免误触失手卖掉贵重之物；其余稀有度维持单击即卖
       $$(".market-sell").forEach(b => b.onclick = () => {
-        if (Armory.tradeSell(+b.dataset.uid, m.curCity)) {
+        const uid = +b.dataset.uid;
+        const item = Armory.data.items.find(i => i.uid === uid);
+        if (item && item.rarity === "legend" && !confirm(`「${item.name}」是传奇级宝物，确定要贩卖换钱吗？此举无法撤销。`)) return;
+        if (Armory.tradeSell(uid, m.curCity)) {
           AudioSystem.sfx.select();
           this.render();     // 同上：贩卖后同样要刷新集市悬浮层背后的城池面板金币数
           this.openMarket();
         }
       });
+      const sellAllBtn = $("#market-sell-all");
+      if (sellAllBtn) sellAllBtn.onclick = () => {
+        if (!confirm(`一键卖出 ${bulkTargets.length} 件非传奇宝物，合计约得 ${bulkTotal} 金，确定继续？此举无法撤销。`)) return;
+        bulkTargets.forEach(item => Armory.tradeSell(item.uid, m.curCity));
+        AudioSystem.sfx.select();
+        this.render();
+        this.openMarket("sell");
+      };
       $("#market-close").onclick = () => { closeOverlay(); this.render(); };
     },
     /* ---- 铁匠铺：各城专精一类宝物，锻造专精类省料省钱 ---- */
