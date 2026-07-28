@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607212244";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607282152";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -1756,6 +1756,7 @@
         shuffle(pool);
         while (mine.length < 10 && pool.length) mine.push(clone(pool.shift()));
       }
+      shuffle(mine);   // 阵中站位随机，不再固定自选武将（含主角）排头位
       let theirs;
       if (opts.enemies) {
         theirs = opts.enemies.map(clone);
@@ -4445,6 +4446,27 @@
       return true;
     },
 
+    /* ---- 行商贩卖：按「当前所在城市」的集市行情结算售价，比仓库直接出售（固定五折）更高——
+     * 行情低（≤0.9）的城市买入、行情高（≥1.2）的城市卖出，才能真正吃到差价；
+     * 折算下来同城买卖必亏（0.85 系数 < 1），唯有实际跑一趟高价城才有利可图，靠"移动需耗行动力"
+     * 这一既有摩擦天然限制无限套利，不必另设额度或冷却。 */
+    TRADE_FACTOR: 0.85,
+    tradeSellPrice(item, cityId) { return Math.round(this.shopPrice(item.rarity) * cityPriceFactor(cityId) * this.TRADE_FACTOR); },
+    tradeSell(uid, cityId) {
+      const idx = this.data.items.findIndex(i => i.uid === uid); if (idx < 0) return false;
+      const item = this.data.items[idx];
+      if (item.identified === false) { toast("需先鉴宝，才能贩卖"); return false; }
+      if (item.equippedBy) { toast("请先卸下装备再贩卖"); return false; }
+      const price = this.tradeSellPrice(item, cityId);
+      const gold = Bond.addGold(price);
+      this.data.items.splice(idx, 1);
+      const tmpl = { n: item.name, intro: item.intro, stat: item.stat, effect: item.stat };
+      this.data.shop.push({ type: item.type, rarity: item.rarity, tmpl });
+      this.save();
+      toast(`已将「${item.name}」卖给本地行商，得 ${gold} 金（按本城行情结算，宝物已回流集市）`);
+      return true;
+    },
+
     /* ---- 锻造（保底：连续12次未出稀有以上，下一次必出稀有以上） ---- */
     FORGE_COST: 6,
     FORGE_GOLD: 40,
@@ -6903,6 +6925,9 @@
       if (!m.marketSold) m.marketSold = {};
       const sold = m.marketSold[key] || (m.marketSold[key] = []);
       const stalls = cityMarketStalls(m);
+      // 行商贩卖：把随身携带的宝物卖给本城行商，按本城真实行情结算（不受折扣事件影响，折扣只降买价不压卖价）——
+      // 异地买贱、本城卖贵方能吃到差价，这正是"跨城倒卖"的核心玩法
+      const tradable = Armory.data.items.filter(i => i.identified !== false && !i.equippedBy);
       openOverlay(`<div class="result-card detail-card">
         <h1>🏪 ${c.n}集市</h1>
         <div class="wdesc">本地行情：${factor <= 0.85 ? "🈹 黑市/折扣价" : factor < 1 ? "💰 偏低" : factor > 1.1 ? "📈 偏贵" : "⚖️ 公道"}（约 ${Math.round(factor * 100)}% 市价）· 货摊每日更新 · 💰 现有 ${Bond.gold()} 金</div>
@@ -6913,6 +6938,14 @@
             if (sold.includes(i)) return `<div class="buff-btn sold"><span class="bi">${type.icon}</span><span class="bt"><b>${s.tmpl.n}</b><small>已售出</small></span></div>`;
             return `<button class="buff-btn market-buy" data-i="${i}"><span class="bi">${type.icon}</span><span class="bt"><b style="color:${rar.color}">${s.tmpl.n}</b><small>${rar.n} · ${s.tmpl.intro}</small></span><span class="mkt-price">💰${price}</span></button>`;
           }).join("")}
+        </div>
+        <div class="mc-sect">🚢 贩卖随身宝物<small>（低价城买、高价城卖，方能赚得差价；本城行情 ${Math.round(cityPriceFactor(m.curCity) * 100)}%）</small></div>
+        <div class="buff-list">
+          ${tradable.length ? tradable.map(item => {
+            const rar = Armory.rarityDef(item.rarity);
+            const price = Armory.tradeSellPrice(item, m.curCity);
+            return `<button class="buff-btn market-sell" data-uid="${item.uid}"><span class="bi">${item.icon}</span><span class="bt"><b style="color:${rar.color}">${item.name}</b><small>${rar.n} · ${item.intro}</small></span><span class="mkt-price">💰${price}</span></button>`;
+          }).join("") : `<div class="empty">身上暂无可贩卖的宝物</div>`}
         </div>
         <div class="btns"><button class="btn-ghost" id="market-close">离开集市</button></div></div>`);
       $$(".market-buy").forEach(b => b.onclick = () => {
@@ -6925,6 +6958,9 @@
         AudioSystem.sfx.select();
         toast(`已购得 ${item.icon}「${item.name}」（${Armory.rarityDef(s.rarity).n}）-${price}金`);
         this.openMarket();   // 重开以刷新售罄状态与余额
+      });
+      $$(".market-sell").forEach(b => b.onclick = () => {
+        if (Armory.tradeSell(+b.dataset.uid, m.curCity)) { AudioSystem.sfx.select(); this.openMarket(); }
       });
       $("#market-close").onclick = () => { closeOverlay(); this.render(); };
     },
@@ -7530,8 +7566,8 @@
       return count;
     },
     // 月末边境大战：owner 不同的相邻城池间，每月最多只爆发一场（随机挑一条边）；
-    // 我方自选出战武将（不限本地武将，每方至多 10 将，未选者由候选池自动抽点补满），以野战演武（FieldBattle）开打；
-    // 胜方夺取败方该城；返回 true 表示已接管本次宿营流程
+    // 只有主角本人与麾下团队成员的出战与否需玩家勾选决定，其余已现身武将一律由候选池随机抽点补满（每方至多 10 将）；
+    // 以野战演武（FieldBattle）开打，胜方夺取败方该城；返回 true 表示已接管本次宿营流程
     checkBorderWar(m) {
       const edges = borderEdges(m).filter(([a, b]) => {
         const poolA = DB.list.filter(g => g.side === cityOwnerSide(m, a) && m.appeared.includes(g.id));
@@ -7546,21 +7582,22 @@
       this._bwPicks = new Set();
       this.renderBorderWarPicker(m, edge);
     },
-    // 自选出战：列出主角一方全部「已现身」武将（含主角本人）供勾选，玩家自行决定谁出战、是否亲自带兵；
-    // 未勾选者一概不派（不再由「主角恰好站在城中」自动强征全队），出战名单不足十员由候选池自动抽点补满
+    // 自选出战：只列出主角本人与麾下团队成员供勾选——这两类由玩家亲自决定是否出战；
+    // 未勾选的团队成员一概不派（不会被随机抽中），其余已现身武将与你的抉择无关，一律由候选池随机补满出战名额。
+    // 主角若未勾选出战，此战金币犒赏/赔付与你无涉——胜负仍会照常易主城池，但不动你的钱袋。
     renderBorderWarPicker(m, edge) {
       const [a, b] = edge;
       const sideA = cityOwnerSide(m, a), sideB = cityOwnerSide(m, b);
       const heroSide = RPG.char.side;
       const picks = this._bwPicks;
-      const pool = DB.list.filter(g => g.side === heroSide && m.appeared.includes(g.id)).slice().sort((x, y) => ratingScore(y) - ratingScore(x));
+      const pool = Bond.teamGenerals().filter(g => g.side === heroSide).slice().sort((x, y) => ratingScore(y) - ratingScore(x));
       const heroRow = `<button class="buff-btn bw-pick ${picks.has(-1) ? 'active' : ''}" data-id="-1"><span class="bi">👑</span><span class="bt"><b>${RPG.char.name}（你）</b><small>评分 ${ratingScore(RPG.heroGeneral())}</small></span></button>`;
       const rows = [heroRow].concat(pool.map(g => `<button class="buff-btn bw-pick ${picks.has(g.id) ? 'active' : ''}" data-id="${g.id}"><span class="bi">${avatarChar(g.name)}</span><span class="bt"><b>${g.name}</b><small>评分 ${ratingScore(g)}</small></span></button>`));
       openOverlay(`<div class="result-card detail-card">
         <h1>⚔️ 边境战事</h1>
-        <div class="wdesc">边境爆发冲突：<b>${cityName(a)}（${sideName(sideA)}）</b> vs <b>${cityName(b)}（${sideName(sideB)}）</b>。自选出战武将（可不选，交由麾下自动接战）：出战获胜可得所夺城池金币日产出 <b>${this.BORDER_WAR_GOLD_DAYS}</b> 倍犒赏（约合一月产出），落败则须赔付被夺城池金币日产出 <b>${this.BORDER_WAR_GOLD_DAYS}</b> 倍。</div>
+        <div class="wdesc">边境爆发冲突：<b>${cityName(a)}（${sideName(sideA)}）</b> vs <b>${cityName(b)}（${sideName(sideB)}）</b>。你与团队成员是否出战自行抉择（其余已现身武将由候选池随机补满，无需你操心）：勾选自己即视为亲历此战，出战并获胜可得所夺城池金币日产出 <b>${this.BORDER_WAR_GOLD_DAYS}</b> 倍犒赏，落败则须赔付被夺城池金币日产出 <b>${this.BORDER_WAR_GOLD_DAYS}</b> 倍；不勾选自己则此战胜负不动你的钱袋。</div>
         <div class="buff-list" style="max-height:38vh;overflow-y:auto">${rows.join("")}</div>
-        <div class="wdesc">已选 <b>${picks.size}</b> 员（至多 10 员；勾选自己即视为亲历此战，可亲自排兵布阵、阵前斗将）</div>
+        <div class="wdesc">已选 <b>${picks.size}</b> 员（至多 10 员）</div>
         <div class="btns"><button class="btn-primary" id="bw-go">开战</button></div>
       </div>`, { modal: true });
       $$(".bw-pick").forEach(btn => btn.onclick = () => {
@@ -7601,8 +7638,8 @@
       Campaign.save();
       return capturedCity;
     },
-    // 是否亲历此战由玩家在 openBorderWarPicker 自行勾选出战名单决定（pickedIds，-1 代表主角本人）；
-    // 勾选者强制排到本方阵前，其余名额由候选池自动抽点补满；不再由「主角是否恰好站在城中」自动强征。
+    // 只有主角本人与团队成员的出战与否由玩家在 openBorderWarPicker 勾选决定（pickedIds，-1 代表主角本人）；
+    // 团队成员未被勾选则一概不派（不进入候选池，不会被随机抽中），其余已现身武将与玩家抉择无关，一律由候选池随机抽点补满名额。
     // 战斗一律以野战演武（FieldBattle）演出：主角上阵（被勾选）即为可亲自指挥的排兵布阵/阵前斗将/挥军破阵全流程，
     // 未上阵则全自动推演（无需任何点击，最高倍速跑完），不再静默瞬间出结果。
     resolveBorderWar(m, edge, pickedIds) {
@@ -7610,6 +7647,7 @@
       const sideA = cityOwnerSide(m, a), sideB = cityOwnerSide(m, b);
       const heroSide = RPG.char.side;
       const pickedSet = new Set(pickedIds || []);
+      const teamIds = new Set(Bond.teamGenerals().filter(g => g.side === heroSide).map(g => g.id));
 
       let poolA = DB.list.filter(g => g.side === sideA && m.appeared.includes(g.id)).map(clone);
       let poolB = DB.list.filter(g => g.side === sideB && m.appeared.includes(g.id)).map(clone);
@@ -7625,10 +7663,14 @@
       };
       poolA = guardFirst(poolA, a, sideA);
       poolB = guardFirst(poolB, b, sideB);
-      // 自选出战：玩家勾选的己方武将（含主角，id -1）强制排到本方阵前，其余候选听凭抽点补满
+      // 自选出战：玩家勾选的己方武将（含主角，id -1）强制排到本方阵前；未勾选的团队成员整体剔除、不参与随机补位；
+      // 剩余（既非主角/团队、也未被勾选的）名额仍由候选池随机抽点补满
       const heroPool = heroSide === sideA ? poolA : poolB;
       const pickedGens = heroPool.filter(g => pickedSet.has(g.id));
-      const rest = heroPool.filter(g => !pickedSet.has(g.id));
+      let rest = heroPool.filter(g => !pickedSet.has(g.id) && !teamIds.has(g.id));
+      // 极端保底：若本方已现身武将几乎全是团队成员、又都未被勾选，剔除后可能凑不出一兵一卒——
+      // 此时放宽限制，把未勾选团队成员一并纳入候选池，确保战事总能照常开打
+      if (!rest.length && !pickedGens.length && !pickedSet.has(-1)) rest = heroPool.filter(g => !pickedSet.has(g.id));
       heroPool.length = 0;
       heroPool.push(...(pickedSet.has(-1) ? [RPG.heroGeneral()] : []), ...pickedGens, ...rest);
       const count = Math.min(poolA.length, poolB.length, 10);   // 野战演武每方最多五线十将
@@ -7672,10 +7714,8 @@
             heroHtml = `<div class="mc-sect">🎖️ 你的战果</div>
               <div class="wdesc">${heroAlive ? '全身而退' : '力战倒下（阵中负伤）'}，你方共歼敌将 <b style="color:var(--cn-red)">${res.kills}</b> 员${res.playerWon ? `，己方 ${sideName(heroSide)} 全线告捷！夺取【${cityName(capturedCity)}】，名声 <b style="color:var(--cn-red)">+20</b>` : '，惜未能扭转战局。'}<br>获得经验 <b style="color:var(--cn-red)">+${exp}</b>${goldGain ? Bond.goldLine(goldGain) : ''}${bonusGold ? `<br>🏆 边境犒赏 <b style="color:#b8860b">+${bonusGold}</b> 金（所夺城池日产出 ${this.BORDER_WAR_GOLD_DAYS} 倍 · 现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : ''}${penalty ? `<br>💸 战败赔付 <b style="color:var(--cn-red)">-${penalty}</b> 金（被夺城池日产出 ${this.BORDER_WAR_GOLD_DAYS} 倍 · 现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : ''}${lvUp ? `<br>🎉 升级 ${lvUp} 级！` : ''}</div>`;
           } else {
-            let bonusHtml = "";
-            if (heroWon) { const g = Bond.addGold(warGold); bonusHtml = g ? `<br>🏆 己方大捷，边境犒赏 <b style="color:#b8860b">+${g}</b> 金（所夺城池日产出 ${this.BORDER_WAR_GOLD_DAYS} 倍 · 现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : ""; }
-            else { const p = Bond.loseGold(warGold); bonusHtml = p ? `<br>💸 己方战败，赔付 <b style="color:var(--cn-red)">-${p}</b> 金（被夺城池日产出 ${this.BORDER_WAR_GOLD_DAYS} 倍 · 现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : ""; }
-            heroHtml = `<div class="wdesc">${bonusHtml || "本场未见你的身影，前线战报照常传回。"}</div>`;
+            // 主角未亲自出战：此战胜负与你的钱袋无涉，既无犒赏也无需赔付
+            heroHtml = `<div class="wdesc">本场未见你的身影，前线战报照常传回，胜负不动你的钱袋。</div>`;
           }
           openOverlay(`<div class="result-card detail-card">
             <h1>⚔️ 边境战报</h1>
@@ -7718,8 +7758,8 @@
         <h1>🏆 武将大会</h1>
         <div class="wdesc">四方豪杰云集，本月武将大会即将开幕（32 强淘汰赛）。是否报名参加？报名费 <b style="color:var(--cn-red)">${fee}</b> 金（现有 💰${Bond.gold()}），若能杀入四强将全额退还。</div>
         <div class="btns">
-          <button class="btn-primary" id="tn-join" ${Bond.gold() < fee ? "disabled" : ""}>报名参加</button>
           <button class="btn-ghost" id="tn-skip">不参加，静观其变</button>
+          <button class="btn-primary" id="tn-join" ${Bond.gold() < fee ? "disabled" : ""}>报名参加</button>
         </div>
       </div>`);
       $("#tn-join").onclick = () => { closeOverlay(); this.runTournament(m, pool, true); };
