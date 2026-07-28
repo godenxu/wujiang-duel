@@ -1114,6 +1114,18 @@ html, body {
 .buff-btn .mkt-price { margin-left: auto; font-weight: 900; color: #b8860b; font-size: 16px; white-space: nowrap; font-family: "DotGothic16", monospace; }
 .buff-btn:disabled { opacity: .4; cursor: not-allowed; }
 
+/* 集市：买入/卖出页签 + 尽量占满可视高度，减少列表内滚动 */
+.market-card { max-height: 94vh; }
+.mkt-tabs { display: flex; gap: 8px; margin: 12px 0 2px; }
+.mkt-tab {
+  flex: 1; padding: 11px; text-align: center; border-radius: 10px; cursor: pointer;
+  font-size: 15px; font-weight: 700; color: var(--ink);
+  background: rgba(0,0,0,.06); border: 1px solid rgba(212,175,55,.35);
+}
+.mkt-tab.active { background: linear-gradient(135deg, var(--cn-red), #7a1420); color: #fff; border-color: var(--cn-gold); }
+.mkt-hint { margin: 6px 0 0; }
+.mkt-list { max-height: 66vh; }
+
 /* 宽屏/折叠屏展开：地图横贯顶部（约占可视高度 30%），下方左右两栏——
    左为角色资料与本地武将（天数/行动力/金币/名声/等级已上移至顶栏状态条），右为城池事务（历练等行动卡 · 悬赏榜） */
 @media (min-width: 600px) {

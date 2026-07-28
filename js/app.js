@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607282152";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202607282216";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -6916,38 +6916,50 @@
       this.clampZoomState(box);
       this.applyZoom(box);
     },
-    /* ---- 集市：每城每（游戏）日一批本地货摊，价格按城市行情浮动；已购摊位当日售罄 ---- */
-    openMarket() {
+    /* ---- 集市：每城每（游戏）日一批本地货摊，价格按城市行情浮动；已购摊位当日售罄 ----
+     * 买入（本地货摊）与卖出（贩卖随身宝物）分成两个页签展示，避免两份列表堆叠在同一屏内反复上下滚动；
+     * 页签内均按价格从高到低排序，弹窗尽量占满可视高度以容纳更多条目。 */
+    openMarket(tab) {
       const m = Campaign.mapState();
       const c = cityDef(m.curCity);
+      if (tab) this._marketTab = tab;
+      const marketTab = this._marketTab === "sell" ? "sell" : "buy";
       const factor = shopDiscountActive() ? Math.min(0.8, cityPriceFactor(m.curCity)) : cityPriceFactor(m.curCity);
       const key = m.curCity + "|" + m.day;
       if (!m.marketSold) m.marketSold = {};
       const sold = m.marketSold[key] || (m.marketSold[key] = []);
       const stalls = cityMarketStalls(m);
+      const stallOrder = stalls.map((s, i) => i)
+        .sort((i1, i2) => Armory.shopPrice(stalls[i2].rarity) - Armory.shopPrice(stalls[i1].rarity));
       // 行商贩卖：把随身携带的宝物卖给本城行商，按本城真实行情结算（不受折扣事件影响，折扣只降买价不压卖价）——
       // 异地买贱、本城卖贵方能吃到差价，这正是"跨城倒卖"的核心玩法
-      const tradable = Armory.data.items.filter(i => i.identified !== false && !i.equippedBy);
-      openOverlay(`<div class="result-card detail-card">
+      const tradable = Armory.data.items.filter(i => i.identified !== false && !i.equippedBy)
+        .slice().sort((a, b) => Armory.tradeSellPrice(b, m.curCity) - Armory.tradeSellPrice(a, m.curCity));
+      const buyHtml = stallOrder.map(i => {
+        const s = stalls[i];
+        const type = Armory.typeDef(s.type), rar = Armory.rarityDef(s.rarity);
+        const price = Math.round(Armory.shopPrice(s.rarity) * factor);
+        if (sold.includes(i)) return `<div class="buff-btn sold"><span class="bi">${type.icon}</span><span class="bt"><b>${s.tmpl.n}</b><small>已售出</small></span></div>`;
+        return `<button class="buff-btn market-buy" data-i="${i}"><span class="bi">${type.icon}</span><span class="bt"><b style="color:${rar.color}">${s.tmpl.n}</b><small>${rar.n} · ${s.tmpl.intro}</small></span><span class="mkt-price">💰${price}</span></button>`;
+      }).join("");
+      const sellHtml = tradable.length ? tradable.map(item => {
+        const rar = Armory.rarityDef(item.rarity);
+        const price = Armory.tradeSellPrice(item, m.curCity);
+        return `<button class="buff-btn market-sell" data-uid="${item.uid}"><span class="bi">${item.icon}</span><span class="bt"><b style="color:${rar.color}">${item.name}</b><small>${rar.n} · ${item.intro}</small></span><span class="mkt-price">💰${price}</span></button>`;
+      }).join("") : `<div class="empty">身上暂无可贩卖的宝物</div>`;
+      openOverlay(`<div class="result-card detail-card market-card">
         <h1>🏪 ${c.n}集市</h1>
-        <div class="wdesc">本地行情：${factor <= 0.85 ? "🈹 黑市/折扣价" : factor < 1 ? "💰 偏低" : factor > 1.1 ? "📈 偏贵" : "⚖️ 公道"}（约 ${Math.round(factor * 100)}% 市价）· 货摊每日更新 · 💰 现有 ${Bond.gold()} 金</div>
-        <div class="buff-list">
-          ${stalls.map((s, i) => {
-            const type = Armory.typeDef(s.type), rar = Armory.rarityDef(s.rarity);
-            const price = Math.round(Armory.shopPrice(s.rarity) * factor);
-            if (sold.includes(i)) return `<div class="buff-btn sold"><span class="bi">${type.icon}</span><span class="bt"><b>${s.tmpl.n}</b><small>已售出</small></span></div>`;
-            return `<button class="buff-btn market-buy" data-i="${i}"><span class="bi">${type.icon}</span><span class="bt"><b style="color:${rar.color}">${s.tmpl.n}</b><small>${rar.n} · ${s.tmpl.intro}</small></span><span class="mkt-price">💰${price}</span></button>`;
-          }).join("")}
+        <div class="wdesc">💰 现有 ${Bond.gold()} 金 · 货摊每日更新</div>
+        <div class="mkt-tabs">
+          <div class="mkt-tab ${marketTab === "buy" ? "active" : ""}" data-tab="buy">🛒 买入</div>
+          <div class="mkt-tab ${marketTab === "sell" ? "active" : ""}" data-tab="sell">🚢 卖出</div>
         </div>
-        <div class="mc-sect">🚢 贩卖随身宝物<small>（低价城买、高价城卖，方能赚得差价；本城行情 ${Math.round(cityPriceFactor(m.curCity) * 100)}%）</small></div>
-        <div class="buff-list">
-          ${tradable.length ? tradable.map(item => {
-            const rar = Armory.rarityDef(item.rarity);
-            const price = Armory.tradeSellPrice(item, m.curCity);
-            return `<button class="buff-btn market-sell" data-uid="${item.uid}"><span class="bi">${item.icon}</span><span class="bt"><b style="color:${rar.color}">${item.name}</b><small>${rar.n} · ${item.intro}</small></span><span class="mkt-price">💰${price}</span></button>`;
-          }).join("") : `<div class="empty">身上暂无可贩卖的宝物</div>`}
-        </div>
+        <div class="wdesc mkt-hint">${marketTab === "buy"
+          ? `本地行情：${factor <= 0.85 ? "🈹 黑市/折扣价" : factor < 1 ? "💰 偏低" : factor > 1.1 ? "📈 偏贵" : "⚖️ 公道"}（约 ${Math.round(factor * 100)}% 市价）`
+          : `按本城真实行情结算（本城约 ${Math.round(cityPriceFactor(m.curCity) * 100)}% 市价 × 85%）；低价城买、高价城卖方能赚得差价`}</div>
+        <div class="buff-list mkt-list">${marketTab === "buy" ? buyHtml : sellHtml}</div>
         <div class="btns"><button class="btn-ghost" id="market-close">离开集市</button></div></div>`);
+      $$(".mkt-tab").forEach(t => t.onclick = () => this.openMarket(t.dataset.tab));
       $$(".market-buy").forEach(b => b.onclick = () => {
         const i = +b.dataset.i, s = stalls[i];
         const price = Math.round(Armory.shopPrice(s.rarity) * factor);
