@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202607282255";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608050351";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -2296,6 +2296,10 @@
       this.side = heroSide;
       this.rpg = !!opts.rpg;
       this.external = { auto: !!opts.observe, onDone: opts.onDone };
+      // 城池驻军覆盖（军事一期）：委外战场（边境战）按各自实际出阵兵力与「按统帅推算的自然兵力」之比
+      // 换算缩放系数，使接战兵力真正取决于所在城池的驻军存量，而非单纯看武将统帅高低；
+      // 不传则维持原有的纯统帅推算（如小游戏自由试玩）
+      this.troopScale = opts.troopScale || null;
       this.mine = myRoster.slice(0, 10);
       this.foes = foeRoster.slice(0, 10);
       this._setupCommon();
@@ -2319,9 +2323,14 @@
       // 军令数由全军智谋所定（智将云集则调度自如），敌军同理
       this.orders = this.calcOrders(this.mine);
       this.foeOrders = this.calcOrders(this.foes);
-      // 兵力 = Σ统帅×100：斗将阶段静态展示，破阵阶段随战况折损
-      this.myTroops = this.myTroops0 = this.mine.reduce((s, g) => s + g.tong * 100, 0);
-      this.foeTroops = this.foeTroops0 = this.foes.reduce((s, g) => s + g.tong * 100, 0);
+      // 兵力 = Σ统帅×100：斗将阶段静态展示，破阵阶段随战况折损；
+      // 有城池驻军覆盖时，先按自然值算出缩放系数，实际兵力与后续各线兵力一并按此系数换算
+      const myNatural = this.mine.reduce((s, g) => s + g.tong * 100, 0) || 1;
+      const foeNatural = this.foes.reduce((s, g) => s + g.tong * 100, 0) || 1;
+      this.myScale = this.troopScale ? this.troopScale.mine / myNatural : 1;
+      this.foeScale = this.troopScale ? this.troopScale.foe / foeNatural : 1;
+      this.myTroops = this.myTroops0 = this.troopScale ? this.troopScale.mine : myNatural;
+      this.foeTroops = this.foeTroops0 = this.troopScale ? this.troopScale.foe : foeNatural;
       this.myMorale = 50; this.foeMorale = 50;
       this.duelRound = 0; this.myDuelWins = 0; this.foeDuelWins = 0;
       this.dead = new Set();
@@ -2609,11 +2618,11 @@
       // 待玩家点【攻击】钮亲自下令方才开打，钮上同时兼管调速（攻击→×1→×2→×4→暂停→循环）
       this.assault = true; this.paused = true; this.everStarted = false;
       this.lanes = {};
-      // 各线兵力 = 该线两将统帅×100；各线士气开局取全军总士气，此后独立涨落；
+      // 各线兵力 = 该线两将统帅×100，再按 _setupCommon 算好的城池驻军缩放系数换算；各线士气开局取全军总士气，此后独立涨落；
       // 战线只在该线兵力耗尽（或全军士气崩溃）时才告破
       this.LANES.forEach(k => {
-        const myTr = this.myPos[k].reduce((s, g) => s + g.tong * 100, 0);
-        const foeTr = this.foePos[k].reduce((s, g) => s + g.tong * 100, 0);
+        const myTr = this.myPos[k].reduce((s, g) => s + g.tong * 100, 0) * this.myScale;
+        const foeTr = this.foePos[k].reduce((s, g) => s + g.tong * 100, 0) * this.foeScale;
         this.lanes[k] = {
           broken: null, myHold: 0,
           myTr, myTr0: myTr, foeTr, foeTr0: foeTr,
@@ -3024,7 +3033,9 @@
         }
       }
       const done = () => {
-        const res = { playerWon: won, mySurvivors: this.mine.filter(g => this.alive(g)), kills: this.stats.foeFall };
+        // myTroopsLeft/foeTroopsLeft：委外战场（边境战）据此把幸存兵力遣返/编入城池驻军，见 RPG.applyBorderWarOutcome
+        const res = { playerWon: won, mySurvivors: this.mine.filter(g => this.alive(g)), kills: this.stats.foeFall,
+          myTroopsLeft: Math.max(0, Math.round(this.myTroops)), foeTroopsLeft: Math.max(0, Math.round(this.foeTroops)) };
         const onDone = this.external.onDone;
         this.external = null;
         if (onDone) onDone(res);
@@ -5694,7 +5705,7 @@
     hospital: { n: "医馆", icon: "🏥", desc: "郎中坐堂——本城回魂丹折价，单挑时体力（气血）每回合额外回复，带兵作战安抚军心/驰援同袍额外恢复兵力", eff: ["回魂丹80金 · 体力+2/回合 · 兵力+3%", "回魂丹65金 · 体力+4/回合 · 兵力+6%", "回魂丹50金 · 体力+6/回合 · 兵力+9%"] },
     academy: { n: "书院", icon: "📚", desc: "名士讲学——在本城进行的单挑（历练/切磋/悬赏/设施）经验加成", eff: ["经验 +10%", "经验 +20%", "经验 +30%"] },
     post: { n: "驿站", icon: "🏇", desc: "快马官道——与其他建有驿站的己方城市互通直达（不论多远只耗 1⚡，按路程收驿费，无奇遇无风浪）", eff: ["开通驿路", "驿费 -25%", "驿费 -50%"] },
-    wall: { n: "城墙", icon: "🏯", desc: "高墙深垒——边境战报模拟中，本城一方全员六维获守备加成（攻守对称：敌占期间为敌所用）", eff: ["守备 +2", "守备 +4", "守备 +6"] },
+    wall: { n: "城墙", icon: "🏯", desc: "高墙深垒——边境战报模拟中，本城一方全员六维获守备加成（攻守对称：敌占期间为敌所用），另加成本城驻军上限", eff: ["守备 +2 · 驻军上限 +8,000", "守备 +4 · 驻军上限 +16,000", "守备 +6 · 驻军上限 +24,000"] },
     drill: { n: "演武场", icon: "⚔️", desc: "日日操练——本城特色设施挑战获胜时，名声额外加成", eff: ["名声 +4", "名声 +8", "名声 +12"] },
   };
   const HOSPITAL_REVIVE = [100, 80, 65, 50];   // 回魂丹价：下标 = 所在城医馆等级（0 = 无医馆）
@@ -5785,6 +5796,47 @@
     },
   };
   /* ============================================================
+   *  城池驻军（军事一期）：每座非海路城池（不分敌我）各自维护一支驻军，上限随繁荣度/城墙等级
+   *  提升，宿营时按同一节奏回复；边境大战出阵兵力不再纯由武将统帅推算，而是从交战双方各自所在
+   *  城池的驻军中抽调——发达、城墙厚实的边城才能撑起满编大军，弱小边城捉襟见肘。
+   *  数据存战役层 m.troops（城→驻军数）。
+   * ============================================================ */
+  const Garrison = {
+    BASE_CAP: 30000, PROSPER_CAP_STEP: 12000, WALL_CAP_STEP: 8000,
+    BASE_REGEN: 300, PROSPER_REGEN_STEP: 250,
+    RECRUIT_GOLD_PER: 0.5,   // 每募 1 兵耗 0.5 金
+    AI_COMMIT: 0.7,          // 非玩家一方出阵默认调用本城 7 成驻军，留 3 成戍守（无城池经营心思，简化处理）
+    cap(m, cityId) { return this.BASE_CAP + Prosper.lv(m, cityId) * this.PROSPER_CAP_STEP + Buildings.lv(m, cityId, "wall") * this.WALL_CAP_STEP; },
+    regen(m, cityId) { return this.BASE_REGEN + Prosper.lv(m, cityId) * this.PROSPER_REGEN_STEP; },
+    all(m) { if (!m.troops) m.troops = {}; return m.troops; },
+    // 首次读取即按当前上限满编初始化（战役刚开局或城池刚被攻陷但尚无记录时，视同兵力齐整）
+    get(m, cityId) {
+      const t = this.all(m), cap = this.cap(m, cityId);
+      if (t[cityId] == null) t[cityId] = cap;
+      return Math.min(t[cityId], cap);
+    },
+    set(m, cityId, v) { this.all(m)[cityId] = Math.max(0, Math.min(this.cap(m, cityId), Math.round(v))); },
+    add(m, cityId, n) { if (n) this.set(m, cityId, this.get(m, cityId) + n); },
+    spend(m, cityId, n) { this.set(m, cityId, this.get(m, cityId) - n); },
+    // 宿营时全图城池（不分敌我）同步回复驻军，繁荣越高恢复越快
+    tickAll(m) { CITIES.filter(c => c.side !== "sea").forEach(c => this.add(m, c.id, this.regen(m, c.id))); },
+    // 募兵：一键花钱尽量补满至上限，金币不足则按现有金币折算尽力募集（不设次数/行动力限制——
+    // 补满一城所需总花费恒定为 (上限-现存)×0.5 金，分几次点击花的钱都一样，无套利空间）
+    recruit(m, cityId) {
+      const room = this.cap(m, cityId) - this.get(m, cityId);
+      if (room <= 0) { toast("驻军已满编"); return false; }
+      const affordable = Math.floor(Bond.gold() / this.RECRUIT_GOLD_PER);
+      const n = Math.min(room, affordable);
+      if (n <= 0) { toast(`金币不足（募兵每员需 ${this.RECRUIT_GOLD_PER} 金）`); return false; }
+      const cost = Math.ceil(n * this.RECRUIT_GOLD_PER);
+      Bond.spend(cost);
+      this.add(m, cityId, n);
+      Campaign.save();
+      toast(`🚩 ${cityName(cityId)}募得新兵 ${n.toLocaleString()}，耗 ${cost} 金${n < room ? "（金币所限，未能募满）" : "（已募至满编）"}（现有驻军 ${this.get(m, cityId).toLocaleString()}）`);
+      return true;
+    },
+  };
+  /* ============================================================
    *  守将委任（城市经营三期）：己方城市可委任一名友谊满上限、不在团队且未任掌柜的己方武将驻城死守——
    *  常驻不云游，边境战报模拟中必上阵且六维 +3（与城墙守备叠加）。城破之日守将被俘下狱（暂从天下
    *  名录中消失），亲至关押之城可付赎金或劫牢营救；己方夺回该城则牢门大开顺势放人。
@@ -5847,8 +5899,8 @@
   };
   /* ============================================================
    *  敌境自营（AIDev）：敌方阵营的城市不靠玩家，也随宿营推移缓慢自行发展——修筑/升级城建、
-   *  兴办/扩建敌营产业、积攒繁荣。每次宿营在敌方治下城市中随机抽 2 座，各以 60% 概率发生
-   *  一次发展动作（繁荣 45% / 城建 30% / 产业 25%），节奏刻意放缓，敌我此消彼长；
+   *  兴办/扩建敌营产业、积攒繁荣、征募驻军。每次宿营在敌方治下城市中随机抽 2 座，各以 60% 概率发生
+   *  一次发展动作（繁荣 40% / 城建 25% / 产业 20% / 征兵 15%），节奏刻意放缓，敌我此消彼长；
    *  动向以「敌境风闻」并入宿营提示。己方夺城后：建筑直接为你所用，敌营产业可低价接管。
    * ============================================================ */
   const AIDev = {
@@ -5861,22 +5913,28 @@
         if (Math.random() >= 0.6) continue;
         const cid = cities[randInt(0, cities.length - 1)];
         const roll = Math.random();
-        if (roll < 0.45) {
+        if (roll < 0.40) {
           const before = Prosper.lv(m, cid);
           Prosper.add(m, cid, 1, true);   // 静默积攒，升星才见诸风闻
           if (Prosper.lv(m, cid) > before) news.push(`${cityName(cid)}市面愈发繁荣（${Prosper.stars(m, cid)}）`);
-        } else if (roll < 0.75) {
+        } else if (roll < 0.65) {
           const opts = cityBuildOptions(cid).filter(t => Buildings.lv(m, cid, t) < Buildings.MAX_LV);
           if (!opts.length) continue;
           const t = opts[randInt(0, opts.length - 1)];
           if (!Buildings.all(m)[cid]) Buildings.all(m)[cid] = {};
           Buildings.all(m)[cid][t] = Buildings.lv(m, cid, t) + 1;
           news.push(`${cityName(cid)}修筑${BUILD_TYPES[t].n}至 ${Buildings.all(m)[cid][t]} 级`);
-        } else {
+        } else if (roll < 0.85) {
           if (!CITY_ESTATE[cid] || Estate.get(m, cid)) continue;   // 玩家旧产业查封中仍占位，敌营不另起炉灶
           const n = Estate.npcGet(m, cid);
           if (!n) { Estate.npcAll(m)[cid] = { lv: 1 }; news.push(`${cityName(cid)}兴办敌营${Estate.typeOf(cid).n}`); }
           else if (n.lv < 3) { n.lv++; news.push(`${cityName(cid)}敌营产业扩建为「${Estate.typeOf(cid).lvN[n.lv - 1]}」`); }
+        } else {
+          const room = Garrison.cap(m, cid) - Garrison.get(m, cid);
+          if (room <= 0) continue;   // 已满编，无需征兵
+          const n = Math.min(room, Math.round(Garrison.cap(m, cid) * 0.15));
+          Garrison.add(m, cid, n);
+          news.push(`${cityName(cid)}征募驻军 +${n.toLocaleString()}（现有 ${Garrison.get(m, cid).toLocaleString()}）`);
         }
       }
       if (news.length) Campaign.save();
@@ -6281,6 +6339,7 @@
           cityOwner: initCityOwner(), statPenalty: {}, statGrowth: {}, activeAssassin: null, estate: {}, prosper: {}, activeEstateRaid: null,
           builds: {}, npcEstate: {}, guards: {}, captives: {}, activeRescue: null,
           nemesis: null, activeNemesis: null, nemesisChallenge: false,
+          troops: {},
         },
       };
       this.save();
@@ -6329,6 +6388,7 @@
       if (m.nemesis === undefined) { m.nemesis = null; changed = true; }
       if (m.activeNemesis === undefined) { m.activeNemesis = null; changed = true; }
       if (m.nemesisChallenge === undefined) { m.nemesisChallenge = false; changed = true; }
+      if (!m.troops) { m.troops = {}; changed = true; }
       if (changed) this.save();
       return m;
     },
@@ -6745,6 +6805,7 @@
           ${this.buildBtnHtml(m)}
           ${this.estateBtnHtml(m)}
           ${this.guardBtnHtml(m)}
+          ${this.garrisonBtnHtml(m)}
           ${this.postBtnHtml(m)}
           ${this.rescueBtnHtml(m)}
         </div>
@@ -6802,6 +6863,12 @@
       const guard = Guard.of(m, m.curCity);
       return `<button class="menu-btn" id="map-guard"><span class="mi">🛡️</span><span>守将<small>${guard ? `${guard.name} 驻守 · 六维+${Guard.STAT_BONUS}` : "空缺 · 可委任驻守"}</small></span></button>`;
     },
+    // 驻军按钮：己方城池（非海路中转）可查看驻军存量并募兵，独立于城建按钮
+    garrisonBtnHtml(m) {
+      if (cityOwnerSide(m, m.curCity) !== RPG.char.side || cityDef(m.curCity).side === "sea") return "";
+      const have = Garrison.get(m, m.curCity), cap = Garrison.cap(m, m.curCity);
+      return `<button class="menu-btn" id="map-garrison"><span class="mi">🚩</span><span>驻军<small>${have.toLocaleString()}/${cap.toLocaleString()}${have >= cap ? "（满编）" : ""}</small></span></button>`;
+    },
     // 驿站快马按钮：本城已建驿站（≥1级）才显示，独立于城建按钮
     postBtnHtml(m) {
       if (Buildings.lv(m, m.curCity, "post") < 1) return "";
@@ -6818,6 +6885,7 @@
       const estBtn = $("#map-estate"); if (estBtn) estBtn.onclick = () => this.openEstate();
       const buildBtn = $("#map-build"); if (buildBtn) buildBtn.onclick = () => this.openBuild();
       const guardBtn = $("#map-guard"); if (guardBtn) guardBtn.onclick = () => this.openGuard();
+      const garrisonBtn = $("#map-garrison"); if (garrisonBtn) garrisonBtn.onclick = () => this.openGarrison();
       const postBtn = $("#map-post"); if (postBtn) postBtn.onclick = () => this.openPostTravel(m);
       const rescueBtn = $("#map-rescue"); if (rescueBtn) rescueBtn.onclick = () => this.openRescue();
       const campBtn = $("#map-camp"); if (campBtn) campBtn.onclick = () => this.camp();
@@ -7173,6 +7241,27 @@
       </div>`);
       $$(".grd-cand").forEach(el => el.onclick = () => { Guard.appoint(m, cityId, +el.dataset.id); this.openGuard(); });
       $("#grd-back").onclick = () => this.openGuard();
+    },
+    /* ---- 驻军面板：查看本城驻军上限构成并募兵；驻军决定边境大战出阵兵力上限 ---- */
+    openGarrison() {
+      const m = Campaign.mapState();
+      const cityId = m.curCity;
+      if (cityOwnerSide(m, cityId) !== RPG.char.side || cityDef(cityId).side === "sea") return;
+      const have = Garrison.get(m, cityId), cap = Garrison.cap(m, cityId);
+      const wallLv = Buildings.lv(m, cityId, "wall"), prosperLv = Prosper.lv(m, cityId);
+      const affordAll = Math.ceil((cap - have) * Garrison.RECRUIT_GOLD_PER);
+      openOverlay(`<div class="result-card detail-card">
+        <h1>🚩 ${cityName(cityId)} · 驻军</h1>
+        <div class="wdesc">现有驻军 <b>${have.toLocaleString()}</b> / 上限 <b>${cap.toLocaleString()}</b>（基础 ${Garrison.BASE_CAP.toLocaleString()} + 繁荣${prosperLv}★ ${( Prosper.lv(m,cityId) * Garrison.PROSPER_CAP_STEP).toLocaleString()} + 城墙${wallLv}级 ${(wallLv * Garrison.WALL_CAP_STEP).toLocaleString()}）<br>
+        每日宿营回复 <b>${Garrison.regen(m, cityId).toLocaleString()}</b>；边境大战出阵兵力由此处驻军按你选定的出阵比例调拨，请量力而行。<br>
+        募兵每员 ${Garrison.RECRUIT_GOLD_PER} 金，💰 现有 ${Bond.gold()} 金${cap > have ? `（募满尚需 ${affordAll} 金）` : ""}</div>
+        <div class="btns">
+          <button class="btn-primary" id="grs-recruit" ${have >= cap ? "disabled" : ""}>💰 募兵${have >= cap ? "（已满编）" : ""}</button>
+          <button class="btn-ghost" id="grs-close">离开</button>
+        </div>
+      </div>`);
+      $("#grs-recruit").onclick = () => { if (Garrison.recruit(m, cityId)) { this.render(); this.openGarrison(); } };
+      $("#grs-close").onclick = () => { closeOverlay(); this.render(); };
     },
     /* ---- 驿站快马面板：独立于城建按钮；也可由地图直接点击已通驿的远方城市触发（见 confirmPostTravel） ---- */
     openPostTravel(m) {
@@ -7535,6 +7624,7 @@
       const m = Campaign.mapState();
       m.day++; m.ap = m.apMax;
       m.marketSold = {};   // 新的一天，各城集市重新上货
+      Garrison.tickAll(m); // 全图城池驻军同步回复（不分敌我）
       const wandered = this.wanderGenerals(m);
       const aiNews = AIDev.tick(m);   // 敌境自营：敌方城市随时间缓慢自行发展（城建/产业/繁荣）
       const nemNews = Nemesis.campEvent(m);   // 宿敌主动寻衅：拦路挑战 / 抢先夺赏 / 踏营下战书（三选一，小概率）
@@ -7613,15 +7703,23 @@
     },
     openBorderWarPicker(m, edge) {
       this._bwPicks = new Set();
+      this._bwRatio = 60;   // 出阵比例滑杆默认 60%：折中于「倾巢而出」与「固守为主」之间
       this.renderBorderWarPicker(m, edge);
     },
     // 自选出战：只列出主角本人与麾下团队成员供勾选——这两类由玩家亲自决定是否出战；
     // 未勾选的团队成员一概不派（不会被随机抽中），其余已现身武将与你的抉择无关，一律由候选池随机补满出战名额。
     // 主角若未勾选出战，此战金币犒赏/赔付与你无涉——胜负仍会照常易主城池，但不动你的钱袋。
+    // 出阵比例滑杆的说明文案：兵越多越禁得住消耗，但出多少、家里就空多少
+    bwRatioLabel(m, cityId, pct) {
+      const cap = Garrison.cap(m, cityId), have = Garrison.get(m, cityId);
+      const commit = Math.round(have * pct / 100);
+      return `出阵 <b>${pct}%</b>（调兵 ${commit.toLocaleString()}）　留守 ${(have - commit).toLocaleString()}　｜　本城驻军 ${have.toLocaleString()}/${cap.toLocaleString()}`;
+    },
     renderBorderWarPicker(m, edge) {
       const [a, b] = edge;
       const sideA = cityOwnerSide(m, a), sideB = cityOwnerSide(m, b);
       const heroSide = RPG.char.side;
+      const heroCity = heroSide === sideA ? a : b;
       const picks = this._bwPicks;
       const pool = Bond.teamGenerals().filter(g => g.side === heroSide).slice().sort((x, y) => ratingScore(y) - ratingScore(x));
       const heroRow = `<button class="buff-btn bw-pick ${picks.has(-1) ? 'active' : ''}" data-id="-1"><span class="bi">👑</span><span class="bt"><b>${RPG.char.name}（你）</b><small>评分 ${ratingScore(RPG.heroGeneral())}</small></span></button>`;
@@ -7629,8 +7727,11 @@
       openOverlay(`<div class="result-card detail-card">
         <h1>⚔️ 边境战事</h1>
         <div class="wdesc">边境爆发冲突：<b>${cityName(a)}（${sideName(sideA)}）</b> vs <b>${cityName(b)}（${sideName(sideB)}）</b>。你与团队成员是否出战自行抉择（其余已现身武将由候选池随机补满，无需你操心）：勾选自己即视为亲历此战，出战并获胜可得所夺城池金币日产出 <b>${this.BORDER_WAR_GOLD_DAYS}</b> 倍犒赏，落败则须赔付被夺城池金币日产出 <b>${this.BORDER_WAR_GOLD_DAYS}</b> 倍；不勾选自己则此战胜负不动你的钱袋。</div>
-        <div class="buff-list" style="max-height:38vh;overflow-y:auto">${rows.join("")}</div>
+        <div class="buff-list" style="max-height:32vh;overflow-y:auto">${rows.join("")}</div>
         <div class="wdesc">已选 <b>${picks.size}</b> 员（至多 10 员）</div>
+        <div class="mc-sect">🚩 出阵比例<small>（兵力从${cityName(heroCity)}驻军中调拨，出得越多越经打，但家底也空得越多）</small></div>
+        <input type="range" id="bw-ratio" min="10" max="100" step="5" value="${this._bwRatio}" style="width:100%">
+        <div class="wdesc" id="bw-ratio-label">${this.bwRatioLabel(m, heroCity, this._bwRatio)}</div>
         <div class="btns"><button class="btn-primary" id="bw-go">开战</button></div>
       </div>`, { modal: true });
       $$(".bw-pick").forEach(btn => btn.onclick = () => {
@@ -7639,11 +7740,18 @@
         else { if (picks.size >= 10) { toast(`最多派遣 10 员出战`); return; } picks.add(id); }
         this.renderBorderWarPicker(m, edge);
       });
-      $("#bw-go").onclick = () => { const ids = [...picks]; closeOverlay(); this.resolveBorderWar(m, edge, ids); };
+      // 拖动滑杆只即时刷新自身文字标签，不整体重渲染（否则拖拽手感会被打断）；松手后的最终值随「开战」一并读取
+      $("#bw-ratio").oninput = (e) => {
+        this._bwRatio = +e.target.value;
+        $("#bw-ratio-label").innerHTML = this.bwRatioLabel(m, heroCity, this._bwRatio);
+      };
+      $("#bw-go").onclick = () => { const ids = [...picks]; const ratio = this._bwRatio; closeOverlay(); this.resolveBorderWar(m, edge, ids, ratio); };
     },
     // 共用：胜方夺城，同时调整双方部署——败方原驻守此城的武将退守至己方相邻城池，
-    // 胜方随机挑选若干已现身武将进驻新占领的城池；返回被占领的城池 id
-    applyBorderWarOutcome(m, edge, winnerSide) {
+    // 胜方随机挑选若干已现身武将进驻新占领的城池；troops（可选）为 {winner, loser} 双方此役幸存兵力，
+    // 胜方幸存兵力就地成为新占城池的驻军，败方幸存兵力（此役出征在外、侥幸未阵亡者）退往己方相邻城池收编，
+    // 败方原留守本城、未随军出征的兵力则随城池一并陷落，不设退路——返回被占领的城池 id
+    applyBorderWarOutcome(m, edge, winnerSide, troops) {
       const [a, b] = edge;
       const sideA = cityOwnerSide(m, a);
       const capturedCity = sideA === winnerSide ? b : a;
@@ -7668,6 +7776,13 @@
         // 己方夺城，牢门大开：此前被囚于此城的己方守将尽数放还
         Guard.heldAt(m, capturedCity).forEach(g => Guard.free(m, g.id, `——${cityName(capturedCity)}光复，牢门大开`));
       }
+      if (troops) {
+        Garrison.set(m, capturedCity, troops.winner);   // 胜方幸存兵力就地驻守新占之城
+        if (troops.loser > 0) {
+          const opts = adjCities(capturedCity).filter(id => cityOwnerSide(m, id) === loserSide);
+          if (opts.length) Garrison.add(m, opts[randInt(0, opts.length - 1)], troops.loser);
+        }
+      }
       Campaign.save();
       return capturedCity;
     },
@@ -7675,12 +7790,19 @@
     // 团队成员未被勾选则一概不派（不进入候选池，不会被随机抽中），其余已现身武将与玩家抉择无关，一律由候选池随机抽点补满名额。
     // 战斗一律以野战演武（FieldBattle）演出：主角上阵（被勾选）即为可亲自指挥的排兵布阵/阵前斗将/挥军破阵全流程，
     // 未上阵则全自动推演（无需任何点击，最高倍速跑完），不再静默瞬间出结果。
-    resolveBorderWar(m, edge, pickedIds) {
+    resolveBorderWar(m, edge, pickedIds, ratio) {
       const [a, b] = edge;
       const sideA = cityOwnerSide(m, a), sideB = cityOwnerSide(m, b);
       const heroSide = RPG.char.side;
       const pickedSet = new Set(pickedIds || []);
       const teamIds = new Set(Bond.teamGenerals().filter(g => g.side === heroSide).map(g => g.id));
+      // 出阵兵力（军事一期）：己方按滑杆比例从本城驻军调拨，敌方（非玩家操控）固定调用 7 成驻军；
+      // 调出的兵力当即从原城池扣除，战罢按幸存与否分别驻守新占之城或退回相邻友城（见 applyBorderWarOutcome）
+      const heroCity = heroSide === sideA ? a : b, foeCity = heroSide === sideA ? b : a;
+      const heroCommit = Math.round(Garrison.get(m, heroCity) * (ratio == null ? 60 : ratio) / 100);
+      const foeCommit = Math.round(Garrison.get(m, foeCity) * Garrison.AI_COMMIT);
+      Garrison.spend(m, heroCity, heroCommit);
+      Garrison.spend(m, foeCity, foeCommit);
 
       let poolA = DB.list.filter(g => g.side === sideA && m.appeared.includes(g.id)).map(clone);
       let poolB = DB.list.filter(g => g.side === sideB && m.appeared.includes(g.id)).map(clone);
@@ -7725,10 +7847,14 @@
       FieldBattle.beginExternal(myRoster, foeRoster, heroSide, {
         rpg: true,             // 返回键归属战役层（回天下地图而非首页）
         observe: !heroIn,      // 主角未被抽中：全自动推演，无需任何点击
+        troopScale: { mine: heroCommit, foe: foeCommit },
         onDone: (res) => {
           const winnerSide = res.playerWon ? heroSide : (heroSide === "cn" ? "jp" : "cn");
-          const capturedCity = this.applyBorderWarOutcome(m, edge, winnerSide);
           const heroWon = winnerSide === heroSide;
+          // 幸存兵力：myTroopsLeft/foeTroopsLeft 对应己方/敌方本役出征之军的战后余兵，与谁获胜无关
+          const capturedCity = this.applyBorderWarOutcome(m, edge, winnerSide, heroWon
+            ? { winner: res.myTroopsLeft, loser: res.foeTroopsLeft }
+            : { winner: res.foeTroopsLeft, loser: res.myTroopsLeft });
           // 战果金币：不再是固定犒赏，改为所夺/被夺城池金币日产出的 BORDER_WAR_GOLD_DAYS 倍（约合一月产出）
           const warGold = this.BORDER_WAR_GOLD_DAYS * Estate.cityDailyGold(m, capturedCity);
           let heroHtml;
@@ -8002,6 +8128,7 @@
         smith: Armory.TYPES[hashStr(c.id) % Armory.TYPES.length].n,
         estTxt, dailyGold, dailyTxt, appeared: appeared.length, total: locals.length,
         bounty: ((m.bounties && m.bounties[c.id]) || []).length,
+        troops: c.side === "sea" ? null : Garrison.get(m, c.id), troopsCap: c.side === "sea" ? null : Garrison.cap(m, c.id),
       };
     },
     render() {
@@ -8017,7 +8144,7 @@
       });
       const arrow = k => key === k ? (dir > 0 ? " ▲" : " ▼") : "";
       const th = (k, label) => `<th data-sort="${k}" class="${key === k ? 'sorted' : ''}">${label}${arrow(k)}</th>`;
-      const head = `<tr>${th("name", "城市")}${th("owner", "归属")}${th("prosper", "繁荣")}<th>特色设施</th><th>铁匠专精</th><th>产业</th>${th("dailyGold", "日进")}${th("appeared", "武将")}${th("bounty", "悬赏")}</tr>`;
+      const head = `<tr>${th("name", "城市")}${th("owner", "归属")}${th("prosper", "繁荣")}<th>特色设施</th><th>铁匠专精</th><th>产业</th>${th("dailyGold", "日进")}${th("troops", "驻军")}${th("appeared", "武将")}${th("bounty", "悬赏")}</tr>`;
       const body = rows.map(r => `<tr data-id="${r.c.id}">
           <td class="dt-name ${r.owner}"><span class="dt-dot"></span>${r.c.id === m.curCity ? "📍" : ""}${r.c.n}</td>
           <td class="num">${r.c.side === "sea" ? "🌊" : ""}${sideName(r.owner)}</td>
@@ -8026,6 +8153,7 @@
           <td class="allgen-city">${r.smith}</td>
           <td class="allgen-city">${r.estTxt}</td>
           <td class="num">${r.dailyTxt}</td>
+          <td class="num">${r.troops == null ? "—" : `${r.troops.toLocaleString()}/${r.troopsCap.toLocaleString()}`}</td>
           <td class="num">${r.appeared}/${r.total}</td>
           <td class="num">${r.bounty}</td>
         </tr>`).join("");
@@ -8070,6 +8198,7 @@
           ⚒️ 铁匠专精：${r.smith} · 🏪 集市：${factorTxt}<br>
           🏗️ 城建：${buildHtml}<br>
           🛡️ 守将：${guard ? guard.name : "无"}${captNames ? ` · ⛓️ 狱中：${captNames}` : ""}<br>
+          🚩 驻军：${r.troops == null ? "—（海路中转站不设驻军）" : `${r.troops.toLocaleString()} / ${r.troopsCap.toLocaleString()}（每日回复 ${Garrison.regen(m, cityId).toLocaleString()}）`}<br>
           🏠 产业：${estHtml}<br>
           🚶 本地已现身武将（${r.appeared}/${r.total}）：${appearedNames}<br>
           📋 悬赏（${bounties.length}）：${bounties.map(b => `${b.legendary ? "⭐" : ""}${b.desc}`).join("；") || "暂无"}<br>

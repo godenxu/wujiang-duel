@@ -1077,6 +1077,9 @@ html, body {
 .mc-sect { font-size: 16px; font-weight: 700; color: var(--cn-gold); margin: 10px 0 6px; letter-spacing: 1px; }
 .mc-sect small { color: #8a7d5e; font-size: 12px; font-weight: 400; margin-left: 6px; letter-spacing: 0; }
 
+/* 出阵比例滑杆（边境战弹窗）：贴合卡片配色的原生 range 输入 */
+input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer; }
+
 .mc-bounty-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .mc-bounty {
   display: block; width: 100%; text-align: left; padding: 8px 10px; border-radius: 10px;
