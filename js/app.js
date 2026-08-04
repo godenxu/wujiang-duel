@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608050425";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608050654";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -208,12 +208,31 @@
     // 时完全不显示进度数据，只呈现默认六维；opts.readonly（全部武将名录只读视图）显示真实战役数值与友谊值，
     // 但隐藏拜访/切磋/招募等互动按钮；非只读且为敌方阵营武将时，交友区替换为「刺杀」——只能与己方阵营交友，
     // 潜入敌境唯有刺杀敌将立威（或被反杀）
-    let bondHtml = "", eqHtml = "", assassinHtml = "";
+    let bondHtml = "", eqHtml = "", assassinHtml = "", factionHtml = "";
     const isRealGeneral = !opts.global && RPG.char && g.id !== -1 && DB.get(g.id);
     const sameSide = isRealGeneral && g.side === RPG.char.side;
     const bondable = isRealGeneral && sameSide && !opts.readonly;
     const showFriendBox = isRealGeneral && sameSide;
     const assassinable = isRealGeneral && !sameSide && !opts.readonly;
+    // 势力效忠：同国武将才谈得上"是否为我所用"，异国武将（对面阵营）不显示——那是刺杀的对象，不是招揽的对象
+    const mFac = sameSide ? Campaign.mapState() : null;
+    if (mFac && mFac.generalFaction) {
+      const curFid = mFac.generalFaction[g.id];
+      const curName = curFid ? factionDef(curFid).n : "在野";
+      const isMine = curFid && curFid === mFac.playerFaction;
+      const loyaltyTxt = curFid ? ` · 忠诚 <b>${Loyalty.get(mFac, g.id)}</b>` : "";
+      if (isMine) {
+        factionHtml = `<div class="bond-box"><div class="bond-line">🚩 现效力于：<b>${curName}</b>（本势力）${loyaltyTxt}</div></div>`;
+      } else if (!opts.readonly) {
+        const chance = Math.round(Loyalty.persuadeChance(mFac, g.id) * 100);
+        factionHtml = `<div class="bond-box">
+          <div class="bond-line">🚩 现效力于：<b>${curName}</b>${loyaltyTxt}</div>
+          <div class="bond-gifts"><button class="gift-btn" id="bond-persuade">🗣️ 招揽（约 ${chance}% 成功 · ${Loyalty.PERSUADE_COST} 金）</button></div>
+        </div>`;
+      } else if (curFid) {
+        factionHtml = `<div class="bond-box"><div class="bond-line">🚩 现效力于：<b>${curName}</b>${loyaltyTxt}</div></div>`;
+      }
+    }
     // 装备加成：六维数值、雷达图、总评均按「若此武将佩戴其当前装备」实时展示（含刺杀等战役内负面效果）。
     // hg 是叠加装备后的最终值（若传入的 g 本就来自战斗单位、已叠加过，则原样沿用，避免二次叠加）；
     // raw 专门用于计算装备增量标注——重新查一份「不含装备」的原始六维做对比基准，
@@ -282,6 +301,7 @@
       ${g.id !== -1 ? (() => { const sk = Skill.of(hg); return `<div class="dc-skill ${sk.named ? "named" : ""}"><b>${sk.icon} 将魂 ·【${sk.n}】</b>${sk.named ? "<small>名将专属</small>" : ""}<br>${sk.desc}</div>`; })() : ""}
       ${eqHtml}
       ${bondHtml}
+      ${factionHtml}
       ${assassinHtml}
       <div class="btns">
         ${opts.pickable ? `<button class="btn-primary" id="detail-pick">选他出战</button>` : ''}
@@ -325,6 +345,8 @@
         startClassicBattle(RPG.heroGeneral(), g, false, true);
       };
     }
+    const persuadeBtn = $("#bond-persuade");
+    if (persuadeBtn) persuadeBtn.onclick = () => { if (Loyalty.persuade(mFac, g.id)) { showDetail(g, opts); refreshDBIfActive(); } };
   }
   // 团队已满时招募：须指定一名现有队友被顶替，队友不可无条件请出团队
   function openTeamReplacePicker(g, onDone) {
@@ -5319,18 +5341,68 @@
   function isMonthEnd(day) { return day % 30 === 0; }
   // 武将大会：每月 15 日举行
   function isTournamentDay(day) { const d = calYMD(day); return d.dom === 15; }
-  // 城池归属（可随边境阵营大战易主，独立于武将分布用的静态 c.side）：对马岛海路中转站初始划归战国一方，
-  // 其余城池按其固有阵营起始归属
-  function initCityOwner() {
-    const o = {};
-    CITIES.forEach(c => { o[c.id] = c.side === "sea" ? "jp" : c.side; });
-    return o;
+
+  /* ============================================================
+   *  势力（军事三期）：中日两国之下各自再分十家势力，40 座非海路城池尽数分属其中——
+   *  国（side）永不改变（图鉴归类、小游戏、跨海规则、终局判定悉数照旧），势力（faction）
+   *  才是真正"可征伐、可覆灭、可改换门庭"的那一层：城池归属、边境/内战、武将出仕，都挂在势力上。
+   *  对马岛比较特殊——它不属于任何真实势力，只在 tsushima_cn/tsushima_jp 两个"番所"占位势力间来回易手，
+   *  借此让它继续沿用与其余城池完全相同的势力数据结构，无需额外特判。
+   * ============================================================ */
+  const FACTIONS = [
+    { id: "shuhan", n: "蜀汉", side: "cn", lord: "刘备", cities: ["chengdu", "baidicheng"] },
+    { id: "zhanglu", n: "张鲁", side: "cn", lord: "张鲁", cities: ["hanzhong", "shangyong"] },
+    { id: "xiliang", n: "西凉", side: "cn", lord: "董卓", cities: ["chang_an", "tianshui"] },
+    { id: "caowei", n: "曹魏", side: "cn", lord: "曹操", cities: ["xuchang", "wancheng", "hefei"] },
+    { id: "jin", n: "晋", side: "cn", lord: "司马懿", cities: ["luoyang"] },
+    { id: "yuanshao", n: "袁绍", side: "cn", lord: "袁绍", cities: ["ye"] },
+    { id: "yuanshu", n: "袁术", side: "cn", lord: "袁术", cities: ["shouchun", "runan"] },
+    { id: "lvbu", n: "吕布", side: "cn", lord: "吕布", cities: ["xuzhou", "xiapi"] },
+    { id: "jingzhou_f", n: "荆州", side: "cn", lord: "刘表", cities: ["jingzhou", "jiangling"] },
+    { id: "dongwu", n: "东吴", side: "cn", lord: "孙权", cities: ["chaisang", "jianye", "wuchang"] },
+    { id: "oda", n: "织田", side: "jp", lord: "织田信长", cities: ["owari", "mino"] },
+    { id: "kyoto_f", n: "京都", side: "jp", lord: "足利义昭", cities: ["kyoto", "omi", "echizen"] },
+    { id: "toyotomi", n: "丰臣", side: "jp", lord: "丰臣秀吉", cities: ["osaka", "bizen"] },
+    { id: "takeda", n: "武田", side: "jp", lord: "武田信玄", cities: ["kai"] },
+    { id: "tokugawa", n: "德川", side: "jp", lord: "德川家康", cities: ["sunpu", "mikawa"] },
+    { id: "hojo", n: "北条", side: "jp", lord: "北条氏康", cities: ["odawara", "hitachi"] },
+    { id: "uesugi", n: "上杉", side: "jp", lord: "上杉谦信", cities: ["echigo", "kaga"] },
+    { id: "date", n: "伊达", side: "jp", lord: "伊达政宗", cities: ["oushu"] },
+    { id: "mori", n: "毛利", side: "jp", lord: "毛利元就", cities: ["aki", "izumo"] },
+    { id: "shimazu", n: "岛津", side: "jp", lord: "岛津义弘", cities: ["satsuma", "higo", "bungo"] },
+    { id: "tsushima_jp", n: "对马番所", side: "jp", lord: "—", cities: ["tsushima"] },
+    { id: "tsushima_cn", n: "对马番所", side: "cn", lord: "—", cities: [] },
+  ];
+  const CITY_FACTION_INIT = {};
+  FACTIONS.forEach(f => f.cities.forEach(cid => { CITY_FACTION_INIT[cid] = f.id; }));
+  // "_player_"：玩家自立门户后另建的势力，非静态数据表条目——其名称/国别存在战役存档 m.playerOwnFaction 里，
+  // 借由 Campaign 这一全局单例在无需改动 factionDef 调用签名的前提下取到当前存档，其余 19+2 家仍查静态表
+  function factionDef(fid) {
+    if (fid === "_player_") {
+      const m = typeof Campaign !== "undefined" && Campaign.mapState();
+      const own = m && m.playerOwnFaction;
+      return { id: "_player_", n: (own && own.n) || "自立势力", side: (own && own.side) || (RPG.char ? RPG.char.side : "cn"), lord: (own && own.lord) || (RPG.char ? RPG.char.name : "?"), cities: [] };
+    }
+    return FACTIONS.find(f => f.id === fid);
   }
-  function cityOwnerSide(m, cityId) { return (m.cityOwner && m.cityOwner[cityId]) || cityDef(cityId).side; }
-  // 边境：owner 不同的两座相邻城池之间的道路，天然只会出现在对马岛与其相邻城池之间（唯一连通两大阵营的路），
-  // 一旦某城易主，其原本同阵营的相邻城池也会随之成为新边境，前线因而逐月推移
+  // 城池当前归属的势力 id（可随内战/边境战易主）；未记录时按开局初始势力兜底
+  function cityFactionId(m, cityId) {
+    if (m.cityFaction && m.cityFaction[cityId]) return m.cityFaction[cityId];
+    return CITY_FACTION_INIT[cityId];
+  }
+  // 沿用既有函数名与语义（返回 "cn"/"jp"）：城池归属独立于武将分布用的静态 c.side，
+  // 内部现在多转一道势力查询，21 处既有调用点几乎不用改
+  function cityOwnerSide(m, cityId) { const f = factionDef(cityFactionId(m, cityId)); return f ? f.side : cityDef(cityId).side; }
+  function isMyCity(m, cityId) { return cityFactionId(m, cityId) === m.playerFaction; }
+  // 城池归属（可随内战/边境战易主，独立于武将分布用的静态 c.side）：对马岛海路中转站初始划归战国一方，
+  // 其余城池按 FACTIONS 表初始势力起始归属；供 ensureMap 兼容旧存档（老档只有按国别记的 m.cityOwner）时反推
+  function initCityFaction() {
+    return Object.assign({}, CITY_FACTION_INIT);
+  }
+  // 边境/内战：owner 势力不同的两座相邻城池之间的道路——既包含中日两国间唯一通道（经对马岛），
+  // 也自然涵盖同一国内、势力互异的"内战"边境；一旦某城易主，其相邻城池随之成为新前线，前线因而逐月推移
   function borderEdges(m) {
-    return ROADS.filter(([a, b]) => cityOwnerSide(m, a) !== cityOwnerSide(m, b));
+    return ROADS.filter(([a, b]) => cityFactionId(m, a) !== cityFactionId(m, b));
   }
   function adjCities(id) {
     return ROADS.filter(r => r[0] === id || r[1] === id).map(r => r[0] === id ? r[1] : r[0]);
@@ -5830,6 +5902,150 @@
     },
   };
   /* ============================================================
+   *  玩家身份线（军事三期）：在野浪人 → 投效客卿 → 累积功勋逐级晋升（偏将→重臣→城主）→ 自立门户当主。
+   *  功勋来自为主公效力的实绩——完成悬赏（见 completeBountyReward）、随军攻城得胜（见 finalizeBorderWar）。
+   *  自立门户会另立一家新势力（"_player_"，数据存 m.playerOwnFaction，见 factionDef），名声受挫但旧主
+   *  只是暂时交恶（m.exLordUntil 记冷却到期日），并非永久为敌——冷却期满，物是人非，各自安好。
+   * ============================================================ */
+  const PlayerRank = {
+    RANKS: [
+      { n: "在野", need: 0 }, { n: "客卿", need: 0 }, { n: "偏将", need: 150 },
+      { n: "重臣", need: 400 }, { n: "城主", need: 800 },
+    ],
+    rankName(m) {
+      if (!m.playerFaction) return "在野";
+      if (m.playerFaction === "_player_") return "当主（自立）";
+      return (this.RANKS[m.playerRank] || this.RANKS[this.RANKS.length - 1]).n;
+    },
+    nextNeed(m) {
+      if (!m.playerFaction || m.playerFaction === "_player_" || m.playerRank >= this.RANKS.length - 1) return null;
+      return this.RANKS[m.playerRank + 1];
+    },
+    // 功勋累计驱动晋升；自立门户后（"_player_"）已无上级可言，不再计功勋
+    addMerit(m, n) {
+      if (!m.playerFaction || m.playerFaction === "_player_" || m.playerRank >= this.RANKS.length - 1 || n <= 0) return;
+      m.playerMerit = (m.playerMerit || 0) + n;
+      while (m.playerRank < this.RANKS.length - 1 && m.playerMerit >= this.RANKS[m.playerRank + 1].need) {
+        m.playerRank++;
+        toast(`🎖️ 功勋卓著，晋升为「${this.RANKS[m.playerRank].n}」！`);
+      }
+      Campaign.save();
+    },
+    // 投效：须尚在野、目标须与本国同属、且不处于对旧主的敌对冷却期（背主未久，人家还在气头上）
+    canJoin(m, factionId) {
+      if (m.playerFaction) return false;
+      if (factionDef(factionId).side !== RPG.char.side) return false;
+      return !this.exLordHostile(m, factionId);
+    },
+    join(m, factionId) {
+      if (!this.canJoin(m, factionId)) return false;
+      m.playerFaction = factionId; m.playerRank = 1; m.playerMerit = 0;
+      Campaign.save();
+      toast(`🏯 投效${factionDef(factionId).n}，拜为客卿！`);
+      return true;
+    },
+    exLordHostile(m, factionId) { return (m.exLordUntil && m.exLordUntil[factionId] || 0) > m.day; },
+    INDEPENDENCE_RANK: 4, INDEPENDENCE_FAME_MIN: 1000, EX_LORD_COOLDOWN: 60,
+    canDeclareIndependence(m) {
+      return !!m.playerFaction && m.playerFaction !== "_player_" && m.playerRank >= this.INDEPENDENCE_RANK
+        && (m.fame || 0) >= this.INDEPENDENCE_FAME_MIN && isMyCity(m, m.curCity);
+    },
+    // 自立：以当前所在（须已是本势力城池）城池为根基，脱离旧主另立门户——名声受挫但非永久交恶，
+    // 旧主进入敌对冷却，期满后恢复中立（可重新投效）
+    declareIndependence(m) {
+      if (!this.canDeclareIndependence(m)) return false;
+      const oldFid = m.playerFaction, oldDef = factionDef(oldFid);
+      if (!m.exLordUntil) m.exLordUntil = {};
+      m.exLordUntil[oldFid] = m.day + this.EX_LORD_COOLDOWN;
+      m.playerOwnFaction = { n: `${RPG.char.name}家`, lord: RPG.char.name, side: RPG.char.side };
+      if (!m.cityFaction) m.cityFaction = {};
+      m.cityFaction[m.curCity] = "_player_";
+      m.playerFaction = "_player_"; m.playerRank = this.RANKS.length; m.playerMerit = 0;
+      Campaign.addFame(-Math.round((m.fame || 0) * 0.15));
+      Campaign.save();
+      toast(`⚔️ 你昭告天下，以【${cityName(m.curCity)}】为根基自立门户，另建「${m.playerOwnFaction.n}」！与${oldDef.n}就此分道扬镳（并非永世为敌，${this.EX_LORD_COOLDOWN} 天后旧主怒气自然平息）。`);
+      return true;
+    },
+    // 俸禄：官至偏将起每日可向主公支一份俸禄，官越高俸禄越厚；自立门户后无处可支
+    STIPEND_BY_RANK: [0, 0, 10, 30, 60],
+    claimStipend(m) {
+      if (!m.playerFaction || m.playerFaction === "_player_") { toast("在野或自立门户，无处可领俸禄"); return false; }
+      const amt = this.STIPEND_BY_RANK[m.playerRank] || 0;
+      if (!amt) { toast("官职尚低，暂无俸禄"); return false; }
+      if (m.stipendDay === m.day) { toast("今日俸禄已领，明日再来"); return false; }
+      const gold = Bond.addGold(amt);
+      m.stipendDay = m.day;
+      Campaign.save();
+      toast(`💰 领取俸禄 ${gold} 金（${this.rankName(m)}）`);
+      return true;
+    },
+  };
+  /* ============================================================
+   *  忠诚度（军事三期）：武将对现效忠势力的忠诚 0~100，只对有势力者维护；月度随所属势力盛衰浮动
+   *  （见 monthlyTick），过低则有小概率自行叛逃（转投他家或干脆归隐在野）。友谊则是玩家可主动经营
+   *  的另一条线——友谊越深、对方忠诚越低，招揽/策反的成功率就越高，两套系统一攻一守。
+   * ============================================================ */
+  const Loyalty = {
+    DEFAULT: 60,
+    get(m, gid) { return (m.loyalty && m.loyalty[gid] != null) ? m.loyalty[gid] : this.DEFAULT; },
+    set(m, gid, v) { if (!m.loyalty) m.loyalty = {}; m.loyalty[gid] = Math.max(0, Math.min(100, Math.round(v))); },
+    // 招揽/策反成功率：友谊越深、对方忠诚越低、己方名声越高，越容易得手；忠诚满格几乎打动不了
+    persuadeChance(m, gid) {
+      const loy = this.get(m, gid);
+      const fp = Bond.pts(gid);
+      const fameBonus = Campaign.fameTierIndex(m.fame || 0) * 0.03;
+      return Math.max(0.05, Math.min(0.85, 0.15 + (fp / Bond.MAX_FRIEND) * 0.35 + ((100 - loy) / 100) * 0.35 + fameBonus));
+    },
+    PERSUADE_COST: 200,
+    // 招揽成功：对方转投玩家现效力的势力（玩家在野则等同于策反其在野）；忠诚归零重算——新东家尚需时间收服人心
+    persuade(m, gid) {
+      if (!Bond.spend(this.PERSUADE_COST)) { toast(`金币不足（招揽需 ${this.PERSUADE_COST} 金）`); return false; }
+      const g = DB.get(gid);
+      const chance = this.persuadeChance(m, gid);
+      if (Math.random() >= chance) { toast(`「${g.name}」不为所动，招揽未果（耗资 ${this.PERSUADE_COST} 金，友谊不受影响）`); return false; }
+      const oldFid = m.generalFaction[gid];
+      const oldName = oldFid ? factionDef(oldFid).n : "在野";
+      const newName = m.playerFaction ? factionDef(m.playerFaction).n : "在野";
+      m.generalFaction[gid] = m.playerFaction;
+      this.set(m, gid, m.playerFaction ? 55 : 0);
+      Campaign.save();
+      toast(`🎉 招揽成功！「${g.name}」弃${oldName}，改投${newName}！`);
+      return true;
+    },
+    // 势力盛衰驱动的月度忠诚浮动：城池较开局扩张则普遍人心思归、士气高涨，收缩则军心动摇；
+    // 忠诚过低者有小概率叛逃——本国尚有他家可去便改换门庭，否则心灰意冷、干脆归隐在野
+    monthlyTick(m) {
+      const cityCounts = {};
+      FACTIONS.forEach(f => { cityCounts[f.id] = CITIES.filter(c => c.side !== "sea" && cityFactionId(m, c.id) === f.id).length; });
+      const defectors = [];
+      Object.keys(m.generalFaction).forEach(gidStr => {
+        const gid = +gidStr, fid = m.generalFaction[gid];
+        if (!fid || !m.appeared.includes(gid)) return;
+        const f = factionDef(fid);
+        const delta = ((cityCounts[fid] || 0) - f.cities.length) * 0.8 + randInt(-4, 4);
+        this.set(m, gid, this.get(m, gid) + delta);
+        if (this.get(m, gid) < 15 && Math.random() < 0.12) defectors.push(gid);
+      });
+      const news = [];
+      defectors.forEach(gid => {
+        const g = DB.get(gid);
+        const oldFid = m.generalFaction[gid], oldDef = factionDef(oldFid);
+        const candidates = FACTIONS.filter(f => f.side === g.side && f.id !== oldFid && cityCounts[f.id] > 0);
+        if (candidates.length && Math.random() < 0.6) {
+          const dest = candidates[randInt(0, candidates.length - 1)];
+          m.generalFaction[gid] = dest.id;
+          this.set(m, gid, 50);
+          news.push(`${g.name} 弃 ${oldDef.n} 投奔 ${dest.n}`);
+        } else {
+          m.generalFaction[gid] = null;
+          news.push(`${g.name} 心灰意冷，弃官归隐，就此在野`);
+        }
+      });
+      if (news.length) Campaign.save();
+      return news.length ? `🕊️ 人心浮动：${news.join("；")}` : "";
+    },
+  };
+  /* ============================================================
    *  守将委任（城市经营三期）：己方城市可委任一名友谊满上限、不在团队且未任掌柜的己方武将驻城死守——
    *  常驻不云游，边境战报模拟中必上阵且六维 +3（与城墙守备叠加）。城破之日守将被俘下狱（暂从天下
    *  名录中消失），亲至关押之城可付赎金或劫牢营救；己方夺回该城则牢门大开顺势放人。
@@ -5847,7 +6063,7 @@
         && Bond.pts(g.id) >= Bond.MAX_FRIEND && !Bond.inTeam(g.id) && !taken.has(g.id) && !managed.has(g.id));
     },
     appoint(m, cityId, gid) {
-      if (cityOwnerSide(m, cityId) !== RPG.char.side) { toast(`只能在己方城池委任守将`); return false; }
+      if (!isMyCity(m, cityId)) { toast(`只能在本势力城池委任守将`); return false; }
       this.all(m)[cityId] = gid;
       m.assign[gid] = cityId;   // 守将走马上任，常驻本城（不再随宿营云游）
       Campaign.save();
@@ -5932,6 +6148,47 @@
       }
       if (news.length) Campaign.save();
       return news.length ? `🏗️ 敌境风闻：${news.join("；")}` : "";
+    },
+  };
+  /* ============================================================
+   *  天下战报（军事三期）：与玩家所属势力无关的边境/内战，每次宿营静默推演，不进战斗界面——
+   *  按双方已现身武将评分之和 + 驻军规模的简易数值对比（另加一点随机浮动）定胜负，
+   *  直接改写城池归属与驻军，动向并入宿营夜报。势力若因此丢光全部城池即告覆灭。
+   *  与玩家所属势力相关的边境仍走 checkBorderWar 的完整野战→攻城两段式流程，不受此影响。
+   * ============================================================ */
+  const WorldWar = {
+    scoreOf(m, factionId, cityId) {
+      const genScore = DB.list.filter(g => m.generalFaction[g.id] === factionId && m.appeared.includes(g.id))
+        .reduce((s, g) => s + ratingScore(g), 0);
+      return genScore + Garrison.get(m, cityId) / 50 + randInt(-200, 200);
+    },
+    extinct(m, factionId) { return !CITIES.some(c => c.side !== "sea" && cityFactionId(m, c.id) === factionId); },
+    tick(m) {
+      const news = [];
+      for (let i = 0; i < 2; i++) {
+        if (Math.random() >= 0.5) continue;   // 不必天天真打，制造疏密变化
+        const edges = borderEdges(m).filter(([a, b]) => {
+          const fa = cityFactionId(m, a), fb = cityFactionId(m, b);
+          if (m.playerFaction && (fa === m.playerFaction || fb === m.playerFaction)) return false;   // 与己方势力相关的交给正式流程
+          return DB.list.some(g => m.generalFaction[g.id] === fa && m.appeared.includes(g.id))
+            && DB.list.some(g => m.generalFaction[g.id] === fb && m.appeared.includes(g.id));
+        });
+        if (!edges.length) continue;
+        const [a, b] = edges[randInt(0, edges.length - 1)];
+        const fa = cityFactionId(m, a), fb = cityFactionId(m, b);
+        const winnerIsA = this.scoreOf(m, fa, a) >= this.scoreOf(m, fb, b);
+        const winnerFaction = winnerIsA ? fa : fb, loserFaction = winnerIsA ? fb : fa;
+        const winnerCity = winnerIsA ? a : b, capturedCity = winnerIsA ? b : a;
+        Estate.accrue(m, capturedCity);
+        if (!m.cityFaction) m.cityFaction = {};
+        m.cityFaction[capturedCity] = winnerFaction;
+        // 胜方约三成驻军渡境驻守新占之城；败方原留守此城的兵力随城陷落一并清零（Garrison.set 直接覆盖旧值）
+        Garrison.set(m, capturedCity, Math.round(Garrison.get(m, winnerCity) * 0.3));
+        const extinctNow = this.extinct(m, loserFaction);
+        news.push(`${factionDef(winnerFaction).n}攻陷${cityName(capturedCity)}，${factionDef(loserFaction).n}${extinctNow ? "就此覆灭" : "退守余部"}`);
+        Campaign.save();
+      }
+      return news.length ? `📜 天下战报：${news.join("；")}` : "";
     },
   };
   /* 敌将武备自集：敌方已现身武将每次宿营随机抽 2 人、各 25% 概率自获一件宝物——
@@ -6168,6 +6425,26 @@
     });
     return assign;
   }
+  // 武将初始势力归属：史实留名者（CITY_HINTS 命中）按其史实所在城池的初始势力效忠；
+  // 次要武将按姓名哈希稳定兜底落到同阵营某城，但其中约两成天生「在野」（哈希再判一次，与城池兜底哈希各自独立）——
+  // 与 buildCityAssignment 的"historical"分支使用同一套确定性哈希，不随天下格局（史实/乱入）选择而改变，
+  // 因为"效忠谁"是历史归属，"人在哪座城"才是可能被打乱的地理分布，两者本就该是两件事
+  function initGeneralFactions() {
+    const cnCities = CITIES.filter(c => c.side === "cn").map(c => c.id);
+    const jpCities = CITIES.filter(c => c.side === "jp").map(c => c.id);
+    const generalFaction = {}, loyalty = {};
+    DB.list.forEach(g => {
+      const pool = g.side === "cn" ? cnCities : jpCities;
+      let cid = CITY_HINTS[g.name];
+      const isNamed = !!(cid && pool.includes(cid));
+      if (!isNamed) cid = pool[hashStr(g.name) % pool.length];
+      const ronin = !isNamed && (hashStr(g.name + "|ronin") % 100 < 20);
+      const fid = ronin ? null : CITY_FACTION_INIT[cid];
+      generalFaction[g.id] = fid;
+      if (fid) loyalty[g.id] = 50 + (hashStr(g.name + "|loyalty") % 31);   // 50~80 起始忠诚，个体略有差异
+    });
+    return { generalFaction, loyalty };
+  }
 
   /* ============================================================
    *  悬赏榜：每城 2~3 条任务，五种玩法穿插——「讨伐令」（经典单挑，按同城已现身武将优先出题）、
@@ -6244,6 +6521,7 @@
     Campaign.addFame(ab.rewardFame);
     const m = Campaign.mapState();
     if (m) Prosper.add(m, ab.cityId, 1);   // 为地方除害，繁荣 +1
+    if (m && m.playerFaction) PlayerRank.addMerit(m, ab.rewardFame * 2);   // 为主公办事，功勋随名声同步入账
     let uniqueHtml = "";
     if (ab.legendary && m && !m.uniqueOwned.senriGeta) {
       const item = Armory.makeUniqueTreasure("senriGeta");
@@ -6298,6 +6576,46 @@
   }
 
   /* ============================================================
+   *  势力霸业双结局：本国一统（本国所有城池尽归玩家势力）／跨海一统（中日四十城尽归玩家势力）
+   *  与「天下无双」相互独立、互不冲突，一局之内均可陆续达成——由随军攻城夺得关键一城时触发判定
+   * ============================================================ */
+  function checkUnifyEnding(m) {
+    if (!m || !m.playerFaction) return "";
+    const mine = cid => cityFactionId(m, cid) === m.playerFaction;
+    const homeCities = CITIES.filter(c => c.side === RPG.char.side);
+    const allCities = CITIES.filter(c => c.side !== "sea");
+    if (!m.endingCrossSea && allCities.every(mine)) {
+      m.endingCrossSea = true; m.endingHomeland = true; Campaign.save();
+      setTimeout(() => showUnifyEndingOverlay(true), 1500);
+      return `<br>🌏 二国江山，尽入一统……`;
+    }
+    if (!m.endingHomeland && homeCities.every(mine)) {
+      m.endingHomeland = true; Campaign.save();
+      setTimeout(() => showUnifyEndingOverlay(false), 1500);
+      return `<br>👑 本国江山，尽归一统……`;
+    }
+    return "";
+  }
+  function showUnifyEndingOverlay(crossSea) {
+    const c = RPG.char; if (!c) return;
+    const m = Campaign.mapState();
+    const ownName = m.playerFaction === "_player_" ? (m.playerOwnFaction && m.playerOwnFaction.n) : factionDef(m.playerFaction).n;
+    const bg = c.side === 'cn' ? 'linear-gradient(135deg,#f4c430,#b8860b)' : 'linear-gradient(135deg,#f4c430,#8a6d3b)';
+    const homeName = c.side === 'cn' ? '中原' : '日本';
+    const desc = crossSea
+      ? `「${ownName}」兵锋所至，中日两国四十城尽归一统——山河变色，青史将为此浓墨重彩！`
+      : `「${ownName}」削平群雄，${homeName}诸城尽入麾下，成就一方霸业！（若能跨海再进一步，或可成就「跨海一统」的终极霸业）`;
+    openOverlay(`<div class="result-card">
+      <h1>👑 ${crossSea ? "跨海一统" : `${homeName}一统`}</h1>
+      <div class="winner-av" style="background:${bg}">${avatarChar(c.name)}</div>
+      <div class="wname">${c.name}</div>
+      <div class="wdesc">${desc}<br>你的传奇仍将继续，天下之大，尽可去得。</div>
+      <div class="btns"><button class="btn-primary" id="ending-unify-continue">继续征战</button></div>
+    </div>`);
+    $("#ending-unify-continue").onclick = () => { closeOverlay(); goHome(); };
+  }
+
+  /* ============================================================
    *  存档架构：全局层（武将图鉴自定义数据、宝物模板编辑）永不重置；
    *  战役层（角色/金币/友谊/队伍/宝物背包）随"新游戏"清空重来
    * ============================================================ */
@@ -6329,10 +6647,15 @@
           day: 1, ap: 1, apMax: 1, curCity: null, assign, appeared, nextAppearDay: 6,
           fame: 0, bounties, activeBounty: null,
           uniqueOwned: { chitu: false, senriGeta: false }, rivalsDefeated: [], cupWon: false, ending: false,
-          cityOwner: initCityOwner(), statPenalty: {}, statGrowth: {}, activeAssassin: null, estate: {}, prosper: {}, activeEstateRaid: null,
+          endingHomeland: false, endingCrossSea: false,
+          statPenalty: {}, statGrowth: {}, activeAssassin: null, estate: {}, prosper: {}, activeEstateRaid: null,
           builds: {}, npcEstate: {}, guards: {}, captives: {}, activeRescue: null,
           nemesis: null, activeNemesis: null, nemesisChallenge: false,
           troops: {},
+          // 势力（军事三期）：城池归属改记势力而非国别；玩家默认在野（浪人），后续可投效/自立；
+          // 武将的初始效忠与忠诚由 initGeneralFactions 按史实/哈希兜底一次性生成
+          cityFaction: initCityFaction(), playerFaction: null, playerRank: 0, playerMerit: 0, playerOwnFaction: null, exLordUntil: {}, stipendDay: null,
+          ...initGeneralFactions(),
         },
       };
       this.save();
@@ -6366,7 +6689,35 @@
       if (!m.rivalsDefeated) { m.rivalsDefeated = []; changed = true; }
       if (m.cupWon == null) { m.cupWon = false; changed = true; }
       if (m.ending == null) { m.ending = false; changed = true; }
-      if (!m.cityOwner) { m.cityOwner = initCityOwner(); changed = true; }
+      if (m.endingHomeland == null) { m.endingHomeland = false; changed = true; }
+      if (m.endingCrossSea == null) { m.endingCrossSea = false; changed = true; }
+      if (!m.cityFaction) {
+        // 兼容旧存档（军事三期之前）：老档只按国别记城池归属（m.cityOwner）；仍是原始国别的城池直接落到初始势力，
+        // 曾被易主（owner 与该城固有 side 不同）的则无从得知具体夺主是谁，兜底归入该国别第一家势力
+        m.cityFaction = initCityFaction();
+        if (m.cityOwner) {
+          Object.keys(m.cityFaction).forEach(cid => {
+            const oldOwnerSide = m.cityOwner[cid];
+            if (oldOwnerSide && oldOwnerSide !== cityDef(cid).side) {
+              const fallback = FACTIONS.find(f => f.side === oldOwnerSide && f.cities.length);
+              if (fallback) m.cityFaction[cid] = fallback.id;
+            }
+          });
+          delete m.cityOwner;
+        }
+        changed = true;
+      }
+      if (!m.generalFaction || !m.loyalty) {
+        const init = initGeneralFactions();
+        if (!m.generalFaction) { m.generalFaction = init.generalFaction; changed = true; }
+        if (!m.loyalty) { m.loyalty = init.loyalty; changed = true; }
+      }
+      if (m.playerFaction === undefined) { m.playerFaction = null; changed = true; }
+      if (m.playerRank == null) { m.playerRank = 0; changed = true; }
+      if (m.playerMerit == null) { m.playerMerit = 0; changed = true; }
+      if (m.playerOwnFaction === undefined) { m.playerOwnFaction = null; changed = true; }
+      if (m.stipendDay === undefined) { m.stipendDay = null; changed = true; }
+      if (!m.exLordUntil) { m.exLordUntil = {}; changed = true; }
       if (!m.statPenalty) { m.statPenalty = {}; changed = true; }
       if (!m.statGrowth) { m.statGrowth = {}; changed = true; }
       if (m.activeAssassin === undefined) { m.activeAssassin = null; changed = true; }
@@ -6473,7 +6824,7 @@
     state: {},
     open() {
       this.step = 1;
-      this.state = { charType: null, generalId: null, difficulty: null, custom: null, distribution: "historical" };
+      this.state = { charType: null, generalId: null, difficulty: null, custom: null, distribution: "historical", identity: null, identityFaction: null };
       this._roll = null; this._name = ""; this._genSearch = ""; this._skillGenId = null;
       this.render();
       showScreen("onboard");
@@ -6483,8 +6834,9 @@
       C.innerHTML = `<div class="ob-steps">
         <span class="ob-step ${this.step === 1 ? 'active' : this.step > 1 ? 'done' : ''}">① 选角色</span>
         <span class="ob-step ${this.step === 2 ? 'active' : this.step > 2 ? 'done' : ''}">② 选格局</span>
-        <span class="ob-step ${this.step === 3 ? 'active' : ''}">③ 确认开局</span>
-      </div>` + (this.step === 1 ? this.stepChar() : this.step === 2 ? this.stepWorld() : this.stepConfirm());
+        <span class="ob-step ${this.step === 3 ? 'active' : this.step > 3 ? 'done' : ''}">③ 选身份</span>
+        <span class="ob-step ${this.step === 4 ? 'active' : ''}">④ 确认开局</span>
+      </div>` + (this.step === 1 ? this.stepChar() : this.step === 2 ? this.stepWorld() : this.step === 3 ? this.stepIdentity() : this.stepConfirm());
       this.bind();
     },
 
@@ -6597,21 +6949,40 @@
         </div>`;
     },
 
-    /* ---- 第 3 步：确认开局 ---- */
+    /* ---- 第 3 步：选开局身份——在野浪人 或 投效某势力 ---- */
+    stepIdentity() {
+      const s = this.state;
+      const side = s.charType === "custom" ? s.custom.side : (DB.get(s.generalId) || {}).side;
+      const facs = FACTIONS.filter(f => f.side === side && f.cities.length);
+      return `<div class="section-hint">第 3 步 · 选择开局身份</div>
+        <div class="buff-list">
+          <button class="buff-btn ob-identity ${s.identity === 'ronin' ? 'active' : ''}" data-v="ronin"><span class="bi">🎋</span><span class="bt"><b>在野浪人</b><small>不效力任何势力，自由游历，可随时投效他人或被人招揽</small></span></button>
+          <button class="buff-btn ob-identity ${s.identity === 'vassal' ? 'active' : ''}" data-v="vassal"><span class="bi">🏯</span><span class="bt"><b>投效某势力</b><small>开局即为客卿，可累积功勋晋升官职、领取主公任务，未来还可自立门户</small></span></button>
+        </div>
+        ${s.identity === "vassal" ? `<div class="section-hint">投效于——</div>
+        <div class="grid">${facs.map(f => `<div class="card ${f.side} ob-fac ${s.identityFaction === f.id ? 'selected' : ''}" data-f="${f.id}"><div class="avatar">${f.n.slice(0, 1)}</div><div class="cname">${f.n}</div><div class="cwu">主公 · ${f.lord}</div></div>`).join("")}</div>` : ""}
+        <div class="rpg-create-btns">
+          <button class="cup-go" id="ob-back2">‹ 上一步</button>
+          <button class="cup-go primary" id="ob-next3" ${s.identity === "vassal" && !s.identityFaction ? "disabled" : ""}>下一步 ›</button>
+        </div>`;
+    },
+
+    /* ---- 第 4 步：确认开局 ---- */
     stepConfirm() {
       const s = this.state;
       const hasExisting = !!RPG.char;
       let name, desc;
       if (s.charType === "custom") { name = s.custom.name; desc = `自创武将 · ${s.custom.side === 'cn' ? '三国风' : '战国风'}`; }
       else { const g = DB.get(s.generalId); name = g.name; desc = s.difficulty === 'young' ? '少年模式' : '巅峰模式'; }
-      return `<div class="section-hint">第 3 步 · 确认开局</div>
+      const identityTxt = s.identity === "vassal" ? `投效 ${factionDef(s.identityFaction).n}（客卿）` : "在野浪人";
+      return `<div class="section-hint">第 4 步 · 确认开局</div>
         <div class="result-card" style="padding:20px 16px">
           <div class="wname">${name}</div>
-          <div class="wdesc">${desc} · 天下格局：${s.distribution === 'historical' ? '史实分布' : '群雄乱入'}</div>
+          <div class="wdesc">${desc} · 天下格局：${s.distribution === 'historical' ? '史实分布' : '群雄乱入'} · 开局身份：${identityTxt}</div>
           ${hasExisting ? `<div class="wdesc" style="color:var(--cn-red)">⚠️ 当前已有存档（${RPG.char.name}），开始新游戏将覆盖角色、金币、友谊、队伍与宝物背包，且无法恢复！</div>` : ''}
         </div>
         <div class="rpg-create-btns">
-          <button class="cup-go" id="ob-back2">‹ 上一步</button>
+          <button class="cup-go" id="ob-back3">‹ 上一步</button>
           <button class="cup-go primary" id="ob-confirm">⚔ ${hasExisting ? '覆盖存档，开始新的武将人生' : '开始新的武将人生'}</button>
         </div>`;
     },
@@ -6644,7 +7015,12 @@
       const back1 = $("#ob-back1"); if (back1) back1.onclick = () => { this.step = 1; this.render(); };
       const next2 = $("#ob-next2"); if (next2) next2.onclick = () => { this.step = 3; this.render(); };
       // 第 3 步
+      $$(".ob-identity").forEach(b => b.onclick = () => { this.state.identity = b.dataset.v; if (b.dataset.v === "ronin") this.state.identityFaction = null; this.render(); });
+      $$(".ob-fac").forEach(el => el.onclick = () => { this.state.identityFaction = el.dataset.f; this.render(); });
       const back2 = $("#ob-back2"); if (back2) back2.onclick = () => { this.step = 2; this.render(); };
+      const next3 = $("#ob-next3"); if (next3) next3.onclick = () => { if (!this.state.identity) this.state.identity = "ronin"; this.step = 4; this.render(); };
+      // 第 4 步
+      const back3 = $("#ob-back3"); if (back3) back3.onclick = () => { this.step = 3; this.render(); };
       const confirm = $("#ob-confirm"); if (confirm) confirm.onclick = () => this.finish();
     },
 
@@ -6654,6 +7030,12 @@
       Campaign.reset({ charType: s.charType, difficulty: s.difficulty || null, distribution: s.distribution, side });
       if (s.charType === "custom") RPG.create(s.custom.name, s.custom.side, s.custom.base, s.custom.points, undefined, s.custom.skillGeneralId);
       else RPG.createFromGeneral(DB.get(s.generalId), s.difficulty);
+      // 开局身份：投效者直接获封客卿（官职一级），在野者维持 Campaign.reset 里的默认空白
+      if (s.identity === "vassal" && s.identityFaction) {
+        const m = Campaign.mapState();
+        m.playerFaction = s.identityFaction; m.playerRank = 1; m.playerMerit = 0;
+        Campaign.save();
+      }
       toast(`🎉 ${RPG.char.name}，你的武将人生开始了！`);
       MapUI.open();
     },
@@ -6739,7 +7121,9 @@
         </div>
         <div class="mh-action-col">
           <div class="mh-fame">⭐ ${Campaign.fameLabel(m.fame || 0)}</div>
+          <div class="mh-fame">🚩 ${PlayerRank.rankName(m)}${m.playerFaction && m.playerFaction !== "_player_" ? `·${factionDef(m.playerFaction).n}` : ""}</div>
           <button class="cup-go" id="map-char">🎭 角色详情</button>
+          <button class="cup-go" id="map-identity">🏯 身份</button>
         </div>
       </div>`;
     },
@@ -6850,15 +7234,16 @@
       if (!capt.length) return "";
       return `<button class="menu-btn" id="map-rescue"><span class="mi">⛓️</span><span>牢狱营救<small>${capt.map(g => g.name).join("、")} 被囚于此</small></span></button>`;
     },
-    // 守将按钮：己方城池（非海路中转）可委任守将，独立于城建按钮
+    // 守将按钮：本势力城池（非海路中转）可委任守将，独立于城建按钮——委任守将是政治/军事举措，
+    // 须效力于据有此城的势力，不像集市/铁匠铺等经济活动那样只要同属本国即可
     guardBtnHtml(m) {
-      if (cityOwnerSide(m, m.curCity) !== RPG.char.side || cityDef(m.curCity).side === "sea") return "";
+      if (!isMyCity(m, m.curCity) || cityDef(m.curCity).side === "sea") return "";
       const guard = Guard.of(m, m.curCity);
       return `<button class="menu-btn" id="map-guard"><span class="mi">🛡️</span><span>守将<small>${guard ? `${guard.name} 驻守 · 六维+${Guard.STAT_BONUS}` : "空缺 · 可委任驻守"}</small></span></button>`;
     },
-    // 驻军按钮：己方城池（非海路中转）可查看驻军存量并募兵，独立于城建按钮
+    // 驻军按钮：本势力城池（非海路中转）可查看驻军存量并募兵——驻军是势力交战的本钱，须效力于据有此城的势力才能调度
     garrisonBtnHtml(m) {
-      if (cityOwnerSide(m, m.curCity) !== RPG.char.side || cityDef(m.curCity).side === "sea") return "";
+      if (!isMyCity(m, m.curCity) || cityDef(m.curCity).side === "sea") return "";
       const have = Garrison.get(m, m.curCity), cap = Garrison.cap(m, m.curCity);
       return `<button class="menu-btn" id="map-garrison"><span class="mi">🚩</span><span>驻军<small>${have.toLocaleString()}/${cap.toLocaleString()}${have >= cap ? "（满编）" : ""}</small></span></button>`;
     },
@@ -6883,6 +7268,7 @@
       const rescueBtn = $("#map-rescue"); if (rescueBtn) rescueBtn.onclick = () => this.openRescue();
       const campBtn = $("#map-camp"); if (campBtn) campBtn.onclick = () => this.camp();
       const charBtn = $("#map-char"); if (charBtn) charBtn.onclick = () => RPG.open();
+      const idBtn = $("#map-identity"); if (idBtn) idBtn.onclick = () => this.openIdentity();
       const nemBtn = $("#map-nemesis"); if (nemBtn) nemBtn.onclick = () => { if (spendAP()) Nemesis.duel(m); };
       const allGenBtn = $("#map-all-gens"); if (allGenBtn) allGenBtn.onclick = () => AllGenUI.open();
       const allCityBtn = $("#map-all-cities"); if (allCityBtn) allCityBtn.onclick = () => AllCityUI.open();
@@ -7209,7 +7595,7 @@
     openGuard() {
       const m = Campaign.mapState();
       const cityId = m.curCity;
-      if (cityOwnerSide(m, cityId) !== RPG.char.side || cityDef(cityId).side === "sea") return;
+      if (!isMyCity(m, cityId) || cityDef(cityId).side === "sea") return;
       const guard = Guard.of(m, cityId);
       openOverlay(`<div class="result-card detail-card">
         <h1>🛡️ ${cityName(cityId)} · 守将</h1>
@@ -7239,7 +7625,7 @@
     openGarrison() {
       const m = Campaign.mapState();
       const cityId = m.curCity;
-      if (cityOwnerSide(m, cityId) !== RPG.char.side || cityDef(cityId).side === "sea") return;
+      if (!isMyCity(m, cityId) || cityDef(cityId).side === "sea") return;
       const have = Garrison.get(m, cityId), cap = Garrison.cap(m, cityId);
       const wallLv = Buildings.lv(m, cityId, "wall"), prosperLv = Prosper.lv(m, cityId);
       const affordAll = Math.ceil((cap - have) * Garrison.RECRUIT_GOLD_PER);
@@ -7255,6 +7641,51 @@
       </div>`);
       $("#grs-recruit").onclick = () => { if (Garrison.recruit(m, cityId)) { this.render(); this.openGarrison(); } };
       $("#grs-close").onclick = () => { closeOverlay(); this.render(); };
+    },
+    /* ---- 身份面板：查看官职/功勋进度，投效/领俸禄/自立门户的唯一入口 ---- */
+    openIdentity() {
+      const m = Campaign.mapState();
+      const fid = m.playerFaction;
+      let body = "";
+      if (!fid) {
+        const facs = FACTIONS.filter(f => f.side === RPG.char.side && f.cities.length);
+        body = `<div class="wdesc">当前身份：<b>在野浪人</b>——不效力任何势力，自由游历。可随时投效麾下一方，累积功勋以晋升官职。</div>
+          <div class="grid">${facs.map(f => {
+            const hostile = PlayerRank.exLordHostile(m, f.id);
+            return `<div class="card ${f.side} id-fac ${hostile ? "disabled" : ""}" data-f="${f.id}"><div class="avatar">${f.n.slice(0, 1)}</div><div class="cname">${f.n}</div><div class="cwu">主公 · ${f.lord}</div>${hostile ? `<div class="cwu">（旧怨未消，${m.exLordUntil[f.id] - m.day} 天后可投）</div>` : ""}</div>`;
+          }).join("")}</div>`;
+      } else if (fid === "_player_") {
+        const own = m.playerOwnFaction;
+        body = `<div class="wdesc">当前身份：<b>${PlayerRank.rankName(m)}</b>——你已自立门户，建「${own.n}」，据${cityName(m.curCity)}为基。天下英豪，皆看你能走多远。</div>`;
+      } else {
+        const f = factionDef(fid);
+        const next = PlayerRank.nextNeed(m);
+        const canIndep = PlayerRank.canDeclareIndependence(m);
+        const stipendAmt = PlayerRank.STIPEND_BY_RANK[m.playerRank] || 0;
+        const stipendDisabled = !stipendAmt || m.stipendDay === m.day;
+        body = `<div class="wdesc">现效力于：<b>${f.n}</b>（主公 · ${f.lord}）<br>官职：<b>${PlayerRank.rankName(m)}</b>　功勋 <b>${m.playerMerit || 0}</b>${next ? ` / 距「${next.n}」尚需 ${next.need} 功勋` : "（已至顶阶）"}
+          <br><small>功勋来自完成悬赏、参与边境大战。</small></div>
+          <div class="btns">
+            <button class="btn-primary" id="id-stipend" ${stipendDisabled ? "disabled" : ""}>💰 领取俸禄${stipendAmt ? `（${stipendAmt} 金）` : ""}${m.stipendDay === m.day ? "（今日已领）" : ""}</button>
+            ${canIndep ? `<button class="btn-ghost" id="id-indep">⚔️ 自立门户</button>` : ""}
+          </div>`;
+      }
+      openOverlay(`<div class="result-card detail-card">
+        <h1>🏯 身份 · 功勋</h1>
+        ${body}
+        <div class="btns"><button class="btn-ghost" id="id-close">离开</button></div>
+      </div>`);
+      $$(".id-fac").forEach(el => el.onclick = () => {
+        if (el.classList.contains("disabled")) return;
+        if (PlayerRank.join(m, el.dataset.f)) { this.render(); this.openIdentity(); }
+      });
+      const stipendBtn = $("#id-stipend"); if (stipendBtn) stipendBtn.onclick = () => { PlayerRank.claimStipend(m); this.render(); this.openIdentity(); };
+      const indepBtn = $("#id-indep"); if (indepBtn) indepBtn.onclick = () => {
+        if (confirm(`自立门户将脱离现主公，损失约 15% 名声，且短期内无法重投旧主，此后不可撤销。确定自立吗？`)) {
+          if (PlayerRank.declareIndependence(m)) { this.render(); closeOverlay(); }
+        }
+      };
+      $("#id-close").onclick = () => { closeOverlay(); this.render(); };
     },
     /* ---- 驿站快马面板：独立于城建按钮；也可由地图直接点击已通驿的远方城市触发（见 confirmPostTravel） ---- */
     openPostTravel(m) {
@@ -7620,9 +8051,11 @@
       Garrison.tickAll(m); // 全图城池驻军同步回复（不分敌我）
       const wandered = this.wanderGenerals(m);
       const aiNews = AIDev.tick(m);   // 敌境自营：敌方城市随时间缓慢自行发展（城建/产业/繁荣）
+      const warNews = WorldWar.tick(m);       // 天下战报：与己方势力无关的边境/内战静默推演
       const nemNews = Nemesis.campEvent(m);   // 宿敌主动寻衅：拦路挑战 / 抢先夺赏 / 踏营下战书（三选一，小概率）
       const gearNews = AIGear.tick(m);        // 敌将武备自集：敌将有概率自获宝物并择优穿戴
       const growNews = Growth.tick(m);        // 岁月修行：随机武将闭关精进（评分越低概率越高）
+      const loyNews = isMonthEnd(m.day) ? Loyalty.monthlyTick(m) : "";   // 忠诚随势力盛衰月度浮动，过低小概率叛逃
       // 悬赏轮换：每次宿营，每座城的每一条悬赏各自独立 50% 概率静默换新——榜单不再一成不变；
       // 已接取中的悬赏结算按接取时写入 m.activeBounty 的独立快照进行，不受轮换影响
       if (m.bounties) {
@@ -7651,7 +8084,7 @@
         msg = `🏕️ 宿营一夜，行动力已恢复（第 ${m.day} 天）`;
       }
       // 宿营夜报：有附加消息（敌境动向/宿敌风闻）时改用弹窗，点击任意处关闭——toast 稍纵即逝，来不及看
-      const extras = [aiNews, gearNews, growNews, nemNews].filter(Boolean);
+      const extras = [aiNews, warNews, loyNews, gearNews, growNews, nemNews].filter(Boolean);
       if (extras.length) {
         openOverlay(`<div class="result-card">
           <h1>🏕️ 宿营夜报</h1>
@@ -7681,23 +8114,29 @@
       });
       return count;
     },
-    // 月末边境大战：owner 不同的相邻城池间，每月最多只爆发一场（随机挑一条边）；
+    // 月末边境/内战：owner 势力不同的相邻城池间，每月最多只爆发一场（优先挑与玩家所属势力相关的边，
+    // 其次挑与玩家所属国相关的边，再退而求其次随机挑一条——纯粹与玩家无关的域外战事交给「天下战报」静默推演）；
     // 只有主角本人与麾下团队成员的出战与否需玩家勾选决定，其余已现身武将一律由候选池随机抽点补满（每方至多 10 将）；
     // 以野战演武（FieldBattle）开打，只决出谁能打到对方城下，能否真正夺城还要看紧随其后的攻城战（见 resolveSiege）；
     // 返回 true 表示已接管本次宿营流程
     checkBorderWar(m) {
+      const heroCountry = RPG.char.side;
       const edges = borderEdges(m).filter(([a, b]) => {
-        const poolA = DB.list.filter(g => g.side === cityOwnerSide(m, a) && m.appeared.includes(g.id));
-        const poolB = DB.list.filter(g => g.side === cityOwnerSide(m, b) && m.appeared.includes(g.id));
-        return poolA.length > 0 && poolB.length > 0;
+        const fa = cityFactionId(m, a), fb = cityFactionId(m, b);
+        return DB.list.some(g => m.generalFaction[g.id] === fa && m.appeared.includes(g.id))
+          && DB.list.some(g => m.generalFaction[g.id] === fb && m.appeared.includes(g.id));
       });
       if (!edges.length) return false;
-      this.openBorderWarPicker(m, edges[randInt(0, edges.length - 1)]);
+      const mine = m.playerFaction ? edges.filter(([a, b]) => cityFactionId(m, a) === m.playerFaction || cityFactionId(m, b) === m.playerFaction) : [];
+      const homeland = edges.filter(([a, b]) => cityOwnerSide(m, a) === heroCountry || cityOwnerSide(m, b) === heroCountry);
+      const pool = mine.length ? mine : (homeland.length ? homeland : edges);
+      this.openBorderWarPicker(m, pool[randInt(0, pool.length - 1)]);
       return true;
     },
     openBorderWarPicker(m, edge) {
       this._bwPicks = new Set();
       this._bwRatio = 60;   // 出阵比例滑杆默认 60%：折中于「倾巢而出」与「固守为主」之间
+      this._bwSupport = null;   // 声援哪一方势力（非本势力冲突时需玩家自行抉择，见 renderBorderWarPicker）
       this.renderBorderWarPicker(m, edge);
     },
     // 自选出战：只列出主角本人与麾下团队成员供勾选——这两类由玩家亲自决定是否出战；
@@ -7709,18 +8148,53 @@
       const commit = Math.round(have * pct / 100);
       return `出阵 <b>${pct}%</b>（调兵 ${commit.toLocaleString()}）　留守 ${(have - commit).toLocaleString()}　｜　本城驻军 ${have.toLocaleString()}/${cap.toLocaleString()}`;
     },
+    // 判定这场冲突中，主角本人可以（且只能）声援哪一方势力：若其中一方正是玩家现效力的势力，别无选择、自动声援本方；
+    // 否则只能声援与自己同属一国的那一方（两国界限不因势力林立而消融），若双方都不属本国，则此战与玩家无干，只能旁观
+    bwEligibleSupport(m, edge) {
+      const [a, b] = edge;
+      const factionA = cityFactionId(m, a), factionB = cityFactionId(m, b);
+      if (m.playerFaction === factionA || m.playerFaction === factionB) return [m.playerFaction];
+      const heroCountry = RPG.char.side;
+      return [factionA, factionB].filter(fid => factionDef(fid).side === heroCountry);
+    },
     renderBorderWarPicker(m, edge) {
       const [a, b] = edge;
-      const sideA = cityOwnerSide(m, a), sideB = cityOwnerSide(m, b);
-      const heroSide = RPG.char.side;
-      const heroCity = heroSide === sideA ? a : b;
+      const factionA = cityFactionId(m, a), factionB = cityFactionId(m, b);
+      const defA = factionDef(factionA), defB = factionDef(factionB);
+      const eligible = this.bwEligibleSupport(m, edge);
+      // 声援哪一方需要玩家先行抉择的情形：本势力未涉此战、且双方都与本国同属一国（如两国各自的内战都恰巧不关己方势力事）
+      if (eligible.length > 1 && this._bwSupport == null) {
+        openOverlay(`<div class="result-card detail-card">
+          <h1>⚔️ 边境战事</h1>
+          <div class="wdesc">${cityName(a)}（${defA.n}）与 ${cityName(b)}（${defB.n}）爆发冲突，双方皆与你无形式上的君臣之谊，但同属你的国家——你可以自行决定是否以及声援哪一方，也可以完全不介入。</div>
+          <div class="btns">
+            <button class="btn-primary bw-support" data-f="${factionA}">声援 ${defA.n}</button>
+            <button class="btn-primary bw-support" data-f="${factionB}">声援 ${defB.n}</button>
+            <button class="btn-ghost bw-support" data-f="">不介入，静观其变</button>
+          </div>
+        </div>`, { modal: true });
+        $$(".bw-support").forEach(btn => btn.onclick = () => {
+          this._bwSupport = btn.dataset.f || "none";
+          this.renderBorderWarPicker(m, edge);
+        });
+        return;
+      }
+      const heroFaction = eligible.length > 1 ? (this._bwSupport === "none" ? null : this._bwSupport) : (eligible[0] || null);
+      // 全程无法介入（双方皆与本国无关，或玩家选择旁观）：直接全自动推演，不再弹出点将/滑杆
+      if (!heroFaction) {
+        closeOverlay();
+        toast(`📜 ${defA.n}（${cityName(a)}）与 ${defB.n}（${cityName(b)}）交兵，与你无干，静观其变。`);
+        this.resolveBorderWar(m, edge, [], 60, null);
+        return;
+      }
+      const heroCity = heroFaction === factionA ? a : b;
       const picks = this._bwPicks;
-      const pool = Bond.teamGenerals().filter(g => g.side === heroSide).slice().sort((x, y) => ratingScore(y) - ratingScore(x));
+      const pool = Bond.teamGenerals().filter(g => g.side === RPG.char.side).slice().sort((x, y) => ratingScore(y) - ratingScore(x));
       const heroRow = `<button class="buff-btn bw-pick ${picks.has(-1) ? 'active' : ''}" data-id="-1"><span class="bi">👑</span><span class="bt"><b>${RPG.char.name}（你）</b><small>评分 ${ratingScore(RPG.heroGeneral())}</small></span></button>`;
       const rows = [heroRow].concat(pool.map(g => `<button class="buff-btn bw-pick ${picks.has(g.id) ? 'active' : ''}" data-id="${g.id}"><span class="bi">${avatarChar(g.name)}</span><span class="bt"><b>${g.name}</b><small>评分 ${ratingScore(g)}</small></span></button>`));
       openOverlay(`<div class="result-card detail-card">
         <h1>⚔️ 边境战事</h1>
-        <div class="wdesc">边境爆发冲突：<b>${cityName(a)}（${sideName(sideA)}）</b> vs <b>${cityName(b)}（${sideName(sideB)}）</b>。你与团队成员是否出战自行抉择（其余已现身武将由候选池随机补满，无需你操心）。此战分两阵：先打<b>野战</b>，得胜一方才能乘胜杀奔败方城下再打一场<b>攻城战</b>，攻克方能真正夺城。勾选自己即视为亲历野战，若野战得胜，你将随军继续亲征攻城——攻克可得所夺城池金币日产出 <b>${this.BORDER_WAR_GOLD_DAYS}</b> 倍犒赏，未克也有一份约合十天产出的掳掠慰劳金；野战落败或不勾选自己，则此战胜负不动你的钱袋。</div>
+        <div class="wdesc">冲突爆发：<b>${cityName(a)}（${defA.n}）</b> vs <b>${cityName(b)}（${defB.n}）</b>，你声援 <b>${factionDef(heroFaction).n}</b> 一方。你与团队成员是否出战自行抉择（其余已现身武将由候选池随机补满，无需你操心）。此战分两阵：先打<b>野战</b>，得胜一方才能乘胜杀奔败方城下再打一场<b>攻城战</b>，攻克方能真正夺城。勾选自己即视为亲历野战，若野战得胜，你将随军继续亲征攻城——攻克可得所夺城池金币日产出 <b>${this.BORDER_WAR_GOLD_DAYS}</b> 倍犒赏，未克也有一份约合十天产出的掳掠慰劳金；野战落败或不勾选自己，则此战胜负不动你的钱袋。</div>
         <div class="buff-list" style="max-height:32vh;overflow-y:auto">${rows.join("")}</div>
         <div class="wdesc">已选 <b>${picks.size}</b> 员（至多 10 员）</div>
         <div class="mc-sect">🚩 出阵比例<small>（兵力从${cityName(heroCity)}驻军中调拨，出得越多越经打，但家底也空得越多）</small></div>
@@ -7739,33 +8213,35 @@
         this._bwRatio = +e.target.value;
         $("#bw-ratio-label").innerHTML = this.bwRatioLabel(m, heroCity, this._bwRatio);
       };
-      $("#bw-go").onclick = () => { const ids = [...picks]; const ratio = this._bwRatio; closeOverlay(); this.resolveBorderWar(m, edge, ids, ratio); };
+      $("#bw-go").onclick = () => { const ids = [...picks]; const ratio = this._bwRatio; closeOverlay(); this.resolveBorderWar(m, edge, ids, ratio, heroFaction); };
     },
     // 共用：胜方夺城，同时调整双方部署——败方原驻守此城的武将退守至己方相邻城池，
     // 胜方随机挑选若干已现身武将进驻新占领的城池；troops（可选）为 {winner, loser} 双方此役幸存兵力，
     // 胜方幸存兵力就地成为新占城池的驻军，败方幸存兵力（此役出征在外、侥幸未阵亡者）退往己方相邻城池收编，
     // 败方原留守本城、未随军出征的兵力则随城池一并陷落，不设退路——返回被占领的城池 id
-    applyBorderWarOutcome(m, edge, winnerSide, troops) {
+    applyBorderWarOutcome(m, edge, winnerFaction, troops) {
       const [a, b] = edge;
-      const sideA = cityOwnerSide(m, a);
-      const capturedCity = sideA === winnerSide ? b : a;
-      const loserSide = winnerSide === "cn" ? "jp" : "cn";
+      const factionA = cityFactionId(m, a);
+      const capturedCity = factionA === winnerFaction ? b : a;
+      const loserFaction = cityFactionId(m, capturedCity);
+      const loserSide = factionDef(loserFaction).side;
       // 易主前先把该城产业账目结算到今天：占领前的天数照常入账，占领期间懒结算自然颗粒无收
       Estate.accrue(m, capturedCity);
-      m.cityOwner[capturedCity] = winnerSide;
+      if (!m.cityFaction) m.cityFaction = {};
+      m.cityFaction[capturedCity] = winnerFaction;
       // 守将结局：败方守将城破被俘，下狱于陷落之城（暂从天下名录消失，可赎可救）
       const capturedGuard = Guard.capture(m, capturedCity, loserSide);
       if (capturedGuard) toast(`⛓️ 守将 ${capturedGuard.name} 城破被俘，囚于${cityName(capturedCity)}大牢！`);
       const managed = Estate.managerIds(m);
-      DB.list.filter(g => m.assign[g.id] === capturedCity && g.side === loserSide
+      DB.list.filter(g => m.assign[g.id] === capturedCity && m.generalFaction[g.id] === loserFaction
         && !managed.has(g.id) && !Guard.captives(m)[g.id]).forEach(g => {
-        const opts = adjCities(capturedCity).filter(id => cityOwnerSide(m, id) === loserSide);
+        const opts = adjCities(capturedCity).filter(id => cityFactionId(m, id) === loserFaction);
         if (opts.length) m.assign[g.id] = opts[randInt(0, opts.length - 1)];
       });
-      const garrisonPool = DB.list.filter(g => g.side === winnerSide && m.appeared.includes(g.id) && m.assign[g.id] !== capturedCity);
+      const garrisonPool = DB.list.filter(g => m.generalFaction[g.id] === winnerFaction && m.appeared.includes(g.id) && m.assign[g.id] !== capturedCity);
       shuffle(garrisonPool);
       garrisonPool.slice(0, randInt(2, 4)).forEach(g => { m.assign[g.id] = capturedCity; });
-      if (winnerSide === RPG.char.side) {
+      if (winnerFaction === m.playerFaction) {
         Prosper.add(m, capturedCity, 2);   // 己方光复/开拓此城，百废俱兴
         // 己方夺城，牢门大开：此前被囚于此城的己方守将尽数放还
         Guard.heldAt(m, capturedCity).forEach(g => Guard.free(m, g.id, `——${cityName(capturedCity)}光复，牢门大开`));
@@ -7773,7 +8249,7 @@
       if (troops) {
         Garrison.set(m, capturedCity, troops.winner);   // 胜方幸存兵力就地驻守新占之城
         if (troops.loser > 0) {
-          const opts = adjCities(capturedCity).filter(id => cityOwnerSide(m, id) === loserSide);
+          const opts = adjCities(capturedCity).filter(id => cityFactionId(m, id) === loserFaction);
           if (opts.length) Garrison.add(m, opts[randInt(0, opts.length - 1)], troops.loser);
         }
       }
@@ -7783,45 +8259,59 @@
     // 只有主角本人与团队成员的出战与否由玩家在 openBorderWarPicker 勾选决定（pickedIds，-1 代表主角本人）；
     // 团队成员未被勾选则一概不派（不进入候选池，不会被随机抽中），其余已现身武将与玩家抉择无关，一律由候选池随机抽点补满名额。
     // 战斗一律以野战演武（FieldBattle）演出：主角上阵（被勾选）即为可亲自指挥的排兵布阵/阵前斗将/挥军破阵全流程，
-    // 未上阵则全自动推演（无需任何点击，最高倍速跑完），不再静默瞬间出结果。
-    resolveBorderWar(m, edge, pickedIds, ratio) {
+    // 未上阵则全自动推演（无需任何点击，最高倍速跑完），不再静默瞬间出结果。heroFaction 为 null 时表示玩家全程不介入
+    resolveBorderWar(m, edge, pickedIds, ratio, heroFaction) {
       const [a, b] = edge;
-      const sideA = cityOwnerSide(m, a), sideB = cityOwnerSide(m, b);
-      const heroSide = RPG.char.side;
-      const pickedSet = new Set(pickedIds || []);
-      const teamIds = new Set(Bond.teamGenerals().filter(g => g.side === heroSide).map(g => g.id));
-      // 出阵兵力（军事一期）：己方按滑杆比例从本城驻军调拨，敌方（非玩家操控）固定调用 7 成驻军；
+      const factionA = cityFactionId(m, a), factionB = cityFactionId(m, b);
+      const pickedSet = new Set(heroFaction ? (pickedIds || []) : []);
+      const teamIds = new Set(heroFaction ? Bond.teamGenerals().filter(g => g.side === RPG.char.side).map(g => g.id) : []);
+      // 出阵兵力（军事一期）：己方按滑杆比例从本城驻军调拨，对方固定调用 7 成驻军；
       // 调出的兵力当即从原城池扣除，战罢按幸存与否分别驻守新占之城或退回相邻友城（见 applyBorderWarOutcome）
-      const heroCity = heroSide === sideA ? a : b, foeCity = heroSide === sideA ? b : a;
-      const heroCommit = Math.round(Garrison.get(m, heroCity) * (ratio == null ? 60 : ratio) / 100);
+      const heroCity = heroFaction === factionA ? a : (heroFaction === factionB ? b : null);
+      const foeCity = heroCity === a ? b : a;
+      const heroCommit = heroCity ? Math.round(Garrison.get(m, heroCity) * (ratio == null ? 60 : ratio) / 100) : Math.round(Garrison.get(m, a) * Garrison.AI_COMMIT);
       const foeCommit = Math.round(Garrison.get(m, foeCity) * Garrison.AI_COMMIT);
-      Garrison.spend(m, heroCity, heroCommit);
+      Garrison.spend(m, heroCity || a, heroCommit);
       Garrison.spend(m, foeCity, foeCommit);
 
-      let poolA = DB.list.filter(g => g.side === sideA && m.appeared.includes(g.id)).map(clone);
-      let poolB = DB.list.filter(g => g.side === sideB && m.appeared.includes(g.id)).map(clone);
+      let poolA = DB.list.filter(g => m.generalFaction[g.id] === factionA && m.appeared.includes(g.id)).map(clone);
+      let poolB = DB.list.filter(g => m.generalFaction[g.id] === factionB && m.appeared.includes(g.id)).map(clone);
       shuffle(poolA); shuffle(poolB);
-      // 守将必上阵：其城在此战线上时置于本方阵前，另享 +3 全维死守加成（_guard 标记）
-      const guardFirst = (pool, cityId, side) => {
+      // 守将必上阵：其城在此战线上时置于本方阵前，另享 +3 全维死守加成（_guard 标记）——不论其本人形式上效忠谁，
+      // 既已受托驻守此城，此役便与本城共存亡
+      const guardFirst = (pool, cityId) => {
         const gid = Guard.all(m)[cityId];
         if (gid == null) return pool;
         const g = DB.get(gid);
-        if (!g || g.side !== side) return pool;
+        if (!g) return pool;
         const gg = clone(g); gg._guard = true;
         return [gg, ...pool.filter(x => x.id !== gid)];
       };
-      poolA = guardFirst(poolA, a, sideA);
-      poolB = guardFirst(poolB, b, sideB);
+      poolA = guardFirst(poolA, a);
+      poolB = guardFirst(poolB, b);
+      // 临阵倒戈（简化版）：忠诚过低的武将有小概率在两军集结的这一刻倒向对面，而非在混战中途才切换阵营——
+      // 兼顾戏剧性与实现的稳妥；主角亲自点选出战者与刚受托死守本城的守将不受此影响
+      const battleDefect = (poolX, poolY) => {
+        for (let i = poolX.length - 1; i >= 0; i--) {
+          const g = poolX[i];
+          if (g.id === -1 || g._guard || pickedSet.has(g.id)) continue;
+          if (Loyalty.get(m, g.id) < 20 && Math.random() < 0.15) { poolX.splice(i, 1); poolY.push(g); }
+        }
+      };
+      battleDefect(poolA, poolB);
+      battleDefect(poolB, poolA);
       // 自选出战：玩家勾选的己方武将（含主角，id -1）强制排到本方阵前；未勾选的团队成员整体剔除、不参与随机补位；
       // 剩余（既非主角/团队、也未被勾选的）名额仍由候选池随机抽点补满
-      const heroPool = heroSide === sideA ? poolA : poolB;
-      const pickedGens = heroPool.filter(g => pickedSet.has(g.id));
-      let rest = heroPool.filter(g => !pickedSet.has(g.id) && !teamIds.has(g.id));
-      // 极端保底：若本方已现身武将几乎全是团队成员、又都未被勾选，剔除后可能凑不出一兵一卒——
-      // 此时放宽限制，把未勾选团队成员一并纳入候选池，确保战事总能照常开打
-      if (!rest.length && !pickedGens.length && !pickedSet.has(-1)) rest = heroPool.filter(g => !pickedSet.has(g.id));
-      heroPool.length = 0;
-      heroPool.push(...(pickedSet.has(-1) ? [RPG.heroGeneral()] : []), ...pickedGens, ...rest);
+      if (heroCity) {
+        const heroPool = heroCity === a ? poolA : poolB;
+        const pickedGens = heroPool.filter(g => pickedSet.has(g.id));
+        let rest = heroPool.filter(g => !pickedSet.has(g.id) && !teamIds.has(g.id));
+        // 极端保底：若本方已现身武将几乎全是团队成员、又都未被勾选，剔除后可能凑不出一兵一卒——
+        // 此时放宽限制，把未勾选团队成员一并纳入候选池，确保战事总能照常开打
+        if (!rest.length && !pickedGens.length && !pickedSet.has(-1)) rest = heroPool.filter(g => !pickedSet.has(g.id));
+        heroPool.length = 0;
+        heroPool.push(...(pickedSet.has(-1) ? [RPG.heroGeneral()] : []), ...pickedGens, ...rest);
+      }
       const count = Math.min(poolA.length, poolB.length, 10);   // 野战演武每方最多五线十将
       // 守将加成随军出征；城墙守备改为专属守城方（见 resolveSiege 的攻城战），此处野战不再叠加城墙——
       // 攻出家门的军队用不上自家城墙，城墙的价值留给真正被围攻时的守军
@@ -7833,50 +8323,56 @@
       };
       const rosterA = poolA.slice(0, count).map(guardBuff);
       const rosterB = poolB.slice(0, count).map(guardBuff);
-      const myRoster = heroSide === sideA ? rosterA : rosterB;
-      const foeRoster = heroSide === sideA ? rosterB : rosterA;
-      const heroIn = myRoster.some(g => g.id === -1);
+      const heroCountry = RPG.char.side;
+      const myRoster = heroCity === a ? rosterA : rosterB;
+      const foeRoster = heroCity === a ? rosterB : rosterA;
+      const heroIn = !!heroCity && myRoster.some(g => g.id === -1);
 
-      FieldBattle.beginExternal(myRoster, foeRoster, heroSide, {
+      FieldBattle.beginExternal(myRoster, foeRoster, heroCountry, {
         rpg: true,             // 返回键归属战役层（回天下地图而非首页）
         observe: !heroIn,      // 主角未被抽中：全自动推演，无需任何点击
-        troopScale: { mine: heroCommit, foe: foeCommit },
+        troopScale: { mine: heroCity === a ? heroCommit : foeCommit, foe: heroCity === a ? foeCommit : heroCommit },
         onDone: (res) => {
           // 野战只决出「谁能打到对方城下」，城池是否易主留给随后的攻城战（resolveSiege）定夺；
           // 主角只有在己方野战得胜、且本人幸存时才随军继续攻城，否则（含己方落败）此后一律全自动推演
-          const fieldWinnerSide = res.playerWon ? heroSide : (heroSide === "cn" ? "jp" : "cn");
-          const heroWonField = fieldWinnerSide === heroSide;
+          const fieldWinnerFaction = res.playerWon === (heroCity === a) ? factionA : factionB;
+          const heroWonField = fieldWinnerFaction === heroFaction;
           const heroFought = heroIn && heroWonField && res.mySurvivors.some(g => g.id === -1);
-          this.resolveSiege(m, edge, fieldWinnerSide, res, heroFought, heroIn);
+          this.resolveSiege(m, edge, fieldWinnerFaction, res, heroFought, heroIn, heroCity === a);
         },
       });
     },
     // 野战得胜方乘胜追击，围攻败方所在城池：攻方＝野战幸存之军原样杀奔城下（不再重新点选），
     // 守方＝当前驻守该城的己现身武将（含守将，套城墙守备加成）+ 该城尚未出征的留守驻军（军事一期的"留守"在此终于派上用场）。
     // 守方若一兵一将俱无，视同空城，兵不血刃直接开城，不必再打一场；否则复用野战演武的排兵斗将/挥军破阵流程再打一场攻城战。
-    resolveSiege(m, edge, fieldWinnerSide, fieldRes, heroFought, heroIn) {
+    // heroInFieldA 记录主角在野战中处于 a 城一方（true）还是 b 城一方（false），供折算幸存军属于攻方还是守方
+    resolveSiege(m, edge, fieldWinnerFaction, fieldRes, heroFought, heroIn, heroInFieldA) {
       const [a, b] = edge;
-      const sideA = cityOwnerSide(m, a), sideB = cityOwnerSide(m, b);
-      const heroSide = RPG.char.side;
-      const attackerSide = fieldWinnerSide;
-      const loserSide = attackerSide === "cn" ? "jp" : "cn";
-      const attackerCity = attackerSide === sideA ? a : b;
-      const targetCity = attackerSide === sideA ? b : a;   // 被围攻的目标城池
-      const attackerSurvivors = (attackerSide === heroSide ? fieldRes.mySurvivors : fieldRes.foeSurvivors).map(clone);
-      const attackerTroops = attackerSide === heroSide ? fieldRes.myTroopsLeft : fieldRes.foeTroopsLeft;
+      const factionA = cityFactionId(m, a), factionB = cityFactionId(m, b);
+      const heroCountry = RPG.char.side;
+      const attackerFaction = fieldWinnerFaction;
+      const attackerWasA = attackerFaction === factionA;
+      const loserFaction = attackerWasA ? factionB : factionA;
+      const attackerCity = attackerWasA ? a : b;
+      const targetCity = attackerWasA ? b : a;   // 被围攻的目标城池
+      // 野战中，主角一方对应 a 城（heroInFieldA）还是 b 城，据此判断胜方幸存兵/武将归入 mySurvivors 还是 foeSurvivors
+      const attackerIsMine = attackerWasA === heroInFieldA;
+      const attackerSurvivors = (attackerIsMine ? fieldRes.mySurvivors : fieldRes.foeSurvivors).map(clone);
+      const attackerTroops = attackerIsMine ? fieldRes.myTroopsLeft : fieldRes.foeTroopsLeft;
 
-      let defenderPool = DB.list.filter(g => g.side === loserSide && m.appeared.includes(g.id) && m.assign[g.id] === targetCity).map(clone);
+      let defenderPool = DB.list.filter(g => m.generalFaction[g.id] === loserFaction && m.appeared.includes(g.id) && m.assign[g.id] === targetCity).map(clone);
       const gid = Guard.all(m)[targetCity];
       if (gid != null) {
         const g = DB.get(gid);
-        if (g && g.side === loserSide) { const gg = clone(g); gg._guard = true; defenderPool = [gg, ...defenderPool.filter(x => x.id !== gid)]; }
+        if (g) { const gg = clone(g); gg._guard = true; defenderPool = [gg, ...defenderPool.filter(x => x.id !== gid)]; }
       }
       const defenderTroops = Garrison.get(m, targetCity);
+      const attackerName = factionDef(attackerFaction).n;
 
       if (!defenderPool.length) {
         // 城中一兵一将俱无：兵不血刃，直接开城，无需再打一场
-        toast(`🏳️ ${cityName(targetCity)}城中空虚，${sideName(attackerSide)}大军兵不血刃，长驱直入！`);
-        this.finalizeBorderWar(m, edge, true, attackerSide, targetCity, attackerCity, heroFought,
+        toast(`🏳️ ${cityName(targetCity)}城中空虚，${attackerName}大军兵不血刃，长驱直入！`);
+        this.finalizeBorderWar(m, edge, true, attackerFaction, targetCity, attackerCity, heroFought,
           heroFought && attackerSurvivors.some(g => g.id === -1), fieldRes.kills,
           { attacker: attackerTroops, defender: 0 }, heroIn);
         return;
@@ -7892,23 +8388,23 @@
         return gg;
       };
       const defenderRoster = defenderPool.slice(0, 10).map(defBuff);
-      const myRoster = attackerSide === heroSide ? attackerSurvivors : defenderRoster;
-      const foeRoster = attackerSide === heroSide ? defenderRoster : attackerSurvivors;
-      const myTroops = attackerSide === heroSide ? attackerTroops : defenderTroops;
-      const foeTroops = attackerSide === heroSide ? defenderTroops : attackerTroops;
+      const myRoster = attackerIsMine ? attackerSurvivors : defenderRoster;
+      const foeRoster = attackerIsMine ? defenderRoster : attackerSurvivors;
+      const myTroops = attackerIsMine ? attackerTroops : defenderTroops;
+      const foeTroops = attackerIsMine ? defenderTroops : attackerTroops;
 
-      toast(`⚔️ 野战得胜，大军直逼${cityName(targetCity)}城下，攻城战一触即发！`);
-      FieldBattle.beginExternal(myRoster, foeRoster, heroSide, {
+      toast(`⚔️ 野战得胜，${attackerName}大军直逼${cityName(targetCity)}城下，攻城战一触即发！`);
+      FieldBattle.beginExternal(myRoster, foeRoster, heroCountry, {
         rpg: true,
         observe: !heroFought,   // 主角只有随野战得胜之军才继续亲征攻城，否则全自动推演
         troopScale: { mine: myTroops, foe: foeTroops },
         onDone: (siegeRes) => {
-          const attackerWonSiege = attackerSide === heroSide ? siegeRes.playerWon : !siegeRes.playerWon;
-          const attackerTroopsLeft = attackerSide === heroSide ? siegeRes.myTroopsLeft : siegeRes.foeTroopsLeft;
-          const defenderTroopsLeft = attackerSide === heroSide ? siegeRes.foeTroopsLeft : siegeRes.myTroopsLeft;
-          const attackerSurvivorsList = attackerSide === heroSide ? siegeRes.mySurvivors : siegeRes.foeSurvivors;
+          const attackerWonSiege = attackerIsMine ? siegeRes.playerWon : !siegeRes.playerWon;
+          const attackerTroopsLeft = attackerIsMine ? siegeRes.myTroopsLeft : siegeRes.foeTroopsLeft;
+          const defenderTroopsLeft = attackerIsMine ? siegeRes.foeTroopsLeft : siegeRes.myTroopsLeft;
+          const attackerSurvivorsList = attackerIsMine ? siegeRes.mySurvivors : siegeRes.foeSurvivors;
           const heroAliveFinal = heroFought && attackerSurvivorsList.some(g => g.id === -1);
-          this.finalizeBorderWar(m, edge, attackerWonSiege, attackerSide, targetCity, attackerCity, heroFought,
+          this.finalizeBorderWar(m, edge, attackerWonSiege, attackerFaction, targetCity, attackerCity, heroFought,
             heroAliveFinal, fieldRes.kills + siegeRes.kills, { attacker: attackerTroopsLeft, defender: defenderTroopsLeft }, heroIn);
         },
       });
@@ -7924,11 +8420,12 @@
     // heroFought 为真时（主角随野战得胜之军追击攻城）金币/名声与你的钱袋直接相关，胜负皆有所得——
     // 攻克照旧得所夺城池日产出 30 倍犒赏，未克则改发一份约合十天产出的掳掠慰劳金，敌城本身也在这场攻城战里元气大伤；
     // 未随军攻城（含己方野战即落败）则此战胜负与你的钱袋无涉，只有战报，没有金币结算
-    finalizeBorderWar(m, edge, captured, attackerSide, targetCity, attackerCity, heroFought, heroAlive, totalKills, troops, heroIn) {
-      const heroSide = RPG.char.side;
+    finalizeBorderWar(m, edge, captured, attackerFaction, targetCity, attackerCity, heroFought, heroAlive, totalKills, troops, heroIn) {
       let capturedCity = null;
+      let unifyHtml = "";
       if (captured) {
-        capturedCity = this.applyBorderWarOutcome(m, edge, attackerSide, { winner: troops.attacker, loser: troops.defender });
+        capturedCity = this.applyBorderWarOutcome(m, edge, attackerFaction, { winner: troops.attacker, loser: troops.defender });
+        if (attackerFaction === m.playerFaction) unifyHtml = checkUnifyEnding(m);
       } else {
         this.applySiegeRepelled(m, targetCity, attackerCity, troops.defender, troops.attacker);
       }
@@ -7942,6 +8439,7 @@
         const goldGain = Bond.addGold(30 + totalKills * 4);
         const bonusGold = Bond.addGold(warGold);
         if (captured) Campaign.addFame(20); else Campaign.addFame(10);
+        if (m.playerFaction) PlayerRank.addMerit(m, captured ? 80 : 30);   // 随军攻城是效力主公最直接的实绩
         const exp = totalKills * 12 + (captured ? 60 : 25);
         c.exp += exp;
         let lvUp = 0;
@@ -7957,7 +8455,7 @@
       }
       openOverlay(`<div class="result-card detail-card">
         <h1>⚔️ 边境战报</h1>
-        <div class="wdesc">${captured ? `${sideName(attackerSide)}一举攻克【${cityName(reportCity)}】！` : `${sideName(attackerSide)}兵临【${cityName(reportCity)}】城下，久攻不克，只得退兵。`}</div>
+        <div class="wdesc">${captured ? `${factionDef(attackerFaction).n}一举攻克【${cityName(reportCity)}】！` : `${factionDef(attackerFaction).n}兵临【${cityName(reportCity)}】城下，久攻不克，只得退兵。`}${unifyHtml}</div>
         ${heroHtml}
         <div class="btns"><button class="btn-primary" id="bw-close">${heroIn ? "返回天下地图" : "知道了"}</button></div>
       </div>`, { modal: true });
