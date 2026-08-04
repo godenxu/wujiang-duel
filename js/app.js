@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608050351";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608050425";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -3033,8 +3033,9 @@
         }
       }
       const done = () => {
-        // myTroopsLeft/foeTroopsLeft：委外战场（边境战）据此把幸存兵力遣返/编入城池驻军，见 RPG.applyBorderWarOutcome
-        const res = { playerWon: won, mySurvivors: this.mine.filter(g => this.alive(g)), kills: this.stats.foeFall,
+        // myTroopsLeft/foeTroopsLeft：委外战场（边境战/攻城战）据此把幸存兵力遣返/编入城池驻军；
+        // foeSurvivors 供边境战"野战得胜方乘胜攻城"时，胜方若恰是敌方（foe）也能取得己方幸存武将名单
+        const res = { playerWon: won, mySurvivors: this.mine.filter(g => this.alive(g)), foeSurvivors: this.foes.filter(g => this.alive(g)), kills: this.stats.foeFall,
           myTroopsLeft: Math.max(0, Math.round(this.myTroops)), foeTroopsLeft: Math.max(0, Math.round(this.foeTroops)) };
         const onDone = this.external.onDone;
         this.external = null;
@@ -3971,14 +3972,6 @@
       return `<br>💰 金币 ${gain > 0 ? `<b style="color:#b8860b">+${gain}</b> · ` : ""}现有 <b style="color:#b8860b">${this.gold()}</b>`;
     },
     spend(n) { if (this.data.gold < n) return false; this.data.gold -= n; this.save(); return true; },
-    // 强制扣减金币（不同于 spend：余额不足也照扣，封底 0）；返回实际扣减额，供边境战败绩赔付等场景使用
-    loseGold(n) {
-      if (!RPG.char || n <= 0) return 0;
-      n = Math.round(n);
-      const actual = Math.min(this.data.gold, n);
-      this.data.gold -= actual; this.save();
-      return actual;
-    },
     pts(id) { return this.data.friends[id] || 0; },
     MAX_FRIEND: 300,
     // 返回实际增加量（可能因已达/接近上限而低于 n，甚至为 0）
@@ -5705,7 +5698,7 @@
     hospital: { n: "医馆", icon: "🏥", desc: "郎中坐堂——本城回魂丹折价，单挑时体力（气血）每回合额外回复，带兵作战安抚军心/驰援同袍额外恢复兵力", eff: ["回魂丹80金 · 体力+2/回合 · 兵力+3%", "回魂丹65金 · 体力+4/回合 · 兵力+6%", "回魂丹50金 · 体力+6/回合 · 兵力+9%"] },
     academy: { n: "书院", icon: "📚", desc: "名士讲学——在本城进行的单挑（历练/切磋/悬赏/设施）经验加成", eff: ["经验 +10%", "经验 +20%", "经验 +30%"] },
     post: { n: "驿站", icon: "🏇", desc: "快马官道——与其他建有驿站的己方城市互通直达（不论多远只耗 1⚡，按路程收驿费，无奇遇无风浪）", eff: ["开通驿路", "驿费 -25%", "驿费 -50%"] },
-    wall: { n: "城墙", icon: "🏯", desc: "高墙深垒——边境战报模拟中，本城一方全员六维获守备加成（攻守对称：敌占期间为敌所用），另加成本城驻军上限", eff: ["守备 +2 · 驻军上限 +8,000", "守备 +4 · 驻军上限 +16,000", "守备 +6 · 驻军上限 +24,000"] },
+    wall: { n: "城墙", icon: "🏯", desc: "高墙深垒——本城若被围攻，守军全员六维获此加成（易主后为敌所用），另加成本城驻军上限", eff: ["守备 +2 · 驻军上限 +8,000", "守备 +4 · 驻军上限 +16,000", "守备 +6 · 驻军上限 +24,000"] },
     drill: { n: "演武场", icon: "⚔️", desc: "日日操练——本城特色设施挑战获胜时，名声额外加成", eff: ["名声 +4", "名声 +8", "名声 +12"] },
   };
   const HOSPITAL_REVIVE = [100, 80, 65, 50];   // 回魂丹价：下标 = 所在城医馆等级（0 = 无医馆）
@@ -7690,7 +7683,8 @@
     },
     // 月末边境大战：owner 不同的相邻城池间，每月最多只爆发一场（随机挑一条边）；
     // 只有主角本人与麾下团队成员的出战与否需玩家勾选决定，其余已现身武将一律由候选池随机抽点补满（每方至多 10 将）；
-    // 以野战演武（FieldBattle）开打，胜方夺取败方该城；返回 true 表示已接管本次宿营流程
+    // 以野战演武（FieldBattle）开打，只决出谁能打到对方城下，能否真正夺城还要看紧随其后的攻城战（见 resolveSiege）；
+    // 返回 true 表示已接管本次宿营流程
     checkBorderWar(m) {
       const edges = borderEdges(m).filter(([a, b]) => {
         const poolA = DB.list.filter(g => g.side === cityOwnerSide(m, a) && m.appeared.includes(g.id));
@@ -7726,7 +7720,7 @@
       const rows = [heroRow].concat(pool.map(g => `<button class="buff-btn bw-pick ${picks.has(g.id) ? 'active' : ''}" data-id="${g.id}"><span class="bi">${avatarChar(g.name)}</span><span class="bt"><b>${g.name}</b><small>评分 ${ratingScore(g)}</small></span></button>`));
       openOverlay(`<div class="result-card detail-card">
         <h1>⚔️ 边境战事</h1>
-        <div class="wdesc">边境爆发冲突：<b>${cityName(a)}（${sideName(sideA)}）</b> vs <b>${cityName(b)}（${sideName(sideB)}）</b>。你与团队成员是否出战自行抉择（其余已现身武将由候选池随机补满，无需你操心）：勾选自己即视为亲历此战，出战并获胜可得所夺城池金币日产出 <b>${this.BORDER_WAR_GOLD_DAYS}</b> 倍犒赏，落败则须赔付被夺城池金币日产出 <b>${this.BORDER_WAR_GOLD_DAYS}</b> 倍；不勾选自己则此战胜负不动你的钱袋。</div>
+        <div class="wdesc">边境爆发冲突：<b>${cityName(a)}（${sideName(sideA)}）</b> vs <b>${cityName(b)}（${sideName(sideB)}）</b>。你与团队成员是否出战自行抉择（其余已现身武将由候选池随机补满，无需你操心）。此战分两阵：先打<b>野战</b>，得胜一方才能乘胜杀奔败方城下再打一场<b>攻城战</b>，攻克方能真正夺城。勾选自己即视为亲历野战，若野战得胜，你将随军继续亲征攻城——攻克可得所夺城池金币日产出 <b>${this.BORDER_WAR_GOLD_DAYS}</b> 倍犒赏，未克也有一份约合十天产出的掳掠慰劳金；野战落败或不勾选自己，则此战胜负不动你的钱袋。</div>
         <div class="buff-list" style="max-height:32vh;overflow-y:auto">${rows.join("")}</div>
         <div class="wdesc">已选 <b>${picks.size}</b> 员（至多 10 员）</div>
         <div class="mc-sect">🚩 出阵比例<small>（兵力从${cityName(heroCity)}驻军中调拨，出得越多越经打，但家底也空得越多）</small></div>
@@ -7829,17 +7823,16 @@
       heroPool.length = 0;
       heroPool.push(...(pickedSet.has(-1) ? [RPG.heroGeneral()] : []), ...pickedGens, ...rest);
       const count = Math.min(poolA.length, poolB.length, 10);   // 野战演武每方最多五线十将
-      // 城墙守备：本城一方全员六维 +2×城墙等级（攻守对称——敌占城市的城墙同样为敌所用）；主角自身战力已由 heroGeneral() 精算好，不叠加
-      const wallA = Buildings.lv(m, a, "wall") * 2, wallB = Buildings.lv(m, b, "wall") * 2;
-      const statBuff = (g, plus) => {
-        const extra = plus + (g._guard ? Guard.STAT_BONUS : 0);
-        if (!extra || g.id === -1) return g;
+      // 守将加成随军出征；城墙守备改为专属守城方（见 resolveSiege 的攻城战），此处野战不再叠加城墙——
+      // 攻出家门的军队用不上自家城墙，城墙的价值留给真正被围攻时的守军
+      const guardBuff = (g) => {
+        if (!g._guard || g.id === -1) return g;
         const gg = clone(g);
-        DIMS.forEach(([k]) => { gg[k] += extra; });
+        DIMS.forEach(([k]) => { gg[k] += Guard.STAT_BONUS; });
         return gg;
       };
-      const rosterA = poolA.slice(0, count).map(g => statBuff(g, wallA));
-      const rosterB = poolB.slice(0, count).map(g => statBuff(g, wallB));
+      const rosterA = poolA.slice(0, count).map(guardBuff);
+      const rosterB = poolB.slice(0, count).map(guardBuff);
       const myRoster = heroSide === sideA ? rosterA : rosterB;
       const foeRoster = heroSide === sideA ? rosterB : rosterA;
       const heroIn = myRoster.some(g => g.id === -1);
@@ -7849,42 +7842,126 @@
         observe: !heroIn,      // 主角未被抽中：全自动推演，无需任何点击
         troopScale: { mine: heroCommit, foe: foeCommit },
         onDone: (res) => {
-          const winnerSide = res.playerWon ? heroSide : (heroSide === "cn" ? "jp" : "cn");
-          const heroWon = winnerSide === heroSide;
-          // 幸存兵力：myTroopsLeft/foeTroopsLeft 对应己方/敌方本役出征之军的战后余兵，与谁获胜无关
-          const capturedCity = this.applyBorderWarOutcome(m, edge, winnerSide, heroWon
-            ? { winner: res.myTroopsLeft, loser: res.foeTroopsLeft }
-            : { winner: res.foeTroopsLeft, loser: res.myTroopsLeft });
-          // 战果金币：不再是固定犒赏，改为所夺/被夺城池金币日产出的 BORDER_WAR_GOLD_DAYS 倍（约合一月产出）
-          const warGold = this.BORDER_WAR_GOLD_DAYS * Estate.cityDailyGold(m, capturedCity);
-          let heroHtml;
-          if (heroIn) {
-            const c = RPG.char;
-            const heroAlive = res.mySurvivors.some(g => g.id === -1);
-            const goldGain = res.playerWon ? Bond.addGold(30 + res.kills * 4) : 0;
-            const bonusGold = heroWon ? Bond.addGold(warGold) : 0;
-            const penalty = !heroWon ? Bond.loseGold(warGold) : 0;
-            if (res.playerWon) Campaign.addFame(20);
-            const exp = res.kills * 12 + (res.playerWon ? 60 : 15);
-            c.exp += exp;
-            let lvUp = 0;
-            while (c.exp >= RPG.expNeed(c.level)) { c.exp -= RPG.expNeed(c.level); c.level++; c.points += 1; lvUp++; }
-            RPG.save();
-            heroHtml = `<div class="mc-sect">🎖️ 你的战果</div>
-              <div class="wdesc">${heroAlive ? '全身而退' : '力战倒下（阵中负伤）'}，你方共歼敌将 <b style="color:var(--cn-red)">${res.kills}</b> 员${res.playerWon ? `，己方 ${sideName(heroSide)} 全线告捷！夺取【${cityName(capturedCity)}】，名声 <b style="color:var(--cn-red)">+20</b>` : '，惜未能扭转战局。'}<br>获得经验 <b style="color:var(--cn-red)">+${exp}</b>${goldGain ? Bond.goldLine(goldGain) : ''}${bonusGold ? `<br>🏆 边境犒赏 <b style="color:#b8860b">+${bonusGold}</b> 金（所夺城池日产出 ${this.BORDER_WAR_GOLD_DAYS} 倍 · 现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : ''}${penalty ? `<br>💸 战败赔付 <b style="color:var(--cn-red)">-${penalty}</b> 金（被夺城池日产出 ${this.BORDER_WAR_GOLD_DAYS} 倍 · 现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : ''}${lvUp ? `<br>🎉 升级 ${lvUp} 级！` : ''}</div>`;
-          } else {
-            // 主角未亲自出战：此战胜负与你的钱袋无涉，既无犒赏也无需赔付
-            heroHtml = `<div class="wdesc">本场未见你的身影，前线战报照常传回，胜负不动你的钱袋。</div>`;
-          }
-          openOverlay(`<div class="result-card detail-card">
-            <h1>⚔️ 边境战报</h1>
-            <div class="wdesc">${cityName(a)} vs ${cityName(b)}：<b style="color:var(--cn-red)">${sideName(winnerSide)}</b>获胜，夺取【${cityName(capturedCity)}】</div>
-            ${heroHtml}
-            <div class="btns"><button class="btn-primary" id="bw-close">${heroIn ? "返回天下地图" : "知道了"}</button></div>
-          </div>`, { modal: true });
-          $("#bw-close").onclick = () => { closeOverlay(); this.render(); showScreen("map"); };
+          // 野战只决出「谁能打到对方城下」，城池是否易主留给随后的攻城战（resolveSiege）定夺；
+          // 主角只有在己方野战得胜、且本人幸存时才随军继续攻城，否则（含己方落败）此后一律全自动推演
+          const fieldWinnerSide = res.playerWon ? heroSide : (heroSide === "cn" ? "jp" : "cn");
+          const heroWonField = fieldWinnerSide === heroSide;
+          const heroFought = heroIn && heroWonField && res.mySurvivors.some(g => g.id === -1);
+          this.resolveSiege(m, edge, fieldWinnerSide, res, heroFought, heroIn);
         },
       });
+    },
+    // 野战得胜方乘胜追击，围攻败方所在城池：攻方＝野战幸存之军原样杀奔城下（不再重新点选），
+    // 守方＝当前驻守该城的己现身武将（含守将，套城墙守备加成）+ 该城尚未出征的留守驻军（军事一期的"留守"在此终于派上用场）。
+    // 守方若一兵一将俱无，视同空城，兵不血刃直接开城，不必再打一场；否则复用野战演武的排兵斗将/挥军破阵流程再打一场攻城战。
+    resolveSiege(m, edge, fieldWinnerSide, fieldRes, heroFought, heroIn) {
+      const [a, b] = edge;
+      const sideA = cityOwnerSide(m, a), sideB = cityOwnerSide(m, b);
+      const heroSide = RPG.char.side;
+      const attackerSide = fieldWinnerSide;
+      const loserSide = attackerSide === "cn" ? "jp" : "cn";
+      const attackerCity = attackerSide === sideA ? a : b;
+      const targetCity = attackerSide === sideA ? b : a;   // 被围攻的目标城池
+      const attackerSurvivors = (attackerSide === heroSide ? fieldRes.mySurvivors : fieldRes.foeSurvivors).map(clone);
+      const attackerTroops = attackerSide === heroSide ? fieldRes.myTroopsLeft : fieldRes.foeTroopsLeft;
+
+      let defenderPool = DB.list.filter(g => g.side === loserSide && m.appeared.includes(g.id) && m.assign[g.id] === targetCity).map(clone);
+      const gid = Guard.all(m)[targetCity];
+      if (gid != null) {
+        const g = DB.get(gid);
+        if (g && g.side === loserSide) { const gg = clone(g); gg._guard = true; defenderPool = [gg, ...defenderPool.filter(x => x.id !== gid)]; }
+      }
+      const defenderTroops = Garrison.get(m, targetCity);
+
+      if (!defenderPool.length) {
+        // 城中一兵一将俱无：兵不血刃，直接开城，无需再打一场
+        toast(`🏳️ ${cityName(targetCity)}城中空虚，${sideName(attackerSide)}大军兵不血刃，长驱直入！`);
+        this.finalizeBorderWar(m, edge, true, attackerSide, targetCity, attackerCity, heroFought,
+          heroFought && attackerSurvivors.some(g => g.id === -1), fieldRes.kills,
+          { attacker: attackerTroops, defender: 0 }, heroIn);
+        return;
+      }
+
+      // 守城方城墙守备：城墙旧有的"野战全员六维加成"改为专属守城战，另加守将 +3
+      const wallBuff = Buildings.lv(m, targetCity, "wall") * 2;
+      const defBuff = (g) => {
+        const extra = wallBuff + (g._guard ? Guard.STAT_BONUS : 0);
+        if (!extra || g.id === -1) return g;
+        const gg = clone(g);
+        DIMS.forEach(([k]) => { gg[k] += extra; });
+        return gg;
+      };
+      const defenderRoster = defenderPool.slice(0, 10).map(defBuff);
+      const myRoster = attackerSide === heroSide ? attackerSurvivors : defenderRoster;
+      const foeRoster = attackerSide === heroSide ? defenderRoster : attackerSurvivors;
+      const myTroops = attackerSide === heroSide ? attackerTroops : defenderTroops;
+      const foeTroops = attackerSide === heroSide ? defenderTroops : attackerTroops;
+
+      toast(`⚔️ 野战得胜，大军直逼${cityName(targetCity)}城下，攻城战一触即发！`);
+      FieldBattle.beginExternal(myRoster, foeRoster, heroSide, {
+        rpg: true,
+        observe: !heroFought,   // 主角只有随野战得胜之军才继续亲征攻城，否则全自动推演
+        troopScale: { mine: myTroops, foe: foeTroops },
+        onDone: (siegeRes) => {
+          const attackerWonSiege = attackerSide === heroSide ? siegeRes.playerWon : !siegeRes.playerWon;
+          const attackerTroopsLeft = attackerSide === heroSide ? siegeRes.myTroopsLeft : siegeRes.foeTroopsLeft;
+          const defenderTroopsLeft = attackerSide === heroSide ? siegeRes.foeTroopsLeft : siegeRes.myTroopsLeft;
+          const attackerSurvivorsList = attackerSide === heroSide ? siegeRes.mySurvivors : siegeRes.foeSurvivors;
+          const heroAliveFinal = heroFought && attackerSurvivorsList.some(g => g.id === -1);
+          this.finalizeBorderWar(m, edge, attackerWonSiege, attackerSide, targetCity, attackerCity, heroFought,
+            heroAliveFinal, fieldRes.kills + siegeRes.kills, { attacker: attackerTroopsLeft, defender: defenderTroopsLeft }, heroIn);
+        },
+      });
+    },
+    // 攻城未克：目标城池归属不变，但双方此役折损照实结算——守方战后余兵就地驻守（城未失，兵却折了不少），
+    // 攻方战后余兵撤回己方出征的那座城池（撤退亦非全须全尾）
+    applySiegeRepelled(m, targetCity, attackerCity, defenderTroopsLeft, attackerTroopsLeft) {
+      Garrison.set(m, targetCity, defenderTroopsLeft);
+      if (attackerTroopsLeft > 0) Garrison.add(m, attackerCity, attackerTroopsLeft);
+      Campaign.save();
+    },
+    // 边境战/攻城战最终结算：captured 表示攻方是否攻下目标城池（含空城直接开城的情形）；
+    // heroFought 为真时（主角随野战得胜之军追击攻城）金币/名声与你的钱袋直接相关，胜负皆有所得——
+    // 攻克照旧得所夺城池日产出 30 倍犒赏，未克则改发一份约合十天产出的掳掠慰劳金，敌城本身也在这场攻城战里元气大伤；
+    // 未随军攻城（含己方野战即落败）则此战胜负与你的钱袋无涉，只有战报，没有金币结算
+    finalizeBorderWar(m, edge, captured, attackerSide, targetCity, attackerCity, heroFought, heroAlive, totalKills, troops, heroIn) {
+      const heroSide = RPG.char.side;
+      let capturedCity = null;
+      if (captured) {
+        capturedCity = this.applyBorderWarOutcome(m, edge, attackerSide, { winner: troops.attacker, loser: troops.defender });
+      } else {
+        this.applySiegeRepelled(m, targetCity, attackerCity, troops.defender, troops.attacker);
+      }
+      const reportCity = captured ? capturedCity : targetCity;
+      const warGold = captured
+        ? this.BORDER_WAR_GOLD_DAYS * Estate.cityDailyGold(m, reportCity)
+        : Math.round(this.BORDER_WAR_GOLD_DAYS / 3) * Estate.cityDailyGold(m, reportCity);   // 攻城未克的掳掠慰劳金：约合十天产出
+      let heroHtml;
+      if (heroFought) {
+        const c = RPG.char;
+        const goldGain = Bond.addGold(30 + totalKills * 4);
+        const bonusGold = Bond.addGold(warGold);
+        if (captured) Campaign.addFame(20); else Campaign.addFame(10);
+        const exp = totalKills * 12 + (captured ? 60 : 25);
+        c.exp += exp;
+        let lvUp = 0;
+        while (c.exp >= RPG.expNeed(c.level)) { c.exp -= RPG.expNeed(c.level); c.level++; c.points += 1; lvUp++; }
+        RPG.save();
+        heroHtml = `<div class="mc-sect">🎖️ 你的战果</div>
+          <div class="wdesc">${heroAlive ? '全身而退' : '力战倒下（阵中负伤）'}，此役连破野战、攻城两阵，共歼敌将 <b style="color:var(--cn-red)">${totalKills}</b> 员${captured ? `，成功攻克【${cityName(reportCity)}】，名声 <b style="color:var(--cn-red)">+20</b>` : `，惜未能攻克【${cityName(reportCity)}】，名声仍 <b style="color:var(--cn-red)">+10</b>`}<br>获得经验 <b style="color:var(--cn-red)">+${exp}</b>${goldGain ? Bond.goldLine(goldGain) : ''}${bonusGold ? `<br>${captured ? "🏆 边境犒赏" : "💰 掳掠慰劳"} <b style="color:#b8860b">+${bonusGold}</b> 金（${captured ? "所夺" : "攻城未克，敌城"}日产出 ${captured ? this.BORDER_WAR_GOLD_DAYS : Math.round(this.BORDER_WAR_GOLD_DAYS / 3)} 倍 · 现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : ''}${lvUp ? `<br>🎉 升级 ${lvUp} 级！` : ''}</div>`;
+      } else if (heroIn) {
+        // 主角亲历了野战，但己方未能取胜、无缘随军攻城——仍与你的钱袋无涉，但不宜说"未见你的身影"
+        heroHtml = `<div class="wdesc">你亲历此役，惜野战失利，未能扩大战果——胜负不动你的钱袋。</div>`;
+      } else {
+        heroHtml = `<div class="wdesc">本场未见你的身影，前线战报照常传回，胜负不动你的钱袋。</div>`;
+      }
+      openOverlay(`<div class="result-card detail-card">
+        <h1>⚔️ 边境战报</h1>
+        <div class="wdesc">${captured ? `${sideName(attackerSide)}一举攻克【${cityName(reportCity)}】！` : `${sideName(attackerSide)}兵临【${cityName(reportCity)}】城下，久攻不克，只得退兵。`}</div>
+        ${heroHtml}
+        <div class="btns"><button class="btn-primary" id="bw-close">${heroIn ? "返回天下地图" : "知道了"}</button></div>
+      </div>`, { modal: true });
+      $("#bw-close").onclick = () => { closeOverlay(); this.render(); showScreen("map"); };
     },
     // 宿营夜袭：若当前城池本地武将中有敌方阵营成员，有 15% 概率被其中一人偷袭，
     // 复用与「刺杀」完全相同的结算通道（m.activeAssassin）——主角获胜则对方六维受创，落败则己方受创
