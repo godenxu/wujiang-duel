@@ -109,6 +109,7 @@
       <h2>天下游历</h2>
       <div class="map-topbar-status" id="map-topbar-status"></div>
       <div class="audio-btns">
+        <button id="map-all-facs" title="全部势力">🚩</button>
         <button id="map-all-cities" title="全部城市">🏙️</button>
         <button id="map-all-gens" title="全部武将">👥</button>
         <button id="btn-music13">♪</button>
@@ -411,6 +412,24 @@
       </div>
     </div>
     <div class="db-list" id="allcity-list"></div>
+  </section>
+
+  <!-- ========== 全部势力（天下诸侯，只读表格；行点击弹出势力详情） ========== -->
+  <section id="screen-allfac" class="screen">
+    <div class="topbar">
+      <span class="back" data-back>‹</span>
+      <h2>全部势力 · 天下诸侯</h2>
+      <div class="audio-btns">
+        <button id="btn-music16">♪</button>
+        <button id="btn-sfx16">🔊</button>
+      </div>
+    </div>
+    <div class="side-tabs">
+      <div class="side-tab cn active" data-afside="all">🌐 全部</div>
+      <div class="side-tab cn" data-afside="cn">🐲 三国</div>
+      <div class="side-tab jp" data-afside="jp">🏯 战国</div>
+    </div>
+    <div class="db-list" id="allfac-list"></div>
   </section>
 
   <!-- 通用弹窗 -->
