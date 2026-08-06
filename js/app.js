@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608062304";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608062350";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -8500,10 +8500,10 @@
           🗺️ 城池 <b>${cities}</b> 座 · 🎖️ 麾下 <b>${gens.length}</b> 将 · 官位 ${used}/${slots} · 结义 ${swornN}/${Rewards.SWORN_MAX}
           <br><small>军令每日按威名回复，出征与封赏皆需之。赏赐一概不用金帛——买得来兵，买不来人心。</small></div>
           <div class="menu">
-            <button class="menu-btn lord-act" data-a="post" ${orders < 2 ? "disabled" : ""}><span class="mi">🎖️</span><span>封官<small>${used}/${slots} 席 · 耗 2 军令 · 忠诚上限 +10~20</small></span></button>
-            <button class="menu-btn lord-act" data-a="fief" ${orders < 2 ? "disabled" : ""}><span class="mi">🏯</span><span>封地<small>余 ${Rewards.freeFiefCities(m, "_player_").length} 城可封 · 耗 2 军令 · 忠诚上限 +15</small></span></button>
-            <button class="menu-btn lord-act" data-a="sworn" ${orders < Rewards.SWORN_ORDERS ? "disabled" : ""}><span class="mi">🤝</span><span>结义<small>${swornN}/${Rewards.SWORN_MAX} · 需友谊 ≥${Rewards.SWORN_BOND_MIN} · 耗 ${Rewards.SWORN_ORDERS} 军令 · 免疫策反</small></span></button>
-            <button class="menu-btn lord-act" data-a="feast" ${orders < Rewards.FEAST_ORDERS ? "disabled" : ""}><span class="mi">🍶</span><span>庆功宴<small>全军忠诚 +3 · 耗 ${Rewards.FEAST_ORDERS} 军令</small></span></button>
+            ${this.lordActBtn(m, "post", "🎖️", "封官", `${used}/${slots} 席 · 忠诚上限 +10~20`)}
+            ${this.lordActBtn(m, "fief", "🏯", "封地", `余 ${Rewards.freeFiefCities(m, "_player_").length} 城可封 · 忠诚上限 +15`)}
+            ${this.lordActBtn(m, "sworn", "🤝", "结义", `${swornN}/${Rewards.SWORN_MAX} · 需友谊 ≥${Rewards.SWORN_BOND_MIN} · 免疫策反`)}
+            ${this.lordActBtn(m, "feast", "🍶", "庆功宴", `全军忠诚 +3`)}
           </div>`;
       } else {
         const f = factionDef(fid);
@@ -8558,19 +8558,34 @@
       };
       $("#id-close").onclick = () => { closeOverlay(); this.render(); };
     },
-    /* ---- 主公封赏：封官 / 封地 / 结义 / 庆功宴（皆耗军令，绝不用金币） ---- */
+    /* ---- 主公封赏：封官 / 封地 / 结义 / 庆功宴（皆耗军令，绝不用金币） ----
+       军令不足时**不置灰按钮**，而是照常可点、点了给一句解释——按钮 disabled 后既无视觉变化
+       （弹窗内的 .menu 不在 .menu-main/.map-menu 的禁用样式覆盖范围内）又毫无反馈，
+       玩家只会觉得"点了没反应"，根本无从得知是军令不够、更不知道如何补 */
+    LORD_ACT_COST: { post: 2, fief: 2, sworn: 3, feast: 1 },
+    LORD_ACT_NAME: { post: "封官", fief: "封地", sworn: "结义", feast: "庆功宴" },
+    lordActBtn(m, kind, icon, label, desc) {
+      const need = this.LORD_ACT_COST[kind];
+      const orders = FactionOrders.get(m, "_player_");
+      const low = orders < need;
+      return `<button class="menu-btn lord-act${low ? " low" : ""}" data-a="${kind}"><span class="mi">${icon}</span><span>${label}<small>${desc} · 耗 ${need} 军令${low ? `（现有 ${orders}，不足）` : ""}</small></span></button>`;
+    },
     openLordAction(kind) {
       const m = Campaign.mapState();
       const fid = "_player_", side = RPG.char.side;
       const orders = FactionOrders.get(m, fid);
+      const need = this.LORD_ACT_COST[kind] || 1;
+      if (orders < need) {
+        toast(`📜 军令不足：${this.LORD_ACT_NAME[kind]}需 ${need} 道，现有 ${orders} 道——宿营一夜可回复 ${FactionOrders.regen(m, fid)} 道（威名越盛回复越快）`);
+        return;
+      }
       const back = `<div class="btns"><button class="btn-ghost" id="la-back">返回</button></div>`;
       const bind = () => { $("#la-back").onclick = () => this.openIdentity(); };
       const gens = factionGenerals(m, fid, true).sort((a, b) => ratingScore(Armory.geared(b, b.id)) - ratingScore(Armory.geared(a, a.id)));
       const row = (g, extra) => `<button class="menu-btn la-pick" data-id="${g.id}"><span class="mi">🎖️</span><span>${g.name}<small>评分 ${ratingScore(Armory.geared(g, g.id))} · 忠诚 ${Loyalty.get(m, g.id)}（上限 ${Loyalty.softCap(m, g.id)}）${extra || ""}</small></span></button>`;
 
       if (kind === "feast") {
-        if (orders < Rewards.FEAST_ORDERS) { toast("军令不足"); return; }
-        if (!FactionOrders.spend(m, fid, Rewards.FEAST_ORDERS)) return;
+        if (!FactionOrders.spend(m, fid, Rewards.FEAST_ORDERS)) { toast("军令不足"); return; }
         const n = Rewards.feast(m, fid);
         Campaign.save();
         toast(n ? `🍶 大宴群臣，麾下 ${n} 将同沐恩泽，忠诚各 +3` : "麾下暂无可赏之人");

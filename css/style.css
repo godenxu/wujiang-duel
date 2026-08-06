@@ -967,6 +967,18 @@ html, body {
 .menu-main { grid-template-columns: 1fr; max-width: 420px; }
 .menu-main .menu-btn:disabled, .map-menu .menu-btn:disabled { opacity: .4; cursor: not-allowed; filter: grayscale(.6); }
 .menu-main .menu-btn:disabled:active, .map-menu .menu-btn:disabled:active { transform: none; }
+/* 兜底：任何被禁用的按钮都必须**看起来**是禁用的。
+   此前 .menu-btn 的禁用样式只挂在 .menu-main / .map-menu 两个容器下，弹窗内 .menu 里的按钮
+   （如主公府的封赏钮）被 disabled 后依旧是满不透明度 + pointer 手型，看着完全可点却毫无反应，
+   玩家只会以为功能坏了。同理 .btn-primary/.btn-ghost/.cup-go 此前也无任何禁用态样式。 */
+.menu .menu-btn:disabled, .btn-primary:disabled, .btn-ghost:disabled, .cup-go:disabled, .gift-btn:disabled {
+  opacity: .45; cursor: not-allowed; filter: grayscale(.55);
+}
+.menu .menu-btn:disabled:active, .btn-primary:disabled:active, .btn-ghost:disabled:active,
+.cup-go:disabled:active, .gift-btn:disabled:active { transform: none; }
+/* 军令不足但仍可点的封赏钮：淡化以示"现在做不了"，但保留可点性，点了会告诉你为什么 */
+.menu-btn.low { opacity: .62; }
+.menu-btn.low small { color: var(--cn-red); }
 
 /* 本命天赋 / 成长模式提示 */
 .rd-talent { color: var(--cn-gold); font-style: normal; margin-left: 2px; font-size: 11px; }
