@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608062350";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608072122";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -224,7 +224,7 @@
       const isMine = curFid && curFid === mFac.playerFaction;
       const isLord = curFid && isFactionLord(curFid, g.id);
       const facLine = `🚩 现效力于：${curFid ? facChip(curFid) : "<b>在野</b>"}${isLord ? ' <span class="lord-mark" title="主公">👑 主公</span>' : ""}`
-        + (curFid ? ` · 忠诚 ${loyaltyHtml(Loyalty.get(mFac, g.id))}` : "")
+        + (curFid ? ` · 忠诚 ${loyaltyCell(mFac, curFid, g.id)}` : "")
         + (isMine ? ' · <b style="color:var(--cn-gold)">本势力</b>' : "");
       let btn = "";
       if (!opts.readonly && !isMine && sameSide) {
@@ -233,7 +233,7 @@
           btn = `<div class="bond-gifts"><button class="gift-btn" disabled>👑 一方主公，非金帛可招（唯灭其势力）</button></div>`;
         } else {
           const chance = Math.round(Loyalty.persuadeChance(mFac, g.id) * 100);
-          btn = `<div class="bond-gifts"><button class="gift-btn" id="bond-persuade">🗣️ 招揽（约 ${chance}% 成功 · ${Loyalty.PERSUADE_COST} 金）</button></div>`;
+          btn = `<div class="bond-gifts"><button class="gift-btn" id="bond-persuade">🗣️ 招揽（约 ${chance}% 成功 · ${Loyalty.persuadeCost(g.id)} 金）</button></div>`;
         }
       }
       factionHtml = `<div class="bond-box"><div class="bond-line">${facLine}</div>${btn}</div>`;
@@ -5405,30 +5405,34 @@
    *  对马岛比较特殊——它不属于任何真实势力，只在 tsushima_cn/tsushima_jp 两个"番所"占位势力间来回易手，
    *  借此让它继续沿用与其余城池完全相同的势力数据结构，无需额外特判。
    * ============================================================ */
-  // 势力配色采用「色温分国别 · 色相分势力」的双通道编码：中原诸势力一律暖色（红/橙/金/褐/品红，色相约 0~60° 与 320~350°），
-  // 战国诸势力一律冷色（青/蓝/靛/紫/墨绿，色相约 150~280°）——扫一眼色温即知中日，看具体色相才分家门。
-  // 城池徽章另在左缘保留 2px 国别竖条作为双保险（见 CSS .map-city::before），色弱或缩至最小时仍不会认错阵营。
+  // 势力配色：第四十五轮曾按「色温分国别」（中原一律暖色、战国一律冷色）配色，结果适得其反——
+  // 中原地图本身就叠了一层暗红色地形底色（.map-land.cn），战国叠的是暗蓝色（.map-land.jp），
+  // 十家中原势力全是红/橙/褐/品红，恰好与红色底色同色系、彼此也互相混淆到分不清；日本十家同理陷进蓝色里。
+  // 现改为反其道而行之：中原十家专挑红色底色不覆盖的色相（蓝/绿/青/紫/黄，避开 340°~20° 的红区），
+  // 战国十家专挑蓝色底色不覆盖的色相（红/橙/黄/绿/紫，避开 200°~260° 的蓝区）——用"与自家地形色相冲"
+  // 而非"与国别色相合"的方式配色，才能真正跳出底色。国别辨识改由城池徽章左缘 2px 竖条（CSS .map-city::before）
+  // 与城池所处的陆地板块（左中原/右战国，物理位置天然不会认错）承担，不再指望城池本身的填色去兼顾"报国别"。
   const FACTIONS = [
-    { id: "shuhan", n: "蜀汉", side: "cn", lord: "刘备", color: "#d6423c", cities: ["chengdu", "baidicheng"] },
-    { id: "zhanglu", n: "张鲁", side: "cn", lord: "张鲁", color: "#8b5e34", cities: ["hanzhong", "shangyong"] },
-    { id: "xiliang", n: "西凉", side: "cn", lord: "董卓", color: "#e8821c", cities: ["chang_an", "tianshui"] },
-    { id: "caowei", n: "曹魏", side: "cn", lord: "曹操", color: "#96234a", cities: ["xuchang", "wancheng", "hefei"] },
-    { id: "jin", n: "晋", side: "cn", lord: "司马懿", color: "#c9a227", cities: ["luoyang"] },
-    { id: "yuanshao", n: "袁绍", side: "cn", lord: "袁绍", color: "#a8479e", cities: ["ye"] },
-    { id: "yuanshu", n: "袁术", side: "cn", lord: "袁术", color: "#cf9a5c", cities: ["shouchun", "runan"] },
-    { id: "lvbu", n: "吕布", side: "cn", lord: "吕布", color: "#f2591f", cities: ["xuzhou", "xiapi"] },
-    { id: "jingzhou_f", n: "荆州", side: "cn", lord: "刘表", color: "#8f7b1f", cities: ["jingzhou", "jiangling"] },
-    { id: "dongwu", n: "东吴", side: "cn", lord: "孙权", color: "#d81b60", cities: ["chaisang", "jianye", "wuchang"] },
-    { id: "oda", n: "织田", side: "jp", lord: "织田信长", color: "#3949ab", cities: ["owari", "mino"] },
-    { id: "kyoto_f", n: "京都", side: "jp", lord: "足利义昭", color: "#7e57c2", cities: ["kyoto", "omi", "echizen"] },
-    { id: "toyotomi", n: "丰臣", side: "jp", lord: "丰臣秀吉", color: "#009688", cities: ["osaka", "bizen"] },
-    { id: "takeda", n: "武田", side: "jp", lord: "武田信玄", color: "#1e88e5", cities: ["kai"] },
-    { id: "tokugawa", n: "德川", side: "jp", lord: "德川家康", color: "#2e9e6b", cities: ["sunpu", "mikawa"] },
-    { id: "hojo", n: "北条", side: "jp", lord: "北条氏康", color: "#00acc1", cities: ["odawara", "hitachi"] },
-    { id: "uesugi", n: "上杉", side: "jp", lord: "上杉谦信", color: "#1a237e", cities: ["echigo", "kaga"] },
-    { id: "date", n: "伊达", side: "jp", lord: "伊达政宗", color: "#1b5e20", cities: ["oushu"] },
-    { id: "mori", n: "毛利", side: "jp", lord: "毛利元就", color: "#5e35b1", cities: ["aki", "izumo"] },
-    { id: "shimazu", n: "岛津", side: "jp", lord: "岛津义弘", color: "#0277bd", cities: ["satsuma", "higo", "bungo"] },
+    { id: "shuhan", n: "蜀汉", side: "cn", lord: "刘备", color: "#b17d2f", cities: ["chengdu", "baidicheng"] },
+    { id: "zhanglu", n: "张鲁", side: "cn", lord: "张鲁", color: "#a0b12f", cities: ["hanzhong", "shangyong"] },
+    { id: "xiliang", n: "西凉", side: "cn", lord: "董卓", color: "#5bb12f", cities: ["chang_an", "tianshui"] },
+    { id: "caowei", n: "曹魏", side: "cn", lord: "曹操", color: "#2fb149", cities: ["xuchang", "wancheng", "hefei"] },
+    { id: "jin", n: "晋", side: "cn", lord: "司马懿", color: "#2fb18f", cities: ["luoyang"] },
+    { id: "yuanshao", n: "袁绍", side: "cn", lord: "袁绍", color: "#2f8fb1", cities: ["ye"] },
+    { id: "yuanshu", n: "袁术", side: "cn", lord: "袁术", color: "#2f49b1", cities: ["shouchun", "runan"] },
+    { id: "lvbu", n: "吕布", side: "cn", lord: "吕布", color: "#5b2fb1", cities: ["xuzhou", "xiapi"] },
+    { id: "jingzhou_f", n: "荆州", side: "cn", lord: "刘表", color: "#a02fb1", cities: ["jingzhou", "jiangling"] },
+    { id: "dongwu", n: "东吴", side: "cn", lord: "孙权", color: "#b12f7d", cities: ["chaisang", "jianye", "wuchang"] },
+    { id: "oda", n: "织田", side: "jp", lord: "织田信长", color: "#7b2fb1", cities: ["owari", "mino"] },
+    { id: "kyoto_f", n: "京都", side: "jp", lord: "足利义昭", color: "#b12fa6", cities: ["kyoto", "omi", "echizen"] },
+    { id: "toyotomi", n: "丰臣", side: "jp", lord: "丰臣秀吉", color: "#b12f65", cities: ["osaka", "bizen"] },
+    { id: "takeda", n: "武田", side: "jp", lord: "武田信玄", color: "#b13a2f", cities: ["kai"] },
+    { id: "tokugawa", n: "德川", side: "jp", lord: "德川家康", color: "#b17b2f", cities: ["sunpu", "mikawa"] },
+    { id: "hojo", n: "北条", side: "jp", lord: "北条氏康", color: "#a6b12f", cities: ["odawara", "hitachi"] },
+    { id: "uesugi", n: "上杉", side: "jp", lord: "上杉谦信", color: "#65b12f", cities: ["echigo", "kaga"] },
+    { id: "date", n: "伊达", side: "jp", lord: "伊达政宗", color: "#2fb13a", cities: ["oushu"] },
+    { id: "mori", n: "毛利", side: "jp", lord: "毛利元就", color: "#2fb17b", cities: ["aki", "izumo"] },
+    { id: "shimazu", n: "岛津", side: "jp", lord: "岛津义弘", color: "#2fa6b1", cities: ["satsuma", "higo", "bungo"] },
     // 对马番所：仅为让海路中转站复用与陆地城池完全相同的归属机制而设的技术性占位，非真实势力，
     // 不参与势力一览/日常行动/威名军令等一切势力玩法（统一由 isRealFaction 过滤）
     { id: "tsushima_jp", n: "对马番所", side: "jp", lord: "—", color: "#7a7a7a", cities: ["tsushima"] },
@@ -5481,14 +5485,22 @@
     if (!fid) return `<span class="fac-chip"><i style="background:#6b6b6b"></i>在野</span>`;
     return `<span class="fac-chip"><i style="background:${factionColor(fid)}"></i>${factionName(fid)}</span>`;
   }
-  // 忠诚五档配色：赤诚/忠心/平常/离心/异心——比裸数字直观，且一眼看出谁挖得动
+  // 忠诚五档配色：赤诚/忠心/平常/离心/异心——比裸数字直观，且一眼看出谁挖得动。
+  // 刻意不用绿色系：忠诚展示大多落在武将详情弹窗（.bond-box，米黄色羊皮纸底），
+  // 高亮度的绿在这种暖色浅底上对比度极差、几乎读不出来；改用与全站既有 --cn-gold/--cn-red 呼应的
+  // 暖色渐变（金→棕→橙→红），在浅色纸面与全部武将表的深色表格两种场景下都保持可辨识
   const LOYALTY_TIERS = [
-    { min: 80, n: "赤诚", c: "#5ad66a" }, { min: 60, n: "忠心", c: "#9ccc65" },
-    { min: 40, n: "平常", c: "#e8c25a" }, { min: 20, n: "离心", c: "#ef8f3c" },
-    { min: -1, n: "异心", c: "#e05252" },
+    { min: 80, n: "赤诚", c: "#b8860b" }, { min: 60, n: "忠心", c: "#8a6d23" },
+    { min: 40, n: "平常", c: "#7a6a52" }, { min: 20, n: "离心", c: "#b5651d" },
+    { min: -1, n: "异心", c: "#c1272d" },
   ];
   function loyaltyTier(v) { return LOYALTY_TIERS.find(t => v >= t.min) || LOYALTY_TIERS[LOYALTY_TIERS.length - 1]; }
   function loyaltyHtml(v) { const t = loyaltyTier(v); return `<b style="color:${t.c}">${v}</b> <small style="color:${t.c}">${t.n}</small>`; }
+  // 主公即势力本身，无所谓"忠诚"可言——统一显示为"──"而非误导性的满分 100
+  function loyaltyCell(m, fid, gid) {
+    if (fid && isFactionLord(fid, gid)) return `<b style="color:var(--cn-gold)">──</b> <small style="color:var(--cn-gold)">主公</small>`;
+    return loyaltyHtml(Loyalty.get(m, gid));
+  }
   // 城池当前归属的势力 id（可随内战/边境战易主）；未记录时按开局初始势力兜底
   function cityFactionId(m, cityId) {
     if (m.cityFaction && m.cityFaction[cityId]) return m.cityFaction[cityId];
@@ -6216,18 +6228,14 @@
         + `自此个人名声化作本家威名（${FactionFame.get(m, "_player_")}）。与${oldDef.n}就此分道扬镳（并非永世为敌，${this.EX_LORD_COOLDOWN} 天后旧主怒气自然平息）。`);
       return true;
     },
-    // 俸禄：官至参军/侍大将起每日可向主公支一份俸禄，官越高俸禄越厚；自立门户后无处可支
+    // 俸禄：官至参军/侍大将起每日随宿营自动入账（不再需手动领取），官越高俸禄越厚；自立门户后无处可支
     STIPEND_BY_RANK: [0, 0, 10, 20, 40, 80, 160, 320, 640],
-    claimStipend(m) {
-      if (!m.playerFaction || m.playerFaction === "_player_") { toast("在野或自立门户，无处可领俸禄"); return false; }
+    dailyStipend(m) {
+      if (!m.playerFaction || m.playerFaction === "_player_") return "";
       const amt = this.STIPEND_BY_RANK[m.playerRank] || 0;
-      if (!amt) { toast("官职尚低，暂无俸禄"); return false; }
-      if (m.stipendDay === m.day) { toast("今日俸禄已领，明日再来"); return false; }
+      if (!amt) return "";
       const gold = Bond.addGold(amt);
-      m.stipendDay = m.day;
-      Campaign.save();
-      toast(`💰 领取俸禄 ${gold} 金（${this.rankName(m)}）`);
-      return true;
+      return gold ? `💰 领取俸禄 ${gold} 金（${this.rankName(m)}）` : "";
     },
   };
   /* ============================================================
@@ -6249,16 +6257,23 @@
       const resist = fid ? (FactionFame.get(m, fid) / 8000) * 0.2 : 0;
       return Math.max(0.05, Math.min(0.85, 0.15 + (fp / Bond.MAX_FRIEND) * 0.35 + ((100 - loy) / 100) * 0.35 + fameBonus - resist));
     },
-    PERSUADE_COST: 200,
+    // 招揽费用随目标身价浮动（评分×4，与 Bond.recruitCost 的评分×10 同一取值逻辑但打了六折——
+    // 招揽走的是忠诚/友谊/名声的暗中运作，不像明面招募入队那样要价那么足）；固定 200 金此前对高评分
+    // 名将而言形同白菜价，与其"总评分"毫无关系
+    persuadeCost(gid) {
+      const g = DB.get(gid);
+      return g ? ratingScore(Armory.geared(g, gid)) * 4 : 800;
+    },
     // 招揽成功：对方转投玩家现效力的势力（玩家在野则等同于策反其在野）；忠诚归零重算——新东家尚需时间收服人心
     persuade(m, gid) {
       const oldFid0 = m.generalFaction[gid];
       // 主公不可招揽（UI 已置灰，此处再兜一道，防止从其它入口绕过）——要一方之尊俯首，唯有灭其势力
       if (oldFid0 && isFactionLord(oldFid0, gid)) { toast(`「${DB.get(gid).name}」乃${factionName(oldFid0)}主公，岂是金帛可动——唯灭其势力，方能收其人`); return false; }
-      if (!Bond.spend(this.PERSUADE_COST)) { toast(`金币不足（招揽需 ${this.PERSUADE_COST} 金）`); return false; }
+      const cost = this.persuadeCost(gid);
+      if (!Bond.spend(cost)) { toast(`金币不足（招揽需 ${cost} 金）`); return false; }
       const g = DB.get(gid);
       const chance = this.persuadeChance(m, gid);
-      if (Math.random() >= chance) { toast(`「${g.name}」不为所动，招揽未果（耗资 ${this.PERSUADE_COST} 金，友谊不受影响）`); return false; }
+      if (Math.random() >= chance) { toast(`「${g.name}」不为所动，招揽未果（耗资 ${cost} 金，友谊不受影响）`); return false; }
       const oldFid = m.generalFaction[gid];
       const oldName = oldFid ? factionDef(oldFid).n : "在野";
       const newName = m.playerFaction ? factionDef(m.playerFaction).n : "在野";
@@ -6896,23 +6911,44 @@
         });
       const extinctNow = !factionCityCount(m, foe);
       push("war", fid, `⚔️ ${factionName(fid)}攻陷${cityName(pick.to)}，${factionName(foe)}${extinctNow ? "就此覆灭" : "退守余部"}`, foe);
-      if (extinctNow) this.onExtinct(m, foe, push);
+      if (extinctNow) { const msg = this.onExtinct(m, foe, fid); if (msg) push("people", fid, msg, foe); }
       return true;
     },
     /* ---- 势力覆灭善后：麾下武将尽数转为在野（而非效忠一个已不存在的势力），任天下各方延揽 ---- */
-    onExtinct(m, fid, push) {
+    // 势力覆灭善后：旧部不会凭空消失——一部分（35%）就地归降灭之者，其余心灰意冷散入民间转为在野，
+    // 任天下各方竞相延揽。不再一概判其"流散在野"，更近乎史实（败军之将，或降或走，鲜有真正凭空蒸发者）。
+    // winnerFid 缺省（如老档兼容路径）时全员转在野。返回一段播报文字，由调用方自行决定投递到夜报还是 toast——
+    // 本函数可能在 camp() 的夜报周期内（FactionAI.war）触发，也可能在玩家随时发起的出征（applyBorderWarOutcome）中触发。
+    SURRENDER_CHANCE: 0.35,
+    onExtinct(m, fid, winnerFid) {
       const orphans = factionGenerals(m, fid, false);
-      orphans.forEach(g => { m.generalFaction[g.id] = null; Loyalty.stripRewards(m, g.id); delete m.loyalty[g.id]; });
+      let surrendered = 0;
+      orphans.forEach(g => {
+        Loyalty.stripRewards(m, g.id);
+        if (winnerFid && isRealFaction(winnerFid) && winnerFid !== fid && Math.random() < this.SURRENDER_CHANCE) {
+          m.generalFaction[g.id] = winnerFid;
+          Loyalty.set(m, g.id, 45);   // 新附之人，忠诚从半信半疑起算
+          surrendered++;
+        } else {
+          m.generalFaction[g.id] = null;
+          if (m.loyalty) delete m.loyalty[g.id];
+        }
+      });
+      const scattered = orphans.length - surrendered;
       const named = orphans.filter(g => m.appeared.includes(g.id)).slice(0, 6).map(g => g.name).join("、");
+      let msg = "";
       if (orphans.length) {
-        push("people", fid, `🕊️ ${factionName(fid)}既灭，旧部 ${orphans.length} 人流散在野${named ? `（${named}…）` : ""}，天下各方正竞相延揽`);
+        msg = `🕊️ ${factionName(fid)}既灭——${surrendered ? `${surrendered} 人归降${factionName(winnerFid)}，` : ""}${scattered} 人心灰意冷，散入民间转投在野${named ? `（${named}…）` : ""}`;
       }
       // 玩家所属势力覆灭：自动转为在野，保留"故臣"身份记忆，名声受一次打击
       if (fid === m.playerFaction) {
+        const wasLord = fid === "_player_";
         m.playerFaction = null; m.playerRank = 0; m.playerMerit = 0; m.playerFief = null;
-        Campaign.addFame(-Math.round((m.fame || 0) * 0.2));
-        push("alert", fid, `💔 你所效力的${factionName(fid)}已然覆灭——自此你重归在野之身，名声亦受牵累。天下之大，何处不可去得。`);
+        m.fame = wasLord ? 0 : Math.max(0, Math.round((m.fame || 0) * 0.8));   // 自立的基业尽丧，声名归零；仕官期覆灭则折八成
+        Campaign.recalcApMax();
+        msg = (msg ? msg + "；" : "") + `💔 你所效力的${factionName(fid)}已然覆灭——自此你重归在野之身，名声亦受牵累。天下之大，何处不可去得。`;
       }
+      return msg;
     },
   };
   /* 全员武将成长（岁月修行 + 历战成长）：所有已现身武将都会随时间与战事缓慢变强——
@@ -7376,7 +7412,7 @@
           troops: {},
           // 势力（军事三期）：城池归属改记势力而非国别；玩家默认在野（浪人），后续可投效/自立；
           // 武将的初始效忠与忠诚由 initGeneralFactions 按史实/哈希兜底一次性生成
-          cityFaction: initCityFaction(), playerFaction: null, playerRank: 0, playerMerit: 0, playerOwnFaction: null, exLordUntil: {}, stipendDay: null,
+          cityFaction: initCityFaction(), playerFaction: null, playerRank: 0, playerMerit: 0, playerOwnFaction: null, exLordUntil: {},
           factionFame: FactionFame.init(), factionOrders: FactionOrders.init(), factionGold: FactionGold.init(),
           hostility: {}, posts: {}, fiefs: {}, sworn: [], factionWeary: {}, pendingCourt: null, playerFief: null,
           ...initGeneralFactions(),
@@ -7440,7 +7476,6 @@
       if (m.playerRank == null) { m.playerRank = 0; changed = true; }
       if (m.playerMerit == null) { m.playerMerit = 0; changed = true; }
       if (m.playerOwnFaction === undefined) { m.playerOwnFaction = null; changed = true; }
-      if (m.stipendDay === undefined) { m.stipendDay = null; changed = true; }
       if (!m.exLordUntil) { m.exLordUntil = {}; changed = true; }
       // 势力系统二轮新增字段：威名/军令/金库/敌对度/封赏（官职·封地·结义）/出征疲敝
       if (!m.factionFame) { m.factionFame = FactionFame.init(); changed = true; }
@@ -7897,21 +7932,39 @@
         </div>
       </div>`;
     },
+    // 官职/势力/功勋这行文字——在野、仕官、自立三种身份各自的措辞
+    identityLine(m) {
+      const fid = m.playerFaction;
+      if (!fid) return `🚩 ${PlayerRank.rankName(m)}`;
+      if (fid === "_player_") return `🚩 ${PlayerRank.rankName(m)}`;
+      const next = PlayerRank.nextNeed(m);
+      return `🚩 ${PlayerRank.rankName(m)}·${factionDef(fid).n}　功勋 ${m.playerMerit || 0}${next ? `/${next.need}` : "（顶阶）"}`;
+    },
+    // 身份对应的行动入口：在野→投效，仕官→自立门户，自立→人事（原「身份」面板的展示部分现已并入本卡片，
+    // 只剩「需要发起的动作」还留一个按钮，且按身份切换措辞与去处，不再是一个万年不变的「🏯 身份」）
+    identityActionBtnHtml(m) {
+      const fid = m.playerFaction;
+      if (!fid) return `<button class="cup-go" id="map-join">🏯 投效</button>`;
+      if (fid === "_player_") return `<button class="cup-go" id="map-personnel">👑 人事</button>`;
+      return `<button class="cup-go" id="map-indep">⚔️ 自立门户</button>`;
+    },
     heroCardHtml(m) {
       const c = RPG.char, hg = RPG.heroGeneral();
+      const fid = m.playerFaction;
       return `<div class="map-hero-card ${c.side}">
         <div class="mh-av">${avatarChar(c.name)}</div>
         <div class="mh-meta">
           <div class="mh-name">${c.name}</div>
           <div class="mh-sub">Lv.${c.level} · ${ratingChip(hg)}</div>
+          <div class="mh-stats">⚡<b>${m.ap}</b>/${m.apMax} · 💰<b>${Bond.gold()}</b>${fid ? ` · 📜<b>${FactionOrders.get(m, fid)}</b>/${FactionOrders.cap(m, fid)}` : ""}</div>
         </div>
         <div class="mh-action-col">
           <div class="mh-fame">${Campaign.isLordMode(m)
             ? `🏯 ${FactionFame.tierName(FactionFame.get(m, "_player_"))}（${FactionFame.get(m, "_player_")}）`
             : `⭐ ${Campaign.fameLabel(m.fame || 0)}`}</div>
-          <div class="mh-fame">🚩 ${PlayerRank.rankName(m)}${m.playerFaction && m.playerFaction !== "_player_" ? `·${factionDef(m.playerFaction).n}` : ""}</div>
+          <div class="mh-fame">${this.identityLine(m)}</div>
           <button class="cup-go" id="map-char">🎭 角色详情</button>
-          <button class="cup-go" id="map-identity">🏯 身份</button>
+          ${this.identityActionBtnHtml(m)}
         </div>
       </div>`;
     },
@@ -7988,9 +8041,6 @@
         : `<div class="mc-owner">🚩 ${facChip(curFid)}<span class="mc-lord">主公 · ${factionLordName(curFid)}</span>${curFid === m.playerFaction ? '<span class="mc-mine">本势力</span>' : ""}${curFacDef ? `<span class="mc-natl ${curFacDef.side}">${sideName(curFacDef.side)}</span>` : ""}</div>`;
       return `<div class="mc-head">
           <span>📍 ${c.n} <small style="color:var(--cn-gold);letter-spacing:1px">${Prosper.stars(m, m.curCity)}</small>${isSea ? '<small>海路中转站</small>' : ''}</span>
-          <span class="mc-head-stats">⚡<b>${m.ap}</b>/${m.apMax} · 💰<b>${Bond.gold()}</b>${m.playerFaction
-            ? ` · 📜<b>${FactionOrders.get(m, m.playerFaction)}</b>/${FactionOrders.cap(m, m.playerFaction)}`
-            : ""}</span>
         </div>
         ${ownLine}
         <div class="menu map-menu map-menu-free">
@@ -8087,7 +8137,9 @@
       const rescueBtn = $("#map-rescue"); if (rescueBtn) rescueBtn.onclick = () => this.openRescue();
       const campBtn = $("#map-camp"); if (campBtn) campBtn.onclick = () => this.camp();
       const charBtn = $("#map-char"); if (charBtn) charBtn.onclick = () => RPG.open();
-      const idBtn = $("#map-identity"); if (idBtn) idBtn.onclick = () => this.openIdentity();
+      const joinBtn = $("#map-join"); if (joinBtn) joinBtn.onclick = () => this.openJoin();
+      const personnelBtn = $("#map-personnel"); if (personnelBtn) personnelBtn.onclick = () => this.openPersonnel();
+      const indepBtn2 = $("#map-indep"); if (indepBtn2) indepBtn2.onclick = () => this.tryDeclareIndependence();
       // 图例只切换自身 class，不整体重渲染——避免展开/收起时地图缩放态被重置
       const flBtn = $("#fl-toggle"); if (flBtn) flBtn.onclick = () => { MapLegendOpen = !MapLegendOpen; const el = $("#map-legend"); if (el) el.classList.toggle("open", MapLegendOpen); };
       const nemBtn = $("#map-nemesis"); if (nemBtn) nemBtn.onclick = () => { if (spendAP()) Nemesis.duel(m); };
@@ -8465,71 +8517,33 @@
       $("#grs-close").onclick = () => { closeOverlay(); this.render(); };
     },
     /* ---- 身份面板：查看官职/功勋进度，投效/领俸禄/自立门户的唯一入口 ---- */
-    openIdentity() {
+    // 在野浪人的投效入口（原「身份」面板在野分支）：概况类信息（官职/功勋/俸禄）已移至左侧角色卡常驻展示，
+    // 这里只保留需要玩家主动决定的事——响应诸侯征辟，或亲自择一势力投效
+    openJoin() {
       const m = Campaign.mapState();
-      const fid = m.playerFaction;
-      let body = "";
-      if (!fid) {
-        const facs = FACTIONS.filter(f => f.side === RPG.char.side && f.cities.length);
-        // 诸侯征辟：有势力遣使来聘时，置于最前——接受可直接出仕（另有见面礼），婉拒则对方好感受挫
-        const court = m.pendingCourt && factionDef(m.pendingCourt.fid) && !PlayerRank.exLordHostile(m, m.pendingCourt.fid)
-          ? m.pendingCourt : null;
-        body = (court ? `<div class="wdesc" style="border:1px solid var(--cn-gold);border-radius:10px;padding:10px 12px;background:rgba(232,194,90,.12)">
+      const facs = FACTIONS.filter(f => f.side === RPG.char.side && f.cities.length);
+      const court = m.pendingCourt && factionDef(m.pendingCourt.fid) && !PlayerRank.exLordHostile(m, m.pendingCourt.fid)
+        ? m.pendingCourt : null;
+      const body = (court ? `<div class="wdesc" style="border:1px solid var(--cn-gold);border-radius:10px;padding:10px 12px;background:rgba(232,194,90,.12)">
             📜 <b>${factionName(court.fid)}</b>遣使来聘（主公 · ${factionLordName(court.fid)}），请你出仕辅佐。<br>
             <small>接受即拜为门客，另赠见面礼 500 金；婉拒则其好感受挫，日后再投未必顺遂。</small>
             <div class="btns" style="margin-top:8px">
               <button class="btn-primary" id="id-court-yes">🤝 应聘出仕</button>
               <button class="btn-ghost" id="id-court-no">🙅 婉言谢绝</button>
             </div></div>` : "")
-          + `<div class="wdesc">当前身份：<b>在野浪人</b>——不效力任何势力，自由游历。可随时投效麾下一方，累积功勋以晋升官职。</div>
+        + `<div class="wdesc">当前身份：<b>在野浪人</b>——不效力任何势力，自由游历。可随时投效麾下一方，累积功勋以晋升官职。</div>
           <div class="grid">${facs.map(f => {
             const hostile = PlayerRank.exLordHostile(m, f.id);
             return `<div class="card ${f.side} id-fac ${hostile ? "disabled" : ""}" data-f="${f.id}"><div class="avatar">${f.n.slice(0, 1)}</div><div class="cname">${f.n}</div><div class="cwu">主公 · ${f.lord}</div>${hostile ? `<div class="cwu">（旧怨未消，${m.exLordUntil[f.id] - m.day} 天后可投）</div>` : ""}</div>`;
           }).join("")}</div>`;
-      } else if (fid === "_player_") {
-        // 自立之后，「身份」面板升级为主公府：威名/军令/金库一览，并可动用四类封赏笼络麾下
-        const own = m.playerOwnFaction;
-        const fame = FactionFame.get(m, "_player_"), orders = FactionOrders.get(m, "_player_");
-        const cap = FactionOrders.cap(m, "_player_"), gold = FactionGold.get(m, "_player_");
-        const cities = factionCityCount(m, "_player_");
-        const gens = factionGenerals(m, "_player_", true);
-        const slots = Rewards.postSlots(m, "_player_"), used = Rewards.postsHeldBy(m, "_player_").length;
-        const swornN = Rewards.swornOf(m, "_player_").length;
-        body = `<div class="wdesc">当主自立 · 建「<b>${own.n}</b>」<br>
-          🏯 威名 <b style="color:var(--cn-gold)">${fame}</b>（${FactionFame.tierName(fame)}） · 📜 军令 <b>${orders}</b>/${cap} · 💰 府库 <b>${gold.toLocaleString()}</b><br>
-          🗺️ 城池 <b>${cities}</b> 座 · 🎖️ 麾下 <b>${gens.length}</b> 将 · 官位 ${used}/${slots} · 结义 ${swornN}/${Rewards.SWORN_MAX}
-          <br><small>军令每日按威名回复，出征与封赏皆需之。赏赐一概不用金帛——买得来兵，买不来人心。</small></div>
-          <div class="menu">
-            ${this.lordActBtn(m, "post", "🎖️", "封官", `${used}/${slots} 席 · 忠诚上限 +10~20`)}
-            ${this.lordActBtn(m, "fief", "🏯", "封地", `余 ${Rewards.freeFiefCities(m, "_player_").length} 城可封 · 忠诚上限 +15`)}
-            ${this.lordActBtn(m, "sworn", "🤝", "结义", `${swornN}/${Rewards.SWORN_MAX} · 需友谊 ≥${Rewards.SWORN_BOND_MIN} · 免疫策反`)}
-            ${this.lordActBtn(m, "feast", "🍶", "庆功宴", `全军忠诚 +3`)}
-          </div>`;
-      } else {
-        const f = factionDef(fid);
-        const next = PlayerRank.nextNeed(m);
-        const canIndep = PlayerRank.canDeclareIndependence(m);
-        const stipendAmt = PlayerRank.STIPEND_BY_RANK[m.playerRank] || 0;
-        const stipendDisabled = !stipendAmt || m.stipendDay === m.day;
-        const orders = FactionOrders.get(m, fid);
-        body = `<div class="wdesc">现效力于：${facChip(fid)}（主公 · ${f.lord}）<br>官职：<b>${PlayerRank.rankName(m)}</b>　功勋 <b>${m.playerMerit || 0}</b>${next ? ` / 距「${next.n}」尚需 ${next.need} 功勋` : "（已至顶阶）"}
-          ${m.playerFief ? `<br>🏯 食邑：<b>${cityName(m.playerFief)}</b>（主公所赐）` : ""}
-          <br>📜 本势力军令 <b>${orders}</b>/${FactionOrders.cap(m, fid)}（出征需 ${MapUI.SORTIE_ORDERS} 道）
-          <br><small>功勋来自完成悬赏、随军攻城与主动出征。</small></div>
-          <div class="btns">
-            <button class="btn-primary" id="id-stipend" ${stipendDisabled ? "disabled" : ""}>💰 领取俸禄${stipendAmt ? `（${stipendAmt} 金）` : ""}${m.stipendDay === m.day ? "（今日已领）" : ""}</button>
-            ${canIndep ? `<button class="btn-ghost" id="id-indep">⚔️ 自立门户</button>` : ""}
-          </div>`;
-      }
       openOverlay(`<div class="result-card detail-card">
-        <h1>${fid === "_player_" ? "👑 主公府" : "🏯 身份 · 功勋"}</h1>
+        <h1>🏯 投效</h1>
         ${body}
         <div class="btns"><button class="btn-ghost" id="id-close">离开</button></div>
       </div>`);
-      $$(".lord-act").forEach(b => b.onclick = () => this.openLordAction(b.dataset.a));
       $$(".id-fac").forEach(el => el.onclick = () => {
         if (el.classList.contains("disabled")) return;
-        if (PlayerRank.join(m, el.dataset.f)) { this.render(); this.openIdentity(); }
+        if (PlayerRank.join(m, el.dataset.f)) { this.render(); this.openJoin(); }
       });
       const courtYes = $("#id-court-yes");
       if (courtYes) courtYes.onclick = () => {
@@ -8538,7 +8552,7 @@
         if (PlayerRank.join(m, cf)) {
           const gold = Bond.addGold(500);
           toast(`🎁 ${factionName(cf)}以见面礼 ${gold} 金相赠，自此你便是其门下之人`);
-          this.render(); this.openIdentity();
+          this.render(); this.openJoin();
         }
       };
       const courtNo = $("#id-court-no");
@@ -8548,14 +8562,54 @@
         FactionAI.addHostility(m, cf, "_none_", 0);   // 不结仇，仅记一次冷淡
         Campaign.save();
         toast(`🙅 你婉谢了${factionName(cf)}的征辟——来日方长`);
-        this.openIdentity();
+        this.openJoin();
       };
-      const stipendBtn = $("#id-stipend"); if (stipendBtn) stipendBtn.onclick = () => { PlayerRank.claimStipend(m); this.render(); this.openIdentity(); };
-      const indepBtn = $("#id-indep"); if (indepBtn) indepBtn.onclick = () => {
-        if (confirm(`自立门户将脱离现主公，损失约 15% 名声，且短期内无法重投旧主，此后不可撤销。确定自立吗？`)) {
-          if (PlayerRank.declareIndependence(m)) { this.render(); closeOverlay(); }
-        }
-      };
+      $("#id-close").onclick = () => { closeOverlay(); this.render(); };
+    },
+    // 自立门户：直接判定资格并给出说明（而非把按钮悄悄藏起来让人摸不着头脑），符合条件才弹出确认框——
+    // 与 lordActBtn 系列同一 UX 原则：能点、点了就有交代
+    tryDeclareIndependence() {
+      const m = Campaign.mapState();
+      if (m.playerRank < PlayerRank.INDEPENDENCE_RANK) {
+        toast(`官职尚浅（现「${PlayerRank.rankName(m)}」），须至「${PlayerRank.rankLabel(PlayerRank.INDEPENDENCE_RANK)}」以上方可自立`);
+        return;
+      }
+      if ((m.fame || 0) < PlayerRank.INDEPENDENCE_FAME_MIN) {
+        toast(`声望不足（现 ${m.fame || 0}，需 ${PlayerRank.INDEPENDENCE_FAME_MIN}）`);
+        return;
+      }
+      if (!isMyCity(m, m.curCity)) {
+        toast(`须身处本势力城池，方可昭告自立`);
+        return;
+      }
+      if (confirm(`自立门户将脱离现主公，损失约 15% 名声，且短期内无法重投旧主，此后不可撤销。确定自立吗？`)) {
+        if (PlayerRank.declareIndependence(m)) this.render();
+      }
+    },
+    // 主公府 · 人事：自立之后原「身份」面板升级而来，只保留四类封赏动作——概况数字（威名/军令/金库/城池/麾下）
+    // 仍留在这里（信息量偏细，不适合塞进寸土寸金的角色卡），但角色卡已展示威名/官职这两条最要紧的
+    openPersonnel() {
+      const m = Campaign.mapState();
+      const fid = "_player_";
+      const own = m.playerOwnFaction;
+      const orders = FactionOrders.get(m, fid), cap = FactionOrders.cap(m, fid), gold = FactionGold.get(m, fid);
+      const cities = factionCityCount(m, fid);
+      const gens = factionGenerals(m, fid, true);
+      const slots = Rewards.postSlots(m, fid), used = Rewards.postsHeldBy(m, fid).length;
+      const swornN = Rewards.swornOf(m, fid).length;
+      openOverlay(`<div class="result-card detail-card">
+        <h1>👑 人事 · ${own.n}</h1>
+        <div class="wdesc">📜 军令 <b>${orders}</b>/${cap} · 💰 府库 <b>${gold.toLocaleString()}</b> · 🗺️ 城池 <b>${cities}</b> 座 · 🎖️ 麾下 <b>${gens.length}</b> 将 · 官位 ${used}/${slots} · 结义 ${swornN}/${Rewards.SWORN_MAX}
+          <br><small>军令每日按威名回复，出征与封赏皆需之。赏赐一概不用金帛——买得来兵，买不来人心。</small></div>
+        <div class="menu">
+          ${this.lordActBtn(m, "post", "🎖️", "封官", `${used}/${slots} 席 · 忠诚上限 +10~20`)}
+          ${this.lordActBtn(m, "fief", "🏯", "封地", `余 ${Rewards.freeFiefCities(m, fid).length} 城可封 · 忠诚上限 +15`)}
+          ${this.lordActBtn(m, "sworn", "🤝", "结义", `${swornN}/${Rewards.SWORN_MAX} · 需友谊 ≥${Rewards.SWORN_BOND_MIN} · 免疫策反`)}
+          ${this.lordActBtn(m, "feast", "🍶", "庆功宴", `全军忠诚 +3`)}
+        </div>
+        <div class="btns"><button class="btn-ghost" id="id-close">离开</button></div>
+      </div>`);
+      $$(".lord-act").forEach(b => b.onclick = () => this.openLordAction(b.dataset.a));
       $("#id-close").onclick = () => { closeOverlay(); this.render(); };
     },
     /* ---- 主公封赏：封官 / 封地 / 结义 / 庆功宴（皆耗军令，绝不用金币） ----
@@ -8580,7 +8634,7 @@
         return;
       }
       const back = `<div class="btns"><button class="btn-ghost" id="la-back">返回</button></div>`;
-      const bind = () => { $("#la-back").onclick = () => this.openIdentity(); };
+      const bind = () => { $("#la-back").onclick = () => this.openPersonnel(); };
       const gens = factionGenerals(m, fid, true).sort((a, b) => ratingScore(Armory.geared(b, b.id)) - ratingScore(Armory.geared(a, a.id)));
       const row = (g, extra) => `<button class="menu-btn la-pick" data-id="${g.id}"><span class="mi">🎖️</span><span>${g.name}<small>评分 ${ratingScore(Armory.geared(g, g.id))} · 忠诚 ${Loyalty.get(m, g.id)}（上限 ${Loyalty.softCap(m, g.id)}）${extra || ""}</small></span></button>`;
 
@@ -8589,7 +8643,7 @@
         const n = Rewards.feast(m, fid);
         Campaign.save();
         toast(n ? `🍶 大宴群臣，麾下 ${n} 将同沐恩泽，忠诚各 +3` : "麾下暂无可赏之人");
-        this.openIdentity();
+        this.openPersonnel();
         return;
       }
       if (kind === "post") {
@@ -8611,7 +8665,7 @@
           Rewards.grantPost(m, fid, gid, kindK);
           Campaign.save();
           toast(`🎖️ 拜 ${DB.get(gid).name} 为${Rewards.postName(kindK, side)}，其心愈固`);
-          this.openIdentity();
+          this.openPersonnel();
         });
         return;
       }
@@ -8642,7 +8696,7 @@
             Rewards.grantFief(m, fid, cb.dataset.c, gid);
             Campaign.save();
             toast(`🏯 以${cityName(cb.dataset.c)}封 ${DB.get(gid).name} 为食邑`);
-            this.openIdentity();
+            this.openPersonnel();
           });
         });
         return;
@@ -8665,7 +8719,7 @@
           Rewards.addSworn(m, gid);
           Campaign.save();
           toast(`🤝 与 ${DB.get(gid).name} 义结金兰，自此生死与共`);
-          this.openIdentity();
+          this.openPersonnel();
         });
       }
     },
@@ -9038,6 +9092,7 @@
       // 天下诸侯的日常行动（营建/征兵/通商/购置/招揽/计谋/出征），已收编旧 AIDev/WorldWar/AIGear 三模块
       const facNews = FactionAI.tick(m);
       Object.keys(facNews).forEach(cat => NightReport.addAll(cat, facNews[cat]));
+      NightReport.add("mine", PlayerRank.dailyStipend(m));   // 官至参军以上，俸禄随宿营自动入账，不再需手动领取
       NightReport.add("alert", Nemesis.campEvent(m));  // 宿敌主动寻衅：拦路挑战 / 抢先夺赏 / 踏营下战书（三选一，小概率）
       NightReport.addAll("grow", Growth.tick(m));      // 岁月修行：随机武将闭关精进（评分越低概率越高）
       if (isMonthEnd(m.day)) NightReport.addAll("people", Loyalty.monthlyTick(m));   // 忠诚随势力盛衰月度浮动，过低小概率叛逃
@@ -9116,12 +9171,17 @@
      * 这也让"保留中日两国概念"这条立意重新有了专属的承载物。 */
     checkBorderWar(m) {
       const heroCountry = RPG.char.side;
+      // 跨国边境全部经由对马番所（tsushima_jp/tsushima_cn）中转——这两个番所是纯技术性占位势力，
+      // 从不分配任何真实武将（initGeneralFactions 的城池池只取陆地城市），若沿用"两端都须有已现身武将"
+      // 的旧判据，番所一侧永远交不出白卷，导致月末国战从此再也凑不出一条候选边——只放宽番所一侧的武将要求，
+      // 大陆一侧仍须确有已现身武将，避免打一场双方都没人的空仗
       const edges = borderEdges(m).filter(([a, b]) => {
         const fa = cityFactionId(m, a), fb = cityFactionId(m, b);
         const da = factionDef(fa), db = factionDef(fb);
         if (!da || !db || da.side === db.side) return false;   // 只取跨国边境
-        return DB.list.some(g => m.generalFaction[g.id] === fa && m.appeared.includes(g.id))
-          && DB.list.some(g => m.generalFaction[g.id] === fb && m.appeared.includes(g.id));
+        const aOk = DUMMY_FACTIONS.includes(fa) || DB.list.some(g => m.generalFaction[g.id] === fa && m.appeared.includes(g.id));
+        const bOk = DUMMY_FACTIONS.includes(fb) || DB.list.some(g => m.generalFaction[g.id] === fb && m.appeared.includes(g.id));
+        return aOk && bOk;
       });
       if (!edges.length) return false;
       const mine = m.playerFaction ? edges.filter(([a, b]) => cityFactionId(m, a) === m.playerFaction || cityFactionId(m, b) === m.playerFaction) : [];
@@ -9294,6 +9354,13 @@
           const opts = adjCities(capturedCity).filter(id => cityFactionId(m, id) === loserFaction);
           if (opts.length) Garrison.add(m, opts[randInt(0, opts.length - 1)], troops.loser);
         }
+      }
+      // 此役若恰好夺走败方最后一城，败方就此覆灭——旧部按 FactionAI.onExtinct 的规则或降或散，
+      // 不会仍挂在一个已不存在的势力名下形同"消失"（此前只有 FactionAI 日常出征会触发覆灭善后，
+      // 玩家亲手（月末国战/主动出征）灭掉一家势力却完全没有走到这一步，是明显遗漏）
+      if (!factionCityCount(m, loserFaction)) {
+        const msg = FactionAI.onExtinct(m, loserFaction, winnerFaction);
+        if (msg) toast(msg);
       }
       Campaign.save();
       return capturedCity;
@@ -9711,7 +9778,7 @@
         return `<tr data-id="${g.id}"${fid && fid === m.playerFaction ? ' class="row-mine"' : ""}>
           <td class="dt-name ${g.side}"><span class="dt-dot"></span>${g.name}${lordMark}</td>
           <td class="allgen-city">${fid ? facChip(fid) : '<span style="color:#8d8578">在野</span>'}</td>
-          <td class="num">${fid ? loyaltyHtml(Loyalty.get(m, g.id)) : "—"}</td>
+          <td class="num">${fid ? loyaltyCell(m, fid, g.id) : "—"}</td>
           ${cells}
           <td class="dt-total">${ratingScore(hg)}</td>
           <td class="dt-grade">${ratingChip(hg)}</td>
@@ -9928,7 +9995,7 @@
       const r = this.rowData(m, fid);
       const top = factionGenerals(m, fid, true)
         .sort((a, b) => ratingScore(Armory.geared(b, b.id)) - ratingScore(Armory.geared(a, a.id))).slice(0, 10)
-        .map(g => `<span class="dt-name ${g.side}" style="margin-right:8px">${g.name}${isFactionLord(fid, g.id) ? "👑" : ""}<small style="color:${loyaltyTier(Loyalty.get(m, g.id)).c}">${Loyalty.get(m, g.id)}</small></span>`).join("") || "暂无现身武将";
+        .map(g => `<span class="dt-name ${g.side}" style="margin-right:8px">${g.name}${isFactionLord(fid, g.id) ? "👑" : ""} ${loyaltyCell(m, fid, g.id)}</span>`).join("") || "暂无现身武将";
       // 接壤势力：由边境线反查，天然反映当前版图而非初始版图
       const neigh = new Set();
       borderEdges(m).forEach(([a, b]) => {

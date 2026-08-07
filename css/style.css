@@ -1066,7 +1066,9 @@ html, body {
 .map-city.mine { box-shadow: 0 0 0 1.5px rgba(232,194,90,.85); }
 .map-city.cur { box-shadow: 0 0 0 1.5px var(--cn-gold), 0 0 9px rgba(232,194,90,.95); z-index: 3; }
 .map-city.cur .mcity-name { color: var(--cn-gold); font-size: 8px; }
-.map-city.adj { box-shadow: 0 0 0 1.5px #5ad66a, 0 0 7px rgba(90,214,106,.85); z-index: 2; }
+/* 相邻可达城池：改用中性白光圈，不再用绿色勾边——势力配色已经很挤，绿线只会再添一层混淆，
+   白色不属于任何势力/国别的既有配色体系，在红/蓝两块地形底色上都能保持清晰的"这城可去"信号 */
+.map-city.adj { box-shadow: 0 0 0 1.5px rgba(255,255,255,.92), 0 0 6px rgba(255,255,255,.7); z-index: 2; }
 .map-city.far { opacity: .55; }
 
 /* 宿营夜报：撑满可视高度、内部滚动、按类别分节全量播报 */
@@ -1140,6 +1142,9 @@ html, body {
 .mh-meta { flex: 1; min-width: 0; }
 .mh-name { font-size: 18px; font-weight: 800; color: var(--paper); letter-spacing: 1px; }
 .mh-sub { font-size: 13px; color: #c9b890; margin-top: 3px; }
+/* 金币/行动力/军令：原本挤在城池面板顶部的三项状态，现移到自选武将区域随角色信息一起展示 */
+.mh-stats { font-size: 13px; color: var(--paper); margin-top: 4px; white-space: nowrap; }
+.mh-stats b { color: var(--cn-gold); }
 .mh-action-col { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
 .mh-fame { font-size: 13px; color: var(--cn-gold); white-space: nowrap; }
 .map-hero-card .cup-go { flex: 0 0 auto; padding: 10px 14px; font-size: 14px; }
