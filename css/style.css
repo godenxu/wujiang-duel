@@ -1063,12 +1063,13 @@ html, body {
 .map-city.jp { --natl: #7a90ff; }
 .map-city.sea { --natl: #bebebe; }
 .mcity-name { font-size: 6px; font-weight: 700; color: #fff; white-space: nowrap; line-height: 1.4; text-shadow: 0 1px 2px #000; position: relative; }
-.map-city.mine { box-shadow: 0 0 0 1.5px rgba(232,194,90,.85); }
-.map-city.cur { box-shadow: 0 0 0 1.5px var(--cn-gold), 0 0 9px rgba(232,194,90,.95); z-index: 3; }
+/* 所在城池/势力城池：金色勾边收细并淡化辉光，作低调精致的身份标记，不再抢占势力底色的可辨度 */
+.map-city.mine { box-shadow: 0 0 0 1px rgba(232,194,90,.75); }
+.map-city.cur { box-shadow: 0 0 0 1px var(--cn-gold), 0 0 4px rgba(232,194,90,.65); z-index: 3; }
 .map-city.cur .mcity-name { color: var(--cn-gold); font-size: 8px; }
-/* 相邻可达城池：改用中性白光圈，不再用绿色勾边——势力配色已经很挤，绿线只会再添一层混淆，
-   白色不属于任何势力/国别的既有配色体系，在红/蓝两块地形底色上都能保持清晰的"这城可去"信号 */
-.map-city.adj { box-shadow: 0 0 0 1.5px rgba(255,255,255,.92), 0 0 6px rgba(255,255,255,.7); z-index: 2; }
+/* 相邻可达城池：不再用勾边光圈标注——势力配色本已够挤，额外的一圈色只添混淆；
+   "可去"信号改由点击后的目标城市列表/操作面板承担，地图上只保留 z-index 让其略压在远城之上 */
+.map-city.adj { z-index: 2; }
 .map-city.far { opacity: .55; }
 
 /* 宿营夜报：撑满可视高度、内部滚动、按类别分节全量播报 */
@@ -1142,12 +1143,17 @@ html, body {
 .mh-meta { flex: 1; min-width: 0; }
 .mh-name { font-size: 18px; font-weight: 800; color: var(--paper); letter-spacing: 1px; }
 .mh-sub { font-size: 13px; color: #c9b890; margin-top: 3px; }
-/* 金币/行动力/军令：原本挤在城池面板顶部的三项状态，现移到自选武将区域随角色信息一起展示 */
-.mh-stats { font-size: 13px; color: var(--paper); margin-top: 4px; white-space: nowrap; }
-.mh-stats b { color: var(--cn-gold); }
 .mh-action-col { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
-.mh-fame { font-size: 13px; color: var(--cn-gold); white-space: nowrap; }
 .map-hero-card .cup-go { flex: 0 0 auto; padding: 10px 14px; font-size: 14px; }
+/* 自选武将卡：按信息类别纵向分行展示（身份/声望/官职/资源/操作），与宿敌卡的横向单行布局区分开 */
+.map-hero-card.hero-stack { flex-direction: column; align-items: stretch; gap: 6px; }
+.map-hero-card.hero-stack .mh-top { display: flex; align-items: center; gap: 12px; }
+.mh-id { flex: 1; min-width: 0; }
+.mh-line { font-size: 13px; color: #c9b890; line-height: 1.5; }
+.mh-res { font-size: 13px; color: var(--paper); line-height: 1.5; }
+.mh-res b { color: var(--cn-gold); }
+.mh-btns { display: flex; gap: 8px; margin-top: 2px; }
+.mh-btns .cup-go { flex: 1; padding: 10px 14px; font-size: 14px; }
 
 /* 城池面板：主标题、行动卡（复用 menu/menu-btn 全站按钮）、悬赏、名录 */
 .map-city-panel { flex: 0 0 auto; padding: 4px 12px 16px; }

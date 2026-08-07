@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608072122";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608072308";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -2423,6 +2423,7 @@
     alive(g) { return !this.dead.has(g.id); },
     // 全军智谋均值折算军令道数（约 2~6 道）
     calcOrders(arr) {
+      if (!arr.length) return 2;   // 无兵无将的一方（如空虚的对马番所）军令按下限计，避免 0/0 除出 NaN
       const avg = arr.reduce((s, g) => s + g.zhi, 0) / arr.length;
       return Math.max(2, Math.min(6, Math.round((avg - 30) / 12)));
     },
@@ -2535,7 +2536,9 @@
           <div class="fb-slot fb-slot-${k}"><span class="fb-pos-lbl">${n}</span>
             ${this.myPos[k].map((g, i) => this.chip(g, k, i, this.swapSel && this.swapSel.pos === k && this.swapSel.idx === i)).join("")}
           </div>`).join("")}</div>
-        <div class="fb-sect">敌将共 ${this.foes.length} 员，为首者 ${this.foes.slice().sort((a, b) => b.wu - a.wu)[0].name}</div>
+        <div class="fb-sect">${this.foes.length
+          ? `敌将共 ${this.foes.length} 员，为首者 ${this.foes.slice().sort((a, b) => b.wu - a.wu)[0].name}`
+          : "敌军城中空虚，未见一兵一将——此行形同不战而胜"}</div>
         <div class="cup-start-btns" style="margin-top:10px"><button class="cup-go primary" id="fb-go">🥁 擂鼓 · 两军对圆</button></div>`;
       $$(".fb-form").forEach(b => b.onclick = () => { this.myForm = b.dataset.form; this.renderDeploy(); });
       const scout = $("#fb-scout");
@@ -5417,7 +5420,7 @@
     { id: "zhanglu", n: "张鲁", side: "cn", lord: "张鲁", color: "#a0b12f", cities: ["hanzhong", "shangyong"] },
     { id: "xiliang", n: "西凉", side: "cn", lord: "董卓", color: "#5bb12f", cities: ["chang_an", "tianshui"] },
     { id: "caowei", n: "曹魏", side: "cn", lord: "曹操", color: "#2fb149", cities: ["xuchang", "wancheng", "hefei"] },
-    { id: "jin", n: "晋", side: "cn", lord: "司马懿", color: "#2fb18f", cities: ["luoyang"] },
+    { id: "jin", n: "司马", side: "cn", lord: "司马懿", color: "#2fb18f", cities: ["luoyang"] },
     { id: "yuanshao", n: "袁绍", side: "cn", lord: "袁绍", color: "#2f8fb1", cities: ["ye"] },
     { id: "yuanshu", n: "袁术", side: "cn", lord: "袁术", color: "#2f49b1", cities: ["shouchun", "runan"] },
     { id: "lvbu", n: "吕布", side: "cn", lord: "吕布", color: "#5b2fb1", cities: ["xuzhou", "xiapi"] },
@@ -5598,7 +5601,10 @@
   const PROSPER_INIT_LOW = ["baidicheng", "shangyong", "oushu", "higo", "hitachi"];
   const Prosper = {
     MAX: 5,
-    STEP: 5,   // 每积 5 点繁荣升 1 星
+    // 原先不论星级一律"每积 5 点升 1 星"，各势力每日营建又能稳定进账，导致不到一年满城五星繁荣；
+    // 改为按目标星级递增门槛——初段升星依旧顺畅保留成长感，冲顶两星门槛陡增，遏制"全图速满星"
+    STEP_BY_LV: [6, 10, 16, 26],   // 升至 2/3/4/5 星所需累计点数（下标 = 当前星级-1）
+    step(lv) { return this.STEP_BY_LV[lv - 1] ?? this.STEP_BY_LV[this.STEP_BY_LV.length - 1]; },
     state(m) { if (!m.prosper) m.prosper = {}; return m.prosper; },
     initLv(cityId) { return PROSPER_INIT_HIGH.includes(cityId) ? 3 : PROSPER_INIT_LOW.includes(cityId) ? 1 : 2; },
     lv(m, cityId) { const s = this.state(m)[cityId]; return s ? s.lv : this.initLv(cityId); },
@@ -5609,8 +5615,8 @@
       const st = this.state(m)[cityId] || (this.state(m)[cityId] = { lv: this.initLv(cityId), pts: 0 });
       if (st.lv >= this.MAX) return;
       st.pts += pts;
-      while (st.pts >= this.STEP && st.lv < this.MAX) {
-        st.pts -= this.STEP;
+      while (st.pts >= this.step(st.lv) && st.lv < this.MAX) {
+        st.pts -= this.step(st.lv);
         st.lv++;
         if (!silent) toast(`🏙️ 你的作为令${cityName(cityId)}日渐繁荣，升至 ${"★".repeat(st.lv)}！`);
       }
@@ -6050,14 +6056,18 @@
     tierName(v) { for (let i = this.TIERS.length - 1; i >= 0; i--) if (v >= this.TIERS[i].min) return this.TIERS[i].n; return this.TIERS[0].n; },
   };
   const FactionOrders = {
-    // 每日回复 1+威名/400 道，池上限 3+威名/300（封顶 8）——威名越盛，动作越频密
-    regen(m, fid) { return 1 + Math.floor(FactionFame.get(m, fid) / 400); },
+    // 池上限 3+威名/300（封顶 8）——威名越盛，动作越频密。
+    // 每日回复改为直接回满（而非按 regen 缓慢累加）：军令最低的势力（3 道）当日满额时也恰好
+    // 够发动一次出征（耗 3），不必再指望"存够军令"这种在贪心的势力 AI 手中几乎不会发生的事——
+    // 旧的"加 regen"算法下，弱小势力常年徘徊在 0~2 道之间，永远凑不出一次出征。
+    // 出征本身仍受 weary 冷却节制（2~4 天），故回满不会导致天天开战，只是让"能打"不再是奢望；
+    // 其余耗军令动作因而变得更频密，故其数值效果相应下调，见 NON_WAR_DAMPEN。
     cap(m, fid) { return Math.min(8, 3 + Math.floor(FactionFame.get(m, fid) / 300)); },
     all(m) { return m.factionOrders || (m.factionOrders = {}); },
     get(m, fid) { const v = this.all(m)[fid]; return v == null ? this.cap(m, fid) : v; },
     set(m, fid, v) { this.all(m)[fid] = Math.max(0, Math.min(this.cap(m, fid), Math.round(v))); },
     spend(m, fid, n) { if (this.get(m, fid) < n) return false; this.set(m, fid, this.get(m, fid) - n); return true; },
-    tickAll(m) { liveFactionIds(m).forEach(fid => this.set(m, fid, this.get(m, fid) + this.regen(m, fid))); },
+    tickAll(m) { liveFactionIds(m).forEach(fid => this.set(m, fid, this.cap(m, fid))); },
     init() { const o = {}; FACTIONS.forEach(f => { if (!DUMMY_FACTIONS.includes(f.id)) o[f.id] = 3; }); return o; },
   };
   const FactionGold = {
@@ -6578,6 +6588,10 @@
    *  于是「麾下有什么人」第一次真正决定了「这家势力擅长做什么」，而不只是打仗时的一个战力数字。
    * ============================================================ */
   const FactionAI = {
+    // 军令改为每日回满后，出征之外的耗军令动作不再受"军令不够攒不出手"的天然节制而更趋频密
+    // （出征本身仍有 weary 冷休限制，故其效果无需削弱）——征兵/通商/计谋/封赏因而按此系数统一调低
+    // 单次效果强度，以总量而非频次去补偿，避免国力/忠诚/民生数值被"回满"变相刷快了节奏。
+    NON_WAR_DAMPEN: 0.8,
     // 动作表：耗军令 / 质量维度 / 权重
     ACTIONS: [
       { k: "build", orders: 1, dim: "zheng", w: 20 },
@@ -6686,7 +6700,7 @@
       if (!cities.length) return false;
       const cid = cities[randInt(0, cities.length - 1)];
       const room = Garrison.cap(m, cid) - Garrison.get(m, cid);
-      const n = Math.min(room, Math.round(Garrison.cap(m, cid) * (0.08 + q / 500)));
+      const n = Math.min(room, Math.round(Garrison.cap(m, cid) * (0.08 + q / 500) * this.NON_WAR_DAMPEN));
       const cost = Math.round(n * Garrison.RECRUIT_GOLD_PER);
       if (!FactionGold.spend(m, fid, cost)) return false;
       Garrison.add(m, cid, n);
@@ -6695,7 +6709,7 @@
     },
     /* ---- 通商：政治越高，进项越丰，并小幅涨威名 ---- */
     trade(m, fid, q, push) {
-      const gain = Math.round((200 + q * 8) * (0.8 + Math.random() * 0.5));
+      const gain = Math.round((200 + q * 8) * (0.8 + Math.random() * 0.5) * this.NON_WAR_DAMPEN);
       FactionGold.add(m, fid, gain);
       FactionFame.add(m, fid, 2);
       push("move", fid, `💰 ${factionName(fid)}通商往来，府库进账 ${gain.toLocaleString()} 金`);
@@ -6805,7 +6819,7 @@
         push("plot", fid, `🕵️ ${factionName(fid)}对${factionName(foe)}施「${plot.n}」之计，为其识破，无功而返`, foe);
         return true;
       }
-      const strength = 1 + Math.max(0, adv) / 40;   // 智力差越大，效果越猛
+      const strength = (1 + Math.max(0, adv) / 40) * this.NON_WAR_DAMPEN;   // 智力差越大，效果越猛
       let detail = "";
       switch (plot.k) {
         case "lijian": {
@@ -7948,21 +7962,29 @@
       if (fid === "_player_") return `<button class="cup-go" id="map-personnel">👑 人事</button>`;
       return `<button class="cup-go" id="map-indep">⚔️ 自立门户</button>`;
     },
+    // 卡片改为整体纵向堆叠、按信息类别分行（原先"头像+三行简介"挤左、"名声/官职/两个按钮"全堆右列，
+    // 主次不分、行距又窄，观感杂乱）：① 身份行（头像+姓名+等级评级）② 声望行（名声/威名）
+    // ③ 官职行（官职·势力·功勋进度）④ 资源行（行动力/金币/军令，三项同性质的数值放一起最直观）
+    // ⑤ 操作行（两个按钮左右并排，不再各占一整行）
     heroCardHtml(m) {
       const c = RPG.char, hg = RPG.heroGeneral();
       const fid = m.playerFaction;
-      return `<div class="map-hero-card ${c.side}">
-        <div class="mh-av">${avatarChar(c.name)}</div>
-        <div class="mh-meta">
-          <div class="mh-name">${c.name}</div>
-          <div class="mh-sub">Lv.${c.level} · ${ratingChip(hg)}</div>
-          <div class="mh-stats">⚡<b>${m.ap}</b>/${m.apMax} · 💰<b>${Bond.gold()}</b>${fid ? ` · 📜<b>${FactionOrders.get(m, fid)}</b>/${FactionOrders.cap(m, fid)}` : ""}</div>
+      const fameLine = Campaign.isLordMode(m)
+        ? `🏯 ${FactionFame.tierName(FactionFame.get(m, "_player_"))}（${FactionFame.get(m, "_player_")}）`
+        : `⭐ ${Campaign.fameLabel(m.fame || 0)}`;
+      const resLine = `⚡<b>${m.ap}</b>/${m.apMax} · 💰<b>${Bond.gold()}</b>${fid ? ` · 📜<b>${FactionOrders.get(m, fid)}</b>/${FactionOrders.cap(m, fid)}` : ""}`;
+      return `<div class="map-hero-card hero-stack ${c.side}">
+        <div class="mh-top">
+          <div class="mh-av">${avatarChar(c.name)}</div>
+          <div class="mh-id">
+            <div class="mh-name">${c.name}</div>
+            <div class="mh-sub">Lv.${c.level} · ${ratingChip(hg)}</div>
+          </div>
         </div>
-        <div class="mh-action-col">
-          <div class="mh-fame">${Campaign.isLordMode(m)
-            ? `🏯 ${FactionFame.tierName(FactionFame.get(m, "_player_"))}（${FactionFame.get(m, "_player_")}）`
-            : `⭐ ${Campaign.fameLabel(m.fame || 0)}`}</div>
-          <div class="mh-fame">${this.identityLine(m)}</div>
+        <div class="mh-line">${fameLine}</div>
+        <div class="mh-line">${this.identityLine(m)}</div>
+        <div class="mh-res">${resLine}</div>
+        <div class="mh-btns">
           <button class="cup-go" id="map-char">🎭 角色详情</button>
           ${this.identityActionBtnHtml(m)}
         </div>
@@ -8630,7 +8652,7 @@
       const orders = FactionOrders.get(m, fid);
       const need = this.LORD_ACT_COST[kind] || 1;
       if (orders < need) {
-        toast(`📜 军令不足：${this.LORD_ACT_NAME[kind]}需 ${need} 道，现有 ${orders} 道——宿营一夜可回复 ${FactionOrders.regen(m, fid)} 道（威名越盛回复越快）`);
+        toast(`📜 军令不足：${this.LORD_ACT_NAME[kind]}需 ${need} 道，现有 ${orders} 道——宿营一夜即可回满至 ${FactionOrders.cap(m, fid)} 道（威名越盛上限越高）`);
         return;
       }
       const back = `<div class="btns"><button class="btn-ghost" id="la-back">返回</button></div>`;
@@ -9421,17 +9443,20 @@
         heroPool.length = 0;
         heroPool.push(...(pickedSet.has(-1) ? [RPG.heroGeneral()] : []), ...pickedGens, ...rest);
       }
-      const count = Math.min(poolA.length, poolB.length, 10);   // 野战演武每方最多五线十将
-      // 守将加成随军出征；城墙守备改为专属守城方（见 resolveSiege 的攻城战），此处野战不再叠加城墙——
-      // 攻出家门的军队用不上自家城墙，城墙的价值留给真正被围攻时的守军
+      // 野战演武每方各自最多五线十将——两侧独立封顶，不再取二者较小值。
+      // 曾用 Math.min(poolA.length, poolB.length, 10) 强制两侧等长，意图是让五线对垒不至于失衡，
+      // 但对马番所（tsushima_jp/tsushima_cn）这类天生 0 武将的哑势力一旦成为交战一方，会把这个较小值拖到 0，
+      // 连同另一侧（含玩家亲自点选、已排到阵前的主角本人）也一并被 slice(0,0) 砍空——
+      // 于是玩家明明勾选了自己出战，一开战却发现"未见你的身影"。「多人数容错」（deploy 的 filter(Boolean)）
+      // 早已支持两侧人数不等甚至一侧为零的五线拆分，不再需要这层人为对齐
       const guardBuff = (g) => {
         if (!g._guard || g.id === -1) return g;
         const gg = clone(g);
         DIMS.forEach(([k]) => { gg[k] += Guard.STAT_BONUS; });
         return gg;
       };
-      const rosterA = poolA.slice(0, count).map(guardBuff);
-      const rosterB = poolB.slice(0, count).map(guardBuff);
+      const rosterA = poolA.slice(0, 10).map(guardBuff);
+      const rosterB = poolB.slice(0, 10).map(guardBuff);
       const heroCountry = RPG.char.side;
       const myRoster = heroCity === a ? rosterA : rosterB;
       const foeRoster = heroCity === a ? rosterB : rosterA;
@@ -10572,7 +10597,7 @@
 
   // 势力系统的推演调参需要能脱离 UI 直接跑上百天（逐日点「宿营」既慢又会被各种弹窗打断），
   // 故与 window.Skill / window.FieldBattle 同例，导出一个只读的自动化测试句柄
-  window.__wj = { Campaign, FactionAI, FactionFame, FactionOrders, FactionGold, FactionTop5, Loyalty, PlayerRank, Garrison, DB, CITIES, FACTIONS, cityFactionId, factionCityCount, factionName, liveFactionIds, isRealFaction };
+  window.__wj = { Campaign, FactionAI, FactionFame, FactionOrders, FactionGold, FactionTop5, Loyalty, PlayerRank, Garrison, Prosper, DB, CITIES, FACTIONS, cityFactionId, factionCityCount, factionName, liveFactionIds, isRealFaction };
 
   document.addEventListener("DOMContentLoaded", init);
 })();
