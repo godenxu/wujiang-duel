@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608080822";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608080901";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -4905,7 +4905,8 @@
       }
       // 天下擂台/双人比武等设施挑战：胜利额外记一笔名声（duo 也经此结算通道）；本城演武场按等级加码
       if (m && (m.activeFacility === "duel" || m.activeFacility === "duo")) {
-        if (heroWon) { const fb = 8 + Buildings.drillBonus(m); Campaign.addFame(fb); Prosper.add(m, m.curCity, 1); extraHtml += `<br>🏯 设施挑战获胜，名声 <b style="color:var(--cn-red)">+${fb}</b>`; }
+        // 六期：设施挑战获胜不再计入城市繁荣度——与悬赏同理，是战斗成就，不是市政建设
+        if (heroWon) { const fb = 8 + Buildings.drillBonus(m); Campaign.addFame(fb); extraHtml += `<br>🏯 设施挑战获胜，名声 <b style="color:var(--cn-red)">+${fb}</b>`; }
         m.activeFacility = null; Campaign.save();
       }
       // 切磋：胜利增进友谊，落败不加（每名武将每游戏日限一次，见 bond-spar 绑定处）；
@@ -5102,7 +5103,7 @@
         bountyHtml = "<br>" + (streak >= ab.need ? completeBountyReward(ab) : `📋 悬赏未达成：${ab.desc}（本次连胜 ${streak}，仍保留在城池悬赏榜）`);
         m.activeBounty = null; Campaign.save();
       }
-      if (m && m.activeFacility === "gauntlet" && allCleared) { const fb = 10 + Buildings.drillBonus(m); Campaign.addFame(fb); Prosper.add(m, m.curCity, 1); bountyHtml += `<br>🏯 设施挑战全清，名声 <b style="color:var(--cn-red)">+${fb}</b>`; }
+      if (m && m.activeFacility === "gauntlet" && allCleared) { const fb = 10 + Buildings.drillBonus(m); Campaign.addFame(fb); bountyHtml += `<br>🏯 设施挑战全清，名声 <b style="color:var(--cn-red)">+${fb}</b>`; }
       if (m && m.activeFacility === "gauntlet") { m.activeFacility = null; Campaign.save(); }
       this.grantExp(exp, "车轮大战 · 连胜 " + streak,
         `连斩 <b style="color:var(--cn-red)">${streak}</b> 员${allCleared ? '，横扫群雄！' : (killer ? '，终被 ' + killer.name + ' 所阻。' : '。')}${bountyHtml}`,
@@ -5172,7 +5173,6 @@
       let fameHtml = "";
       if (sideWon) {
         const facilityBonus = (m && m.activeFacility === "war") ? 15 + Buildings.drillBonus(m) : 0;
-        if (facilityBonus) Prosper.add(m, m.curCity, 1);
         Campaign.addFame(15 + facilityBonus);
         fameHtml = `<br>名声 <b style="color:var(--cn-red)">+${15 + facilityBonus}</b>`;
       }
@@ -5203,7 +5203,6 @@
       let fameHtml = "";
       if (won) {
         const facilityBonus = (m && m.activeFacility === "teamBattle") ? 15 + Buildings.drillBonus(m) : 0;
-        if (facilityBonus) Prosper.add(m, m.curCity, 1);
         Campaign.addFame(15 + facilityBonus);
         fameHtml = `<br>名声 <b style="color:var(--cn-red)">+${15 + facilityBonus}</b>`;
       }
@@ -5235,7 +5234,6 @@
       let fameHtml = "";
       if (won) {
         const facilityBonus = (m && m.activeFacility === "conquest") ? 25 + Buildings.drillBonus(m) : 0;
-        if (facilityBonus) Prosper.add(m, m.curCity, 1);
         Campaign.addFame(50 + facilityBonus);
         fameHtml = `<br>名声 <b style="color:var(--cn-red)">+${50 + facilityBonus}</b>`;
       }
@@ -5598,16 +5596,24 @@
     owari: "farm", hitachi: "farm", higo: "farm", aki: "farm",
     osaka: "caravan", odawara: "caravan", bungo: "caravan", mikawa: "caravan",
   };
-  /* 城市繁荣度（城市经营二期）：每城 1~5 星，初始按城市地位分档，主角在该城的活动（设施挑战获胜、
-   * 完成悬赏、置办产业、己方边境战夺城）积累繁荣点，每满 5 点升 1 星；影响产业收益倍率（0.9~1.3）、
-   * 集市摊位数（≥4星 +1）与铁匠铺专精工钱（≥4星 再降三成）。数据存战役层 m.prosper。 */
+  /* 城市繁荣度（城市经营二期，六期重新设计）：每城 1~5 星，初始按城市地位分档。
+   * 繁荣点只反映"这座城被砸了多少真金白银去建设"——城建（含新增钱庄）按花费换算点数、
+   * 产业置业/扩建/接管、己方边境战夺城，三者仍计入；悬赏完成与设施挑战获胜均已移出（六期），
+   * 二者是战斗成就而非市政建设，与"这城有多繁荣"没有关系。
+   * 影响产业收益倍率（0.9~1.3）、集市摊位数（≥4星 +1）与铁匠铺专精工钱（≥4星 再降三成）。
+   * 数据存战役层 m.prosper。 */
   const PROSPER_INIT_HIGH = ["luoyang", "xuchang", "chengdu", "jianye", "kyoto", "osaka", "owari", "sunpu"];
   const PROSPER_INIT_LOW = ["baidicheng", "shangyong", "oushu", "higo", "hitachi"];
   const Prosper = {
     MAX: 5,
-    // 原先不论星级一律"每积 5 点升 1 星"，各势力每日营建又能稳定进账，导致不到一年满城五星繁荣；
-    // 改为按目标星级递增门槛——初段升星依旧顺畅保留成长感，冲顶两星门槛陡增，遏制"全图速满星"
-    STEP_BY_LV: [6, 10, 16, 26],   // 升至 2/3/4/5 星所需累计点数（下标 = 当前星级-1）
+    // 城建规模由「3 种×3 级」扩到「6 种×10 级」后，若还按旧门槛，繁荣度会比扩容前涨得更快——
+    // 门槛按新的点数供给量级重新配平：六种城建（含钱庄）各自封顶投入约 97 点（花费/400 累计），
+    // 六种合计约 580 点，与本表 5 星总门槛 600 点大致相当——「把六种城建都修到顶」大致等价于
+    // 摸到 5 星，产业置业/扩建/夺城等其余来源则是加速捷径，而非必经之路
+    STEP_BY_LV: [40, 90, 170, 300],   // 升至 2/3/4/5 星所需累计点数（下标 = 当前星级-1），总计 600
+    // 城建捐修按花费换算繁荣点：花费/400，下限 1 点（见 Buildings.build）
+    PTS_PER_GOLD: 400,
+    ptsFromCost(gold) { return Math.max(1, Math.round(gold / this.PTS_PER_GOLD)); },
     step(lv) { return this.STEP_BY_LV[lv - 1] ?? this.STEP_BY_LV[this.STEP_BY_LV.length - 1]; },
     state(m) { if (!m.prosper) m.prosper = {}; return m.prosper; },
     initLv(cityId) { return PROSPER_INIT_HIGH.includes(cityId) ? 3 : PROSPER_INIT_LOW.includes(cityId) ? 1 : 2; },
@@ -5735,7 +5741,7 @@
       if (!Bond.spend(t.cost)) { toast(`金币不足（置办${t.n}需 ${t.cost} 金）`); return false; }
       m.ap--;
       this.all(m)[cityId] = { type: CITY_ESTATE[cityId], lastDay: m.day, pending: 0, manager: null };
-      Prosper.add(m, cityId, 2);   // 置业兴市，繁荣 +2
+      Prosper.add(m, cityId, 8);   // 置业兴市，繁荣 +8（六期：门槛整体上调后按比例重新赋值）
       Campaign.save();
       AudioSystem.sfx.victory();
       toast(`${t.icon} 置办${cityName(cityId)}${t.n}成功！此后每日进账，记得常回来收取`);
@@ -5815,7 +5821,7 @@
       this.accrue(m, cityId);   // 先按旧费率结清旧账，再升级生效
       if (!Bond.spend(cost)) { toast(`金币不足（扩建需 ${cost} 金）`); return false; }
       est.lv = lv + 1;
-      Prosper.add(m, cityId, 1);   // 大兴土木，市面又旺一分
+      Prosper.add(m, cityId, 10);   // 大兴土木，市面又旺一分（六期：门槛整体上调后按比例重新赋值）
       Campaign.save();
       AudioSystem.sfx.victory();
       const t = ESTATE_TYPES[est.type];
@@ -5840,7 +5846,7 @@
       m.ap--;
       delete this.npcAll(m)[cityId];
       this.all(m)[cityId] = { type: CITY_ESTATE[cityId], lastDay: m.day, pending: 0, manager: null, lv: n.lv };
-      Prosper.add(m, cityId, 2);
+      Prosper.add(m, cityId, 8);   // 六期：门槛整体上调后按比例重新赋值
       Campaign.save();
       AudioSystem.sfx.victory();
       const t = this.typeOf(cityId);
@@ -5892,32 +5898,71 @@
    *  建筑归属跟随城池：城属己方时效果为你所用，被敌方攻占即为敌用（城墙攻守对称生效），
    *  夺回后原级保留、即刻恢复。数据存战役层 m.builds。
    * ============================================================ */
+  // 六种城建效果均按等级公式生成（不再是硬编码的 3 档数组）：封顶从 3 级放宽到 10 级后，
+  // 60 格文案手写不现实也不好配平，改用公式让效果随等级平滑增长，desc 只说明机制、eff(lv) 给出该级具体数值
   const BUILD_TYPES = {
-    hospital: { n: "医馆", icon: "🏥", desc: "郎中坐堂——本城回魂丹折价，单挑时体力（气血）每回合额外回复，带兵作战安抚军心/驰援同袍额外恢复兵力", eff: ["回魂丹80金 · 体力+2/回合 · 兵力+3%", "回魂丹65金 · 体力+4/回合 · 兵力+6%", "回魂丹50金 · 体力+6/回合 · 兵力+9%"] },
-    academy: { n: "书院", icon: "📚", desc: "名士讲学——在本城进行的单挑（历练/切磋/悬赏/设施）经验加成", eff: ["经验 +10%", "经验 +20%", "经验 +30%"] },
-    post: { n: "驿站", icon: "🏇", desc: "快马官道——与其他建有驿站的己方城市互通直达（不论多远只耗 1⚡，按路程收驿费，无奇遇无风浪）", eff: ["开通驿路", "驿费 -25%", "驿费 -50%"] },
-    wall: { n: "城墙", icon: "🏯", desc: "高墙深垒——本城若被围攻，守军全员六维获此加成（易主后为敌所用），另加成本城驻军上限", eff: ["守备 +2 · 驻军上限 +8,000", "守备 +4 · 驻军上限 +16,000", "守备 +6 · 驻军上限 +24,000"] },
-    drill: { n: "演武场", icon: "⚔️", desc: "日日操练——本城特色设施挑战获胜时，名声额外加成", eff: ["名声 +4", "名声 +8", "名声 +12"] },
+    hospital: {
+      n: "医馆", icon: "🏥",
+      desc: "郎中坐堂——本城回魂丹折价，单挑时体力（气血）每回合额外回复，带兵作战安抚军心/驰援同袍额外恢复兵力",
+      eff(lv) { return `回魂丹${Buildings.hospitalRevivePrice(lv)}金 · 体力+${lv * 2}/回合 · 兵力+${lv * 3}%`; },
+    },
+    academy: {
+      n: "书院", icon: "📚",
+      desc: "名士讲学——在本城进行的单挑（历练/切磋/悬赏/设施）经验加成",
+      eff(lv) { return `经验 +${lv * 10}%`; },
+    },
+    post: {
+      n: "驿站", icon: "🏇",
+      desc: "快马官道——与其他建有驿站的己方城市互通直达（不论多远只耗 1⚡，按路程收驿费，无奇遇无风浪）",
+      eff(lv) { return lv <= 1 ? "开通驿路" : `驿费 -${Math.round((1 - Buildings.postDiscount(lv)) * 100)}%`; },
+    },
+    wall: {
+      n: "城墙", icon: "🏯",
+      desc: "高墙深垒——本城若被围攻，守军全员六维获此加成（易主后为敌所用），另加成本城驻军上限",
+      eff(lv) { return `守备 +${lv * 2} · 驻军上限 +${(lv * 8000).toLocaleString()}`; },
+    },
+    drill: {
+      n: "演武场", icon: "⚔️",
+      desc: "日日操练——本城特色设施挑战获胜时，名声额外加成",
+      eff(lv) { return `名声 +${lv * 4}`; },
+    },
+    // 新增：影响本城对所属势力金库的日进贡献，与「天下名楼」等自选武将私产投资彻底分账——
+    // 后者是你自己的钱袋子，钱庄是这座城给势力府库交的税，两笔账不再混为一谈（见 FactionGold.income）
+    bank: {
+      n: "钱庄", icon: "🏦",
+      desc: "汇通四方——本城对所属势力金库的日进贡献随等级提升，未建亦有底税，与自选武将的私产收益无关",
+      eff(lv) { return `势力金库日进 +${Buildings.bankIncome(lv).toLocaleString()} 金/日`; },
+    },
   };
-  const HOSPITAL_REVIVE = [100, 80, 65, 50];   // 回魂丹价：下标 = 所在城医馆等级（0 = 无医馆）
-  // 每城可建三种建筑：五选三按城市哈希稳定选取（同一城每局相同），对马岛海路中转无城建
+  // 每城可建全部城建类型（不再是"5 选 3"），对马岛海路中转无城建
   function cityBuildOptions(cityId) {
     const c = cityId && cityDef(cityId);
     if (!c || c.side === "sea") return [];
-    return Object.keys(BUILD_TYPES).sort((x, y) => hashStr(cityId + "|" + x) - hashStr(cityId + "|" + y)).slice(0, 3);
+    return Object.keys(BUILD_TYPES);
   }
   const Buildings = {
-    MAX_LV: 3,
-    COSTS: [{ gold: 500, mats: 0 }, { gold: 1000, mats: 1 }, { gold: 2000, mats: 2 }],   // 修至 1/2/3 级的花费（材料为本城专精类）
+    MAX_LV: 10,
+    // 修至 1~10 级的花费（材料为本城专精类），随等级加速增长——10 级约合 1 级的近 20 倍
+    COSTS: [
+      { gold: 500, mats: 0 }, { gold: 800, mats: 1 }, { gold: 1200, mats: 1 }, { gold: 1800, mats: 2 }, { gold: 2600, mats: 2 },
+      { gold: 3600, mats: 3 }, { gold: 4800, mats: 3 }, { gold: 6200, mats: 4 }, { gold: 7800, mats: 4 }, { gold: 9600, mats: 5 },
+    ],
     all(m) { if (!m.builds) m.builds = {}; return m.builds; },
     of(m, cityId) { return this.all(m)[cityId] || {}; },
     lv(m, cityId, type) { return this.of(m, cityId)[type] || 0; },
     sealed(m, cityId) { return cityOwnerSide(m, cityId) !== RPG.char.side; },
+    // 回魂丹价随医馆等级指数衰减，10 级封底 20 金（原 3 级硬编码 [100,80,65,50] 的自然延伸）
+    hospitalRevivePrice(lv) { return Math.max(20, Math.round(100 * Math.pow(0.85, lv))); },
+    // 驿费折扣：1 级只是"开通"，之后每级再降 9%，10 级封底剩 19% 原价（不会像线性衰减那样降到负数）
+    postDiscount(lv) { return lv <= 1 ? 1 : Math.max(0.19, 1 - 0.09 * (lv - 1)); },
+    // 钱庄对势力金库的日进贡献：未建亦有底税（150/日），每级再加 120——城池不至于因无人投资而颗粒无收
+    BANK_BASE: 150, BANK_PER_LV: 120,
+    bankIncome(lv) { return this.BANK_BASE + this.BANK_PER_LV * lv; },
     // —— 三项"驻城即享"的效果，均要求当前所在城归属己方 ——
     reviveCost() {
       const m = typeof Campaign !== "undefined" && Campaign.mapState();
-      if (!m || !m.curCity || this.sealed(m, m.curCity)) return HOSPITAL_REVIVE[0];
-      return HOSPITAL_REVIVE[this.lv(m, m.curCity, "hospital")];
+      if (!m || !m.curCity || this.sealed(m, m.curCity)) return this.hospitalRevivePrice(0);
+      return this.hospitalRevivePrice(this.lv(m, m.curCity, "hospital"));
     },
     expMult(m) {
       if (!m || !m.curCity || this.sealed(m, m.curCity)) return 1;
@@ -5948,10 +5993,12 @@
       if (cost.mats > 0) { Armory.data.materials[matType.k] -= cost.mats; Armory.save(); }
       if (!this.all(m)[cityId]) this.all(m)[cityId] = {};
       this.all(m)[cityId][type] = cur + 1;
-      Prosper.add(m, cityId, 2);   // 捐资兴建，泽被乡里
+      // 繁荣点按花费换算（越贵的等级贡献越大），而非过去"每级一律 +2"的固定值——
+      // 见 Prosper.ptsFromCost：城建规模从 3 种×3 级扩到 6 种×10 级后，固定值会把星级门槛冲得毫无意义
+      Prosper.add(m, cityId, Prosper.ptsFromCost(cost.gold));
       Campaign.save();
       AudioSystem.sfx.victory();
-      toast(`${BUILD_TYPES[type].icon} ${cityName(cityId)}${BUILD_TYPES[type].n}修至 ${cur + 1} 级！（${BUILD_TYPES[type].eff[cur]}）`);
+      toast(`${BUILD_TYPES[type].icon} ${cityName(cityId)}${BUILD_TYPES[type].n}修至 ${cur + 1} 级！（${BUILD_TYPES[type].eff(cur + 1)}）`);
       return true;
     },
     // 驿站快马：两端都须是归属己方且建有驿站的城市；驿费按 BFS 最短跳数计价，本城驿站等级享折扣
@@ -5976,8 +6023,7 @@
     },
     postCost(m, dest) {
       const d = Math.max(1, this.hops(m.curCity, dest));
-      const disc = 1 - 0.25 * (this.lv(m, m.curCity, "post") - 1);
-      return Math.round(60 * d * disc);
+      return Math.round(60 * d * this.postDiscount(this.lv(m, m.curCity, "post")));
     },
     postDests(m) {
       if (this.sealed(m, m.curCity) || this.lv(m, m.curCity, "post") < 1) return [];
@@ -6080,10 +6126,11 @@
     set(m, fid, v) { this.all(m)[fid] = Math.max(0, Math.round(v)); },
     add(m, fid, n) { if (!fid || !n) return; this.set(m, fid, this.get(m, fid) + n); },
     spend(m, fid, n) { if (this.get(m, fid) < n) return false; this.set(m, fid, this.get(m, fid) - n); return true; },
-    // 日进：所辖各城日产出之和（复用产业口径，无产业的城池亦按其潜力计入，视作赋税）
+    // 日进：所辖各城「钱庄」贡献之和，按城市繁荣度加成——与 Estate（天下名楼等自选武将私产投资）
+    // 彻底分账，不再借用后者的收益口径。城池纵使分文未投钱庄也有底税，不至于因无人经营而颗粒无收
     income(m, fid) {
       return CITIES.filter(c => c.side !== "sea" && cityFactionId(m, c.id) === fid)
-        .reduce((s, c) => s + Estate.cityDailyGold(m, c.id), 0);
+        .reduce((s, c) => s + Math.round(Buildings.bankIncome(Buildings.lv(m, c.id, "bank")) * Prosper.mult(m, c.id)), 0);
     },
     tickAll(m) { liveFactionIds(m).forEach(fid => this.add(m, fid, this.income(m, fid))); },
     init() { const o = {}; FACTIONS.forEach(f => { if (!DUMMY_FACTIONS.includes(f.id)) o[f.id] = f.cities.length * 600; }); return o; },
@@ -6686,14 +6733,16 @@
         const opts = cityBuildOptions(cid).filter(t => Buildings.lv(m, cid, t) < Buildings.MAX_LV);
         if (opts.length) {
           const t = opts[randInt(0, opts.length - 1)];
+          const curLv = Buildings.lv(m, cid, t);
           if (!Buildings.all(m)[cid]) Buildings.all(m)[cid] = {};
-          Buildings.all(m)[cid][t] = Buildings.lv(m, cid, t) + 1;
+          Buildings.all(m)[cid][t] = curLv + 1;
+          Prosper.add(m, cid, Prosper.ptsFromCost(Buildings.COSTS[curLv].gold), true);   // 与玩家自己捐修同一口径
           push("move", fid, `🏗️ ${factionName(fid)}于${cityName(cid)}修筑${BUILD_TYPES[t].n}至 ${Buildings.all(m)[cid][t]} 级`);
           return true;
         }
       }
       const before = Prosper.lv(m, cid);
-      Prosper.add(m, cid, q >= 75 ? 2 : 1, true);
+      Prosper.add(m, cid, q >= 75 ? 8 : 4, true);   // 六期：门槛整体上调后按比例重新赋值
       if (Prosper.lv(m, cid) > before) push("move", fid, `🏗️ ${factionName(fid)}治下${cityName(cid)}市面愈发繁荣（${Prosper.stars(m, cid)}）`);
       return true;
     },
@@ -6850,7 +6899,7 @@
           break;
         }
         case "duandao": {
-          Prosper.add(m, pick.to, -3, true);
+          Prosper.add(m, pick.to, -15, true);   // 六期：门槛整体上调后按比例重新赋值
           FactionGold.spend(m, foe, Math.round(FactionGold.get(m, foe) * 0.1));
           detail = `${cityName(pick.to)}商路断绝，市面萧条`;
           break;
@@ -7305,7 +7354,7 @@
     const goldGain = Bond.addGold(ab.rewardGold);
     Campaign.addFame(ab.rewardFame);
     const m = Campaign.mapState();
-    if (m) Prosper.add(m, ab.cityId, 1);   // 为地方除害，繁荣 +1
+    // 六期：悬赏完成不再计入城市繁荣度——为地方除害是战斗成就，与市政建设没有关系
     if (m && m.playerFaction) PlayerRank.addMerit(m, ab.rewardFame * 2);   // 为主公办事，功勋随名声同步入账
     let uniqueHtml = "";
     if (ab.legendary && m && !m.uniqueOwned.senriGeta) {
@@ -8488,12 +8537,12 @@
           action = `<button class="btn-primary bld-up" data-t="${t}" style="font-size:12px;padding:6px 10px;white-space:nowrap">${lv === 0 ? "兴建" : `升 ${lv + 1} 级`}<br>${cost.gold}金${cost.mats ? `+${matType.n}×${cost.mats}` : ""}</button>`;
         }
         return `<div class="wdesc" style="display:flex;align-items:center;gap:10px;justify-content:space-between;text-align:left;margin:6px 0">
-          <span>${bt.icon} <b>${bt.n}</b>${lv > 0 ? ` <b style="color:var(--cn-gold)">${lv} 级</b> · ${bt.eff[lv - 1]}` : " · 未建"}<br><small>${bt.desc}${lv < Buildings.MAX_LV ? `（下一级：${bt.eff[lv]}）` : ""}</small></span>${action}
+          <span>${bt.icon} <b>${bt.n}</b>${lv > 0 ? ` <b style="color:var(--cn-gold)">${lv} 级</b> · ${bt.eff(lv)}` : " · 未建"}<br><small>${bt.desc}${lv < Buildings.MAX_LV ? `（下一级：${bt.eff(lv + 1)}）` : ""}</small></span>${action}
         </div>`;
       }).join("");
       openOverlay(`<div class="result-card detail-card">
         <h1>🏗️ ${cityName(cityId)} · 城建</h1>
-        ${sealed ? `<div class="wdesc" style="color:var(--cn-red)">⛔ 此城现为敌占——建筑为敌所用（城墙助其守城），夺回后原级保留、即刻为你效力。</div>` : `<div class="wdesc"><small>捐修花金币与本城专精材料（${matType.n}），不耗行动力，且每级 +2 繁荣点。</small></div>`}
+        ${sealed ? `<div class="wdesc" style="color:var(--cn-red)">⛔ 此城现为敌占——建筑为敌所用（城墙助其守城），夺回后原级保留、即刻为你效力。</div>` : `<div class="wdesc"><small>捐修花金币与本城专精材料（${matType.n}），不耗行动力；等级越高对繁荣度的贡献越大。</small></div>`}
         ${rows}
         <div class="btns"><button class="btn-ghost" id="bld-close">离开</button></div>
       </div>`);
@@ -9389,7 +9438,7 @@
       shuffle(garrisonPool);
       garrisonPool.slice(0, randInt(2, 4)).forEach(g => { m.assign[g.id] = capturedCity; });
       if (winnerFaction === m.playerFaction) {
-        Prosper.add(m, capturedCity, 2);   // 己方光复/开拓此城，百废俱兴
+        Prosper.add(m, capturedCity, 12);   // 己方光复/开拓此城，百废俱兴（六期：门槛整体上调后按比例重新赋值）
         // 己方夺城，牢门大开：此前被囚于此城的己方守将尽数放还
         Guard.heldAt(m, capturedCity).forEach(g => Guard.free(m, g.id, `——${cityName(capturedCity)}光复，牢门大开`));
       }
@@ -10636,7 +10685,7 @@
 
   // 势力系统的推演调参需要能脱离 UI 直接跑上百天（逐日点「宿营」既慢又会被各种弹窗打断），
   // 故与 window.Skill / window.FieldBattle 同例，导出一个只读的自动化测试句柄
-  window.__wj = { Campaign, FactionAI, FactionFame, FactionOrders, FactionGold, FactionTop5, Loyalty, PlayerRank, Garrison, Prosper, Bond, RPG, MapUI, DB, CITIES, FACTIONS, cityFactionId, factionCityCount, factionName, liveFactionIds, isRealFaction, adjCities };
+  window.__wj = { Campaign, FactionAI, FactionFame, FactionOrders, FactionGold, FactionTop5, Loyalty, PlayerRank, Garrison, Prosper, Bond, RPG, MapUI, Buildings, BUILD_TYPES, cityBuildOptions, Estate, Armory, DB, CITIES, FACTIONS, cityFactionId, factionCityCount, factionName, liveFactionIds, isRealFaction, adjCities };
 
   document.addEventListener("DOMContentLoaded", init);
 })();
