@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608072308";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608080822";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -1270,6 +1270,9 @@
 
   function showResult(winner, loser, opts) {
     const bg = winner.side === 'cn' ? 'linear-gradient(135deg,var(--cn-red),#7a1420)' : 'linear-gradient(135deg,var(--jp-indigo),#141e3c)';
+    // 单挑结束的胜负确认框此前未传 { modal: true }，背景遮罩一点即关（见 overlay 的点击穿透关闭逻辑）——
+    // 玩家手一抖点到卡片外，确认框秒退但游戏并未继续，两个按钮也随之一并消失，形同卡死；补上 modal
+    // 令其只能由框内按钮关闭
     openOverlay(`<div class="result-card">
       <h1>胜 · ${winner.side === 'cn' ? '三国' : '战国'}</h1>
       <div class="winner-av" style="background:${bg}">${avatarChar(winner.name)}</div>
@@ -1280,7 +1283,7 @@
         <button class="btn-primary" id="res-again">${opts.rematchLabel || '再战一场'}</button>
         <button class="btn-ghost" id="res-back">${opts.backLabel || '返回'}</button>
       </div>
-    </div>`);
+    </div>`, { modal: true });
     $("#res-again").onclick = () => { closeOverlay(); opts.onRematch(); };
     $("#res-back").onclick = () => { closeOverlay(); opts.onBack(); };
   }
@@ -3106,6 +3109,7 @@
       $("#fb-stop").onclick = () => { closeOverlay(); done(); };
     },
     showResult(won, reason, chaseTxt) {
+      // 与单挑结果框同一根因：未传 modal 时背景一点即关，玩家点不到框内按钮，流程卡死——统一补上
       openOverlay(`<div class="result-card">
         <h1>${won ? "🏆 野战大捷" : "💀 兵败如山"}</h1>
         <div class="wdesc">${reason}${chaseTxt ? `<br>${chaseTxt}` : ""}<br><br>
@@ -3116,7 +3120,7 @@
         <div class="btns">
           <button class="btn-primary" id="fb-again">再战一场</button>
           <button class="btn-ghost" id="fb-home">返回菜单</button>
-        </div></div>`);
+        </div></div>`, { modal: true });
       $("#fb-again").onclick = () => { closeOverlay(); this.open(); };
       $("#fb-home").onclick = () => { closeOverlay(); this.abort(); showScreen("home"); };
     },
@@ -6885,6 +6889,15 @@
        攻守数值经 200 天推演反复校准：守方保留城墙与一点固守之利（攻城本就难于野战），
        但不能大到让攻方永无胜算——初版曾给守方 +260 的固定加成，结果 200 天里天下版图几乎纹丝不动。
        随机项也放宽到 ±350，使强弱悬殊之外仍有爆冷余地，天下走势不至于沦为算术题。 */
+    // 边境战出阵比例（非玩家亲自坐镇的一方，含"声援他国内战"与玩家全然不介入两种情形）：
+    // 按己方武力评价相对敌方统率评价的优劣、以及双方积怨深浅推算敢出多少家底——
+    // 优势越大、宿怨越深，越敢倾巢而出；均势或劣势则多留三分谨慎固守，全程无随机项，
+    // 同等局面归同一个答案，不再是"一律 7 成"这种不问敌我强弱的死数字
+    commitRatio(m, fid, foeFid) {
+      const edge = FactionTop5.top5(m, fid, "wu") - FactionTop5.top5(m, foeFid, "tong");
+      const hostile = this.hostility(m, fid, foeFid);
+      return Math.max(0.45, Math.min(0.85, 0.62 + edge / 220 + hostile / 500));
+    },
     warStrength(m, fid, from) { return FactionTop5.top5(m, fid, "wu") * 12 + Garrison.get(m, from) / 40; },
     defStrength(m, foe, to) {
       return FactionTop5.top5(m, foe, "tong") * 12 + Garrison.get(m, to) / 40 + Buildings.lv(m, to, "wall") * 160 + 60;
@@ -9109,10 +9122,12 @@
       Garrison.tickAll(m); // 全图城池驻军同步回复（不分敌我）
       const wandered = this.wanderGenerals(m);
       NightReport.reset();
-      FactionOrders.tickAll(m);   // 各势力军令按威名回复
       FactionGold.tickAll(m);     // 各势力金库按辖城日产出进账
-      // 天下诸侯的日常行动（营建/征兵/通商/购置/招揽/计谋/出征），已收编旧 AIDev/WorldWar/AIGear 三模块
+      // 天下诸侯的日常行动（营建/征兵/通商/购置/招揽/计谋/出征），已收编旧 AIDev/WorldWar/AIGear 三模块——
+      // 用的是昨夜回满、尚未动用的那一整仓军令；花剩多少不重要，紧接着 tickAll 就会把它重新填满，
+      // 玩家次日一看永远是满仓，不会因为"回满当天立刻被 AI 花掉"而误以为回复没生效
       const facNews = FactionAI.tick(m);
+      FactionOrders.tickAll(m);   // 各势力军令回满（不分敌我/是否自立），供明日行动支取
       Object.keys(facNews).forEach(cat => NightReport.addAll(cat, facNews[cat]));
       NightReport.add("mine", PlayerRank.dailyStipend(m));   // 官至参军以上，俸禄随宿营自动入账，不再需手动领取
       NightReport.add("alert", Nemesis.campEvent(m));  // 宿敌主动寻衅：拦路挑战 / 抢先夺赏 / 踏营下战书（三选一，小概率）
@@ -9316,14 +9331,19 @@
       const pool = Bond.myRoster().filter(g => g.side === RPG.char.side).slice().sort((x, y) => ratingScore(y) - ratingScore(x));
       const heroRow = `<button class="buff-btn bw-pick ${picks.has(-1) ? 'active' : ''}" data-id="-1"><span class="bi">👑</span><span class="bt"><b>${RPG.char.name}（你）</b><small>评分 ${ratingScore(RPG.heroGeneral())}</small></span></button>`;
       const rows = [heroRow].concat(pool.map(g => `<button class="buff-btn bw-pick ${picks.has(g.id) ? 'active' : ''}" data-id="${g.id}"><span class="bi">${avatarChar(g.name)}</span><span class="bt"><b>${g.name}</b><small>评分 ${ratingScore(g)}</small></span></button>`));
+      // 出阵比例滑杆只在"此战确系本势力"时才由玩家亲自操盘；若只是声援同属本国的他家内战，
+      // 兵力调度权本不在玩家手上，改由该势力 AI 按敌我战力对比自行决定（见 resolveBorderWar 的 commitOf）
+      const isOwnFactionWar = heroFaction === m.playerFaction;
       openOverlay(`<div class="result-card detail-card">
         <h1>⚔️ 边境战事</h1>
-        <div class="wdesc">冲突爆发：<b>${cityName(a)}（${defA.n}）</b> vs <b>${cityName(b)}（${defB.n}）</b>，你声援 <b>${factionDef(heroFaction).n}</b> 一方。你与团队成员是否出战自行抉择（其余已现身武将由候选池随机补满，无需你操心）。此战分两阵：先打<b>野战</b>，得胜一方才能乘胜杀奔败方城下再打一场<b>攻城战</b>，攻克方能真正夺城。勾选自己即视为亲历野战，若野战得胜，你将随军继续亲征攻城——攻克可得所夺城池金币日产出 <b>${this.BORDER_WAR_GOLD_DAYS}</b> 倍犒赏，未克也有一份约合十天产出的掳掠慰劳金；野战落败或不勾选自己，则此战胜负不动你的钱袋。</div>
+        <div class="wdesc">冲突爆发：<b>${cityName(a)}（${defA.n}）</b> vs <b>${cityName(b)}（${defB.n}）</b>，你声援 <b>${factionDef(heroFaction).n}</b> 一方。主角本人一经勾选必定亲历野战；团队成员纵经点选，仍需看当日调度，按概率随军，未必人人到场（其余已现身武将由候选池随机补满，无需你操心）。此战分两阵：先打<b>野战</b>，得胜一方才能乘胜杀奔败方城下再打一场<b>攻城战</b>，攻克方能真正夺城。勾选自己即视为亲历野战，若野战得胜，你将随军继续亲征攻城——攻克可得所夺城池金币日产出 <b>${this.BORDER_WAR_GOLD_DAYS}</b> 倍犒赏，未克也有一份约合十天产出的掳掠慰劳金；野战落败或不勾选自己，则此战胜负不动你的钱袋。</div>
         <div class="buff-list" style="max-height:32vh;overflow-y:auto">${rows.join("")}</div>
         <div class="wdesc">已选 <b>${picks.size}</b> 员（至多 10 员）</div>
+        ${isOwnFactionWar ? `
         <div class="mc-sect">🚩 出阵比例<small>（兵力从${cityName(heroCity)}驻军中调拨，出得越多越经打，但家底也空得越多）</small></div>
         <input type="range" id="bw-ratio" min="10" max="100" step="5" value="${this._bwRatio}" style="width:100%">
-        <div class="wdesc" id="bw-ratio-label">${this.bwRatioLabel(m, heroCity, this._bwRatio)}</div>
+        <div class="wdesc" id="bw-ratio-label">${this.bwRatioLabel(m, heroCity, this._bwRatio)}</div>` : `
+        <div class="wdesc">🚩 此战并非本势力亲征，出阵比例由 <b>${factionDef(heroFaction).n}</b> 按敌我战力对比自行调度，不由你操盘。</div>`}
         <div class="btns"><button class="btn-primary" id="bw-go">开战</button></div>
       </div>`, { modal: true });
       $$(".bw-pick").forEach(btn => btn.onclick = () => {
@@ -9333,10 +9353,13 @@
         this.renderBorderWarPicker(m, edge);
       });
       // 拖动滑杆只即时刷新自身文字标签，不整体重渲染（否则拖拽手感会被打断）；松手后的最终值随「开战」一并读取
-      $("#bw-ratio").oninput = (e) => {
-        this._bwRatio = +e.target.value;
-        $("#bw-ratio-label").innerHTML = this.bwRatioLabel(m, heroCity, this._bwRatio);
-      };
+      // 非本势力亲征时压根不渲染滑杆（见上），此处需判空，否则每次弹窗都会因 null.oninput 报错
+      if ($("#bw-ratio")) {
+        $("#bw-ratio").oninput = (e) => {
+          this._bwRatio = +e.target.value;
+          $("#bw-ratio-label").innerHTML = this.bwRatioLabel(m, heroCity, this._bwRatio);
+        };
+      }
       $("#bw-go").onclick = () => { const ids = [...picks]; const ratio = this._bwRatio; closeOverlay(); this.resolveBorderWar(m, edge, ids, ratio, heroFaction); };
     },
     // 共用：胜方夺城，同时调整双方部署——败方原驻守此城的武将退守至己方相邻城池，
@@ -9396,14 +9419,22 @@
       const factionA = cityFactionId(m, a), factionB = cityFactionId(m, b);
       const pickedSet = new Set(heroFaction ? (pickedIds || []) : []);
       const teamIds = new Set(heroFaction ? Bond.myRoster().filter(g => g.side === RPG.char.side).map(g => g.id) : []);
-      // 出阵兵力（军事一期）：己方按滑杆比例从本城驻军调拨，对方固定调用 7 成驻军；
-      // 调出的兵力当即从原城池扣除，战罢按幸存与否分别驻守新占之城或退回相邻友城（见 applyBorderWarOutcome）
+      // 出阵兵力：只有当此战确系玩家现效力的本势力时，出阵比例才由玩家手上的滑杆决定——
+      // 若只是"声援他国内战"（heroFaction 只是同属本国、玩家并无实际号令权的一方）或全程不介入，
+      // 两边的出阵比例一律交给各自所属势力的 AI 按战力对比推算（commitRatio），不再由玩家越俎代庖，
+      // 也不再是不问敌我强弱、一律 7 成的死数字
       const heroCity = heroFaction === factionA ? a : (heroFaction === factionB ? b : null);
       const foeCity = heroCity === a ? b : a;
-      const heroCommit = heroCity ? Math.round(Garrison.get(m, heroCity) * (ratio == null ? 60 : ratio) / 100) : Math.round(Garrison.get(m, a) * Garrison.AI_COMMIT);
-      const foeCommit = Math.round(Garrison.get(m, foeCity) * Garrison.AI_COMMIT);
-      Garrison.spend(m, heroCity || a, heroCommit);
-      Garrison.spend(m, foeCity, foeCommit);
+      const isOwnFactionWar = !!heroFaction && heroFaction === m.playerFaction;
+      const commitOf = (fid, cityId, foeFid) => (isOwnFactionWar && cityId === heroCity)
+        ? Math.round(Garrison.get(m, cityId) * (ratio == null ? 60 : ratio) / 100)
+        : Math.round(Garrison.get(m, cityId) * FactionAI.commitRatio(m, fid, foeFid));
+      const aCommit = commitOf(factionA, a, factionB);
+      const bCommit = commitOf(factionB, b, factionA);
+      const heroCommit = heroCity === a ? aCommit : bCommit;
+      const foeCommit = heroCity === a ? bCommit : aCommit;
+      Garrison.spend(m, a, aCommit);
+      Garrison.spend(m, b, bCommit);
 
       let poolA = DB.list.filter(g => m.generalFaction[g.id] === factionA && m.appeared.includes(g.id)).map(clone);
       let poolB = DB.list.filter(g => m.generalFaction[g.id] === factionB && m.appeared.includes(g.id)).map(clone);
@@ -9431,17 +9462,25 @@
       };
       battleDefect(poolA, poolB);
       battleDefect(poolB, poolA);
-      // 自选出战：玩家勾选的己方武将（含主角，id -1）强制排到本方阵前；未勾选的团队成员整体剔除、不参与随机补位；
-      // 剩余（既非主角/团队、也未被勾选的）名额仍由候选池随机抽点补满
+      // 自选出战：主角本人一经勾选必定亲历此役；勾选的团队成员未必人人在场待命，按概率决定当日能否随军——
+      // 团队成员本就分驻各处（管产业/守城/自行游历），点选只是"愿意的话请你出战"，不是"传送到场"。
+      // 根因修复：此前 pickedGens 只在 heroPool（即 generalFaction === 本方势力 的候选池）内找勾选项，
+      // 但团队成员是玩家私交结拜之人，generalFaction 未必等于玩家现所效力的这一方，导致纵然勾选也从未
+      // 出现在 heroPool 里、自然被过滤得一个不剩——现改为直接从 Bond.myRoster() 取勾选者，不看 generalFaction。
+      // 未勾选的团队成员仍整体剔除、不参与随机补位；剩余（既非主角/团队、也未被勾选）名额由候选池随机补满
+      const TEAM_JOIN_CHANCE = 0.7;
       if (heroCity) {
         const heroPool = heroCity === a ? poolA : poolB;
-        const pickedGens = heroPool.filter(g => pickedSet.has(g.id));
+        const pickedTeamGens = Bond.myRoster().filter(g => g.side === RPG.char.side)
+          .filter(g => pickedSet.has(g.id) && Math.random() < TEAM_JOIN_CHANCE)
+          .map(clone);
+        const pickedTeamIdSet = new Set(pickedTeamGens.map(g => g.id));
         let rest = heroPool.filter(g => !pickedSet.has(g.id) && !teamIds.has(g.id));
-        // 极端保底：若本方已现身武将几乎全是团队成员、又都未被勾选，剔除后可能凑不出一兵一卒——
-        // 此时放宽限制，把未勾选团队成员一并纳入候选池，确保战事总能照常开打
-        if (!rest.length && !pickedGens.length && !pickedSet.has(-1)) rest = heroPool.filter(g => !pickedSet.has(g.id));
+        // 极端保底：若本方已现身武将几乎全是团队成员、又都未被勾选/未掷中概率，剔除后可能凑不出一兵一卒——
+        // 此时放宽限制，把未随军的团队成员一并纳入候选池，确保战事总能照常开打
+        if (!rest.length && !pickedTeamGens.length && !pickedSet.has(-1)) rest = heroPool.filter(g => !pickedSet.has(g.id));
         heroPool.length = 0;
-        heroPool.push(...(pickedSet.has(-1) ? [RPG.heroGeneral()] : []), ...pickedGens, ...rest);
+        heroPool.push(...(pickedSet.has(-1) ? [RPG.heroGeneral()] : []), ...pickedTeamGens, ...rest.filter(g => !pickedTeamIdSet.has(g.id)));
       }
       // 野战演武每方各自最多五线十将——两侧独立封顶，不再取二者较小值。
       // 曾用 Math.min(poolA.length, poolB.length, 10) 强制两侧等长，意图是让五线对垒不至于失衡，
@@ -10597,7 +10636,7 @@
 
   // 势力系统的推演调参需要能脱离 UI 直接跑上百天（逐日点「宿营」既慢又会被各种弹窗打断），
   // 故与 window.Skill / window.FieldBattle 同例，导出一个只读的自动化测试句柄
-  window.__wj = { Campaign, FactionAI, FactionFame, FactionOrders, FactionGold, FactionTop5, Loyalty, PlayerRank, Garrison, Prosper, DB, CITIES, FACTIONS, cityFactionId, factionCityCount, factionName, liveFactionIds, isRealFaction };
+  window.__wj = { Campaign, FactionAI, FactionFame, FactionOrders, FactionGold, FactionTop5, Loyalty, PlayerRank, Garrison, Prosper, Bond, RPG, MapUI, DB, CITIES, FACTIONS, cityFactionId, factionCityCount, factionName, liveFactionIds, isRealFaction, adjCities };
 
   document.addEventListener("DOMContentLoaded", init);
 })();
