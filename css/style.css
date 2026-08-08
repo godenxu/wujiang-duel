@@ -404,6 +404,8 @@ html, body {
 .detail-card .menu, .result-card .menu { width: 100%; }
 /* 驿站快马目的地列表：改单列，避免双列挤压导致按钮过窄、文字纵向折行 */
 .post-dest-list { grid-template-columns: 1fr; }
+/* 城建列表：每条描述文字较长（现状+下一级预览+花费），同样改单列，与其余候选列表同一视觉语言 */
+.bld-list { grid-template-columns: 1fr; }
 .btn-primary { background: linear-gradient(135deg, var(--cn-red), #7a1420); color: #fff; }
 .btn-ghost { background: rgba(0,0,0,.1); color: var(--ink); border: 1px solid rgba(0,0,0,.2)!important; }
 

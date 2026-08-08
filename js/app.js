@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608080901";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608080946";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -1359,7 +1359,7 @@
         <div class="btns">
           <button class="btn-primary" id="g-restart">重新挑战</button>
           <button class="btn-ghost" id="g-home">返回菜单</button>
-        </div></div>`);
+        </div></div>`, { modal: true });
       $("#g-restart").onclick = () => { closeOverlay(); SelectUI.open("gauntlet"); };
       $("#g-home").onclick = () => { closeOverlay(); showScreen("home"); };
     },
@@ -1438,7 +1438,7 @@
         <div class="btns">
           <button class="btn-primary" id="twr-up">立即攀上</button>
           <button class="btn-ghost" id="twr-down">收兵下塔</button>
-        </div></div>`);
+        </div></div>`, { modal: true });
       const advance = () => { clearTimeout(timer); closeOverlay(); this.floor++; this.next(); };
       const timer = setTimeout(advance, 900);
       $("#twr-up").onclick = advance;
@@ -1468,7 +1468,7 @@
         <div class="btns">
           ${this.rpg ? `<button class="btn-ghost" id="twr-reroll">🎲 重抽（50金 · 现有${Bond.gold()}）</button>` : ""}
           <button class="btn-ghost" id="twr-down2">收兵下塔</button>
-        </div></div>`);
+        </div></div>`, { modal: true });
       $$(".buff-btn").forEach(btn => btn.onclick = () => {
         this.applyBuff(btn.dataset.k);
         closeOverlay();
@@ -1504,7 +1504,7 @@
         <div class="btns">
           <button class="btn-primary" id="twr-again">再战高塔</button>
           <button class="btn-ghost" id="twr-home">返回菜单</button>
-        </div></div>`);
+        </div></div>`, { modal: true });
       $("#twr-again").onclick = () => { closeOverlay(); SelectUI.open("tower"); };
       $("#twr-home").onclick = () => { closeOverlay(); showScreen("home"); };
     },
@@ -1737,7 +1737,7 @@
         <div class="btns">
           <button class="btn-primary" id="war-again">再战一役</button>
           <button class="btn-ghost" id="war-home">返回菜单</button>
-        </div></div>`);
+        </div></div>`, { modal: true });
       $("#war-again").onclick = () => { closeOverlay(); this.start(); };
       $("#war-home").onclick = () => { closeOverlay(); showScreen("home"); };
     },
@@ -2143,7 +2143,7 @@
         <div class="btns">
           <button class="btn-primary" id="tw-again">再来一场</button>
           <button class="btn-ghost" id="tw-home">返回菜单</button>
-        </div></div>`);
+        </div></div>`, { modal: true });
       $("#tw-again").onclick = () => { closeOverlay(); this.rpg ? RPG.teamBattle() : SelectUI.open("team"); };
       $("#tw-home").onclick = () => { closeOverlay(); if (this.rpg) goHome(); else showScreen("home"); };
       if (this.rpg) RPG.onTeamBattleResult(this.kills.player, playerWon);
@@ -3264,7 +3264,7 @@
         <div class="btns">
           <button class="btn-primary" id="cq-side-cn">🐲 执三国</button>
           <button class="btn-primary" style="background:linear-gradient(135deg,var(--jp-indigo),#141e3c)" id="cq-side-jp">🏯 执战国</button>
-        </div></div>`);
+        </div></div>`, { modal: true });
       $("#cq-side-cn").onclick = () => { closeOverlay(); this.start("cn"); };
       $("#cq-side-jp").onclick = () => { closeOverlay(); this.start("jp"); };
     },
@@ -3530,7 +3530,7 @@
         <div class="btns">
           <button class="btn-primary" id="cq-again">再来一局</button>
           <button class="btn-ghost" id="cq-home">返回菜单</button>
-        </div></div>`);
+        </div></div>`, { modal: true });
       $("#cq-again").onclick = () => { closeOverlay(); this.askSide(); };
       $("#cq-home").onclick = () => { closeOverlay(); showScreen("home"); };
       return true;
@@ -3830,7 +3830,7 @@
         <h1>竞猜结算</h1>
         <div class="wname">${champHit ? "🎯 神机妙算！猜中冠军，得分翻倍！" : "赛果揭晓"}</div>
         <div class="wdesc">${lines.join("<br>")}<br>冠军预测：${champHit ? "✅ 命中" : "❌ 未中"}<br>竞猜得分 <b style="font-size:22px;color:var(--cn-red)">${score}</b>${rpg ? Bond.goldLine(score) : ""}</div>
-        <div class="btns"><button class="btn-primary" id="pred-ok">确定</button></div></div>`);
+        <div class="btns"><button class="btn-primary" id="pred-ok">确定</button></div></div>`, { modal: true });
       $("#pred-ok").onclick = () => { closeOverlay(); next && next(); };
     },
 
@@ -5022,7 +5022,7 @@
           <div class="btns">
             <button class="btn-primary" id="rpg-again">再历练</button>
             <button class="btn-ghost" id="rpg-hub">返回养成</button>
-          </div></div>`);
+          </div></div>`, { modal: true });
         $("#rpg-again").onclick = () => { closeOverlay(); this.train(); };
         $("#rpg-hub").onclick = () => { closeOverlay(); goHome(); };
       };
@@ -5261,7 +5261,7 @@
           <div class="btns">
             <button class="btn-primary" id="rpg-r-again">再来一次</button>
             <button class="btn-ghost" id="rpg-r-hub">返回养成</button>
-          </div></div>`);
+          </div></div>`, { modal: true });
         $("#rpg-r-again").onclick = () => { closeOverlay(); againFn(); };
         $("#rpg-r-hub").onclick = () => { closeOverlay(); goHome(); };
       }, 600);
@@ -5313,7 +5313,7 @@
           <div class="btns">
             <button class="btn-primary" id="rpg-cup-again">再战世界杯</button>
             <button class="btn-ghost" id="rpg-cup-hub">返回养成</button>
-          </div></div>`);
+          </div></div>`, { modal: true });
         $("#rpg-cup-again").onclick = () => { closeOverlay(); this.joinCup(Tournament.size); };
         $("#rpg-cup-hub").onclick = () => { closeOverlay(); goHome(); };
       }, 1200);
@@ -5919,7 +5919,7 @@
     wall: {
       n: "城墙", icon: "🏯",
       desc: "高墙深垒——本城若被围攻，守军全员六维获此加成（易主后为敌所用），另加成本城驻军上限",
-      eff(lv) { return `守备 +${lv * 2} · 驻军上限 +${(lv * 8000).toLocaleString()}`; },
+      eff(lv) { return `守备 +${lv * 2} · 驻军上限 +${(lv * Garrison.WALL_CAP_STEP).toLocaleString()}`; },
     },
     drill: {
       n: "演武场", icon: "⚔️",
@@ -6039,7 +6039,9 @@
    *  数据存战役层 m.troops（城→驻军数）。
    * ============================================================ */
   const Garrison = {
-    BASE_CAP: 30000, PROSPER_CAP_STEP: 12000, WALL_CAP_STEP: 8000,
+    // 城墙每级 +1,000 驻军上限（原 8,000 太多）：满繁荣 5 星（+60,000）+满级城墙 10 级（+10,000），
+    // 与基础 30,000 相加，每城驻军上限封顶恰好 100,000
+    BASE_CAP: 30000, PROSPER_CAP_STEP: 12000, WALL_CAP_STEP: 1000,
     BASE_REGEN: 300, PROSPER_REGEN_STEP: 250,
     RECRUIT_GOLD_PER: 0.5,   // 每募 1 兵耗 0.5 金
     AI_COMMIT: 0.7,          // 非玩家一方出阵默认调用本城 7 成驻军，留 3 成戍守（无城池经营心思，简化处理）
@@ -7405,7 +7407,7 @@
       <div class="wname">${c.name}</div>
       <div class="wdesc">威名榜八大高手尽数折服，武道会亦已称雄——${c.name} 技压天下群雄，获封「<b style="color:var(--cn-gold)">天下无双</b>」！<br>你的传奇仍将继续，天下之大，尽可去得。</div>
       <div class="btns"><button class="btn-primary" id="ending-continue">继续游历</button></div>
-    </div>`);
+    </div>`, { modal: true });
     $("#ending-continue").onclick = () => { closeOverlay(); goHome(); };
   }
 
@@ -7445,7 +7447,7 @@
       <div class="wname">${c.name}</div>
       <div class="wdesc">${desc}<br>你的传奇仍将继续，天下之大，尽可去得。</div>
       <div class="btns"><button class="btn-primary" id="ending-unify-continue">继续征战</button></div>
-    </div>`);
+    </div>`, { modal: true });
     $("#ending-unify-continue").onclick = () => { closeOverlay(); goHome(); };
   }
 
@@ -8519,7 +8521,8 @@
       $$(".est-mgr-cand").forEach(el => el.onclick = () => { Estate.appoint(m, cityId, +el.dataset.id); this.openEstate(); });
       $("#est-mgr-back").onclick = () => this.openEstate();
     },
-    /* ---- 城建面板：本城三种公共建筑的捐修/升级 ---- */
+    /* ---- 城建面板：本城全部城建的捐修/升级——改为与委任掌柜/守将、驿站目的地等候选列表同一套
+       menu-btn 风格（整行可点、图标+标题+小字说明），不再是"描述文字 + 一个迷你按钮"的旧样式 ---- */
     openBuild() {
       const m = Campaign.mapState();
       const cityId = m.curCity;
@@ -8530,20 +8533,22 @@
       const rows = opts.map(t => {
         const bt = BUILD_TYPES[t];
         const lv = Buildings.lv(m, cityId, t);
-        let action = "";
-        if (lv >= Buildings.MAX_LV) action = `<small style="color:var(--cn-gold);white-space:nowrap">已至顶级</small>`;
-        else if (!sealed) {
+        const maxed = lv >= Buildings.MAX_LV;
+        const curTxt = lv > 0 ? `${lv} 级 · ${bt.eff(lv)}` : "未建";
+        let small;
+        if (maxed) small = `${curTxt} · 已至顶级`;
+        else if (sealed) small = `${curTxt} · 敌占之城无法捐修`;
+        else {
           const cost = Buildings.COSTS[lv];
-          action = `<button class="btn-primary bld-up" data-t="${t}" style="font-size:12px;padding:6px 10px;white-space:nowrap">${lv === 0 ? "兴建" : `升 ${lv + 1} 级`}<br>${cost.gold}金${cost.mats ? `+${matType.n}×${cost.mats}` : ""}</button>`;
+          small = `${curTxt} · ${lv === 0 ? "兴建" : `升至 ${lv + 1} 级`}至「${bt.eff(lv + 1)}」 · 耗 ${cost.gold}金${cost.mats ? `+${matType.n}×${cost.mats}` : ""}`;
         }
-        return `<div class="wdesc" style="display:flex;align-items:center;gap:10px;justify-content:space-between;text-align:left;margin:6px 0">
-          <span>${bt.icon} <b>${bt.n}</b>${lv > 0 ? ` <b style="color:var(--cn-gold)">${lv} 级</b> · ${bt.eff(lv)}` : " · 未建"}<br><small>${bt.desc}${lv < Buildings.MAX_LV ? `（下一级：${bt.eff(lv + 1)}）` : ""}</small></span>${action}
-        </div>`;
+        const disabled = maxed || sealed;
+        return `<button class="menu-btn bld-up" data-t="${t}" ${disabled ? "disabled" : ""}><span class="mi">${bt.icon}</span><span>${bt.n}<small>${small}</small></span></button>`;
       }).join("");
       openOverlay(`<div class="result-card detail-card">
         <h1>🏗️ ${cityName(cityId)} · 城建</h1>
         ${sealed ? `<div class="wdesc" style="color:var(--cn-red)">⛔ 此城现为敌占——建筑为敌所用（城墙助其守城），夺回后原级保留、即刻为你效力。</div>` : `<div class="wdesc"><small>捐修花金币与本城专精材料（${matType.n}），不耗行动力；等级越高对繁荣度的贡献越大。</small></div>`}
-        ${rows}
+        <div class="menu bld-list">${rows}</div>
         <div class="btns"><button class="btn-ghost" id="bld-close">离开</button></div>
       </div>`);
       $$(".bld-up").forEach(b => b.onclick = () => { if (Buildings.build(m, cityId, b.dataset.t)) this.openBuild(); });
@@ -8932,7 +8937,7 @@
           <button class="btn-primary" id="er-fight">应战</button>
           <button class="btn-ghost" id="er-pay">破财消灾（保住七成）</button>
         </div>
-      </div>`);
+      </div>`, { modal: true });
       $("#er-fight").onclick = () => {
         closeOverlay();
         m.activeEstateRaid = { cityId, gold: seized.gold, mats: seized.mats };
@@ -9110,7 +9115,7 @@
             <h1>⚔️ 遭遇战报</h1>
             <div class="wdesc">${heroAlive ? '全身而退' : '力战倒下（阵中负伤）'}，本场斩获 <b style="color:var(--cn-red)">${result.kills}</b> 员${result.playerWon ? `，一战告捷！名声 <b style="color:var(--cn-red)">+6</b>` : '，惜未能取胜。'}<br>获得经验 <b style="color:var(--cn-red)">+${exp}</b>${Bond.goldLine(gold)}${lvUp ? `<br>🎉 升级 ${lvUp} 级！` : ''}</div>
             <div class="btns"><button class="btn-primary" id="te-close">知道了</button></div>
-          </div>`);
+          </div>`, { modal: true });
           $("#te-close").onclick = () => { closeOverlay(); this.render(); };
         }
       });
@@ -9218,11 +9223,13 @@
       // 宿营夜报：只要当夜有事发生就弹卡片全量分类播报；确实无事才退回一句 toast
       if (NightReport.count()) {
         const pending = isTournamentDay(m.day) || isMonthEnd(m.day);
+        // 夜报「知道了/继续」按钮承担着推进 followUp（月末国战/武将大会/夜袭等）的关键职责，
+        // 背景误触关掉后这条链路会被整个跳过、地图也不会重渲染，务必标记 modal 只留按钮可关
         openOverlay(`<div class="result-card night-report">
           <h1>🏕️ 宿营夜报<small>${calLabel(m.day)}</small></h1>
           <div class="nr-body">${NightReport.bodyHtml()}</div>
           <div class="btns"><button class="btn-primary" id="camp-ok">${pending ? "继续 ›" : "知道了"}</button></div>
-        </div>`);
+        </div>`, { modal: true });
         $("#camp-ok").onclick = () => { closeOverlay(); if (!followUp()) this.render(); };
       } else {
         toast(`🏕️ ${msg}（第 ${m.day} 天）`);
@@ -9711,6 +9718,8 @@
       const pool = DB.list.filter(g => m.appeared.includes(g.id));
       if (!pool.length) return false;
       const fee = Math.round(ratingScore(RPG.heroGeneral()) * 2);
+      // checkTournament 返回 true 后，camp() 的夜报流程就不再自行 render()，全指望这个弹窗的
+      // 两个按钮之一去驱动 runTournament——背景误触关掉会让地图停在未渲染的状态，必须标记 modal
       openOverlay(`<div class="result-card detail-card">
         <h1>🏆 武将大会</h1>
         <div class="wdesc">四方豪杰云集，本月武将大会即将开幕（32 强淘汰赛）。是否报名参加？报名费 <b style="color:var(--cn-red)">${fee}</b> 金（现有 💰${Bond.gold()}），若能杀入四强将全额退还。</div>
@@ -9718,7 +9727,7 @@
           <button class="btn-ghost" id="tn-skip">不参加，静观其变</button>
           <button class="btn-primary" id="tn-join" ${Bond.gold() < fee ? "disabled" : ""}>报名参加</button>
         </div>
-      </div>`);
+      </div>`, { modal: true });
       $("#tn-join").onclick = () => { closeOverlay(); this.runTournament(m, pool, true); };
       $("#tn-skip").onclick = () => { closeOverlay(); this.runTournament(m, pool, false); };
       return true;
@@ -9763,7 +9772,7 @@
           <div class="wdesc">${champHtml}</div>
           <div class="wdesc">${runnerHtml}</div>
           <div class="btns"><button class="btn-primary" id="tn-close">返回天下地图</button></div>
-        </div>`);
+        </div>`, { modal: true });
         $("#tn-close").onclick = () => { closeOverlay(); this.render(); showScreen("map"); };
       };
       Tournament.begin(parts);
@@ -9935,8 +9944,13 @@
       }
       const fac = CITY_FACILITY[c.id];
       const fid = cityFactionId(m, c.id);
+      // 六项城建等级（不含海路中转站）：紧凑展示为「图标+级数」，无一兴建时显示"—"
+      const buildOpts = cityBuildOptions(c.id);
+      const buildTxt = buildOpts.length
+        ? buildOpts.map(t => `${BUILD_TYPES[t].icon}${Buildings.lv(m, c.id, t)}`).join(" ")
+        : "—";
       return {
-        c, owner, prosper: Prosper.lv(m, c.id),
+        c, owner, prosper: Prosper.lv(m, c.id), buildTxt,
         fid, facnName: isRealFaction(fid) ? factionName(fid) : "无主", lord: isRealFaction(fid) ? factionLordName(fid) : "—",
         facName: fac ? fac.n : "—",
         smith: Armory.TYPES[hashStr(c.id) % Armory.TYPES.length].n,
@@ -9960,13 +9974,14 @@
       });
       const arrow = k => key === k ? (dir > 0 ? " ▲" : " ▼") : "";
       const th = (k, label) => `<th data-sort="${k}" class="${key === k ? 'sorted' : ''}">${label}${arrow(k)}</th>`;
-      const head = `<tr>${th("name", "城市")}${th("facn", "势力")}${th("lord", "主公")}${th("owner", "国别")}${th("prosper", "繁荣")}<th>特色设施</th><th>铁匠专精</th><th>产业</th>${th("dailyGold", "日进")}${th("troops", "驻军")}${th("appeared", "武将")}${th("bounty", "悬赏")}</tr>`;
+      const head = `<tr>${th("name", "城市")}${th("facn", "势力")}${th("lord", "主公")}${th("owner", "国别")}${th("prosper", "繁荣")}<th>城建</th><th>特色设施</th><th>铁匠专精</th><th>产业</th>${th("dailyGold", "日进")}${th("troops", "驻军")}${th("appeared", "武将")}${th("bounty", "悬赏")}</tr>`;
       const body = rows.map(r => `<tr data-id="${r.c.id}"${r.fid === m.playerFaction ? ' class="row-mine"' : ""}>
           <td class="dt-name ${r.owner}"><span class="dt-dot"></span>${r.c.id === m.curCity ? "📍" : ""}${r.c.n}</td>
           <td class="allgen-city">${isRealFaction(r.fid) ? facChip(r.fid) : "—"}</td>
           <td class="allgen-city">${r.lord}</td>
           <td class="num">${r.c.side === "sea" ? "🌊" : ""}${sideName(r.owner)}</td>
           <td class="num" style="color:var(--cn-gold)">${"★".repeat(r.prosper)}</td>
+          <td class="allgen-city" style="white-space:nowrap">${r.buildTxt}</td>
           <td class="allgen-city">${r.facName}</td>
           <td class="allgen-city">${r.smith}</td>
           <td class="allgen-city">${r.estTxt}</td>
@@ -10062,7 +10077,7 @@
         gens: appeared.length, gensTotal: gens.length,
         troops: cityIds.reduce((s, id) => s + Garrison.get(m, id), 0),
         fame: FactionFame.get(m, fid), orders: FactionOrders.get(m, fid), ordersCap: FactionOrders.cap(m, fid),
-        gold: FactionGold.get(m, fid),
+        gold: FactionGold.get(m, fid), dailyIncome: FactionGold.income(m, fid),
         loyal: loyals.length ? Math.round(loyals.reduce((s, x) => s + x, 0) / loyals.length) : 0,
         power,
       };
@@ -10082,7 +10097,7 @@
       });
       const arrow = k => key === k ? (dir > 0 ? " ▲" : " ▼") : "";
       const th = (k, label) => `<th data-sort="${k}" class="${key === k ? 'sorted' : ''}">${label}${arrow(k)}</th>`;
-      const head = `<tr>${th("name", "势力")}${th("lord", "主公")}<th>国别</th>${th("cities", "城池")}${th("gens", "武将")}${th("troops", "兵力")}${th("fame", "威名")}${th("orders", "军令")}${th("gold", "金库")}${th("loyal", "平均忠诚")}${th("power", "战力")}</tr>`;
+      const head = `<tr>${th("name", "势力")}${th("lord", "主公")}<th>国别</th>${th("cities", "城池")}${th("gens", "武将")}${th("troops", "兵力")}${th("fame", "威名")}${th("orders", "军令")}${th("gold", "金库")}${th("dailyIncome", "日进")}${th("loyal", "平均忠诚")}${th("power", "战力")}</tr>`;
       const body = rows.map(r => `<tr data-id="${r.fid}"${r.fid === m.playerFaction ? ' class="row-mine"' : ""}>
           <td class="allgen-city">${facChip(r.fid)}</td>
           <td class="dt-name ${r.side}">${r.lord}</td>
@@ -10093,6 +10108,7 @@
           <td class="num"><b style="color:var(--cn-gold)">${r.fame}</b><br><small>${FactionFame.tierName(r.fame)}</small></td>
           <td class="num">${r.orders}/${r.ordersCap}</td>
           <td class="num">${r.gold.toLocaleString()}</td>
+          <td class="num">${r.dailyIncome.toLocaleString()}</td>
           <td class="num">${r.loyal ? loyaltyHtml(r.loyal) : "—"}</td>
           <td class="dt-total">${r.power}</td>
         </tr>`).join("");
@@ -10125,7 +10141,7 @@
         <h1>${facChip(fid)}</h1>
         <div class="wdesc">
           👑 主公：<b>${r.lord}</b> · ${sideName(r.side)} · 与你：${rel}<br>
-          🏯 威名：<b style="color:var(--cn-gold)">${r.fame}</b>（${FactionFame.tierName(r.fame)}） · 📜 军令：${r.orders}/${r.ordersCap} · 💰 金库：${r.gold.toLocaleString()}<br>
+          🏯 威名：<b style="color:var(--cn-gold)">${r.fame}</b>（${FactionFame.tierName(r.fame)}） · 📜 军令：${r.orders}/${r.ordersCap} · 💰 金库：${r.gold.toLocaleString()}（日进 ${r.dailyIncome.toLocaleString()}）<br>
           🗺️ 所辖城池（${r.cities}）：${r.cityIds.map(id => cityName(id)).join("、") || "已无寸土"}<br>
           🚩 总兵力：${r.troops.toLocaleString()} · ⚔️ 战力（前五评分和）：${r.power}<br>
           🕊️ 平均忠诚：${r.loyal ? loyaltyHtml(r.loyal) : "—"} · 麾下武将 ${r.gens}/${r.gensTotal} 已现身<br>
