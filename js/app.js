@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608091819";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608092025";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -257,22 +257,28 @@
       let giftsRow = "";
       if (bondable) {
         const lordMode = Bond.isLordMode();
-        const inTeam = lordMode ? (mFac && (mFac.generalFaction || {})[g.id] === "_player_") : Bond.inTeam(g.id);
-        const teamFull = !lordMode && Bond.data.team.length >= Bond.teamLimit();
-        // 自立当主后没有"队伍名额"一说：招募即纳其入本势力，不再有满员替换的问题
-        const recruitLbl = inTeam ? (lordMode ? "✓ 已在麾下" : "✓ 已在队中")
-          : !atCap ? `🔒 友谊满上限（${Bond.MAX_FRIEND}）后可${lordMode ? "纳入麾下" : "招募"}`
-          : teamFull ? "🔁 招募（满员，需替换队友）"
-          : lordMode ? `🚩 纳入麾下（${Bond.recruitCost(g)} 金）`
-          : `🤝 招募入队（${Bond.recruitCost(g)} 金）`;
         const visitedToday = (Bond.data.visitDay || {})[g.id] === Bond.dayKey();
         const sparredToday = (Bond.data.sparDay || {})[g.id] === Bond.dayKey();
         const mSpar = Campaign.mapState();
         const sparNoAp = !!mSpar && mSpar.ap <= 0;
+        // 自立当主后，「纳入麾下」与势力效力行里的「招揽」殊途同归——都是把对方的 generalFaction 改成
+        // "_player_"，唯一区别是前者友谊满上限即可白拿、后者要看成算掏钱赌一把，形同白送的后门，
+        // 使「招揽」的风险设计形同虚设。当主状态下不再渲染这颗按钮，招人一律走招揽一条路；
+        // 仕官/在野期的「招募入队」招的是私人团队（与效忠哪一方无关），并非同一件事，不受影响
+        let recruitBtnHtml = "";
+        if (!lordMode) {
+          const inTeam = Bond.inTeam(g.id);
+          const teamFull = Bond.data.team.length >= Bond.teamLimit();
+          const recruitLbl = inTeam ? "✓ 已在队中"
+            : !atCap ? `🔒 友谊满上限（${Bond.MAX_FRIEND}）后可招募`
+            : teamFull ? "🔁 招募（满员，需替换队友）"
+            : `🤝 招募入队（${Bond.recruitCost(g)} 金）`;
+          recruitBtnHtml = `<button class="gift-btn recruit ${inTeam || !atCap ? "dim" : ""}" id="bond-recruit">${recruitLbl}</button>`;
+        }
         giftsRow = `<div class="bond-gifts">
           <button class="gift-btn ${(atCap || visitedToday) ? "dim" : ""}" id="bond-visit">🚶 拜访（+1~2）${atCap ? "（友谊已满）" : visitedToday ? "（今日已访）" : ""}</button>
           <button class="gift-btn ${(sparredToday || sparNoAp) ? "dim" : ""}" id="bond-spar">⚔️ 切磋（-1⚡）${sparredToday ? "（今日已切磋）" : sparNoAp ? "（行动力不足）" : ""}</button>
-          <button class="gift-btn recruit ${inTeam || !atCap ? "dim" : ""}" id="bond-recruit">${recruitLbl}</button>
+          ${recruitBtnHtml}
         </div>`;
       }
       bondHtml = `<div class="bond-box">
@@ -333,22 +339,9 @@
         closeOverlay();
         startClassicBattle(RPG.heroGeneral(), g, false, true);
       };
-      $("#bond-recruit").onclick = () => {
+      const recruitBtn = $("#bond-recruit");
+      if (recruitBtn) recruitBtn.onclick = () => {
         if (Bond.pts(g.id) < Bond.MAX_FRIEND) return;
-        // 自立当主：招募即纳入本势力（无名额上限、无替换之说），忠诚按交情起算
-        if (Bond.isLordMode()) {
-          const mm = Campaign.mapState();
-          if (!mm || (mm.generalFaction || {})[g.id] === "_player_") return;
-          const cost = Bond.recruitCost(g);
-          if (!Bond.spend(cost)) { toast(`金币不足（纳入麾下需 ${cost} 金）`); return; }
-          mm.generalFaction[g.id] = "_player_";
-          Loyalty.stripRewards(mm, g.id);
-          Loyalty.set(mm, g.id, 60 + (Bond.pts(g.id) / Bond.MAX_FRIEND) * 25);
-          Campaign.save();
-          toast(`🚩 ${g.name} 归入麾下，愿为你效死力（-${cost} 金）`);
-          showDetail(g, opts); refreshDBIfActive();
-          return;
-        }
         if (Bond.inTeam(g.id)) return;
         if (Bond.data.team.length >= Bond.teamLimit()) openTeamReplacePicker(g, () => { showDetail(g, opts); refreshDBIfActive(); });
         else if (Bond.recruit(g)) { showDetail(g, opts); refreshDBIfActive(); }
@@ -4519,25 +4512,7 @@
       return true;
     },
 
-    /* ---- 出售：售价为市价的一半（低于市价），售出的宝物以货摊形式回流集市，可再被他人购得 ---- */
-    SELL_FACTOR: 0.5,
-    sellItem(uid) {
-      const idx = this.data.items.findIndex(i => i.uid === uid); if (idx < 0) return false;
-      const item = this.data.items[idx];
-      if (item.identified === false) { toast("需先鉴宝，才能出售"); return false; }
-      if (item.equippedBy) { toast("请先卸下装备再出售"); return false; }
-      const price = Math.round(this.shopPrice(item.rarity) * this.SELL_FACTOR);
-      const gold = Bond.addGold(price);
-      this.data.items.splice(idx, 1);
-      // 直接以该宝物自身的名称/描述/属性重建货摊模板，不依赖图鉴模板池（避免自建模板事后被删导致挂空引用）
-      const tmpl = { n: item.name, intro: item.intro, stat: item.stat, effect: item.stat };
-      this.data.shop.push({ type: item.type, rarity: item.rarity, tmpl });
-      this.save();
-      toast(`已出售「${item.name}」，获得 ${gold} 金（宝物已回流集市）`);
-      return true;
-    },
-
-    /* ---- 行商贩卖：按「当前所在城市」的集市行情结算售价，比仓库直接出售（固定五折）更高——
+    /* ---- 行商贩卖：按「当前所在城市」的集市行情结算售价——
      * 行情低（≤0.9）的城市买入、行情高（≥1.2）的城市卖出，才能真正吃到差价；
      * 折算下来同城买卖必亏（0.85 系数 < 1），唯有实际跑一趟高价城才有利可图，靠"移动需耗行动力"
      * 这一既有摩擦天然限制无限套利，不必另设额度或冷却。 */
@@ -10536,7 +10511,6 @@
       ${ownerTag}
       ${!item.equippedBy ? `<div class="ic-btn-row">
         <button class="ic-dismantle" data-uid="${item.uid}">拆解</button>
-        <button class="ic-sell" data-uid="${item.uid}">出售（${Math.round(Armory.shopPrice(item.rarity) * Armory.SELL_FACTOR)}金）</button>
       </div>` : ""}
     </div>`;
   }
@@ -10610,8 +10584,32 @@
         : this.renderForge();
       this.bind();
     },
+    // 仓库筛选：按类别/等级筛选时未鉴定的「神秘宝物」一律放行——其真实类别/等级尚未向玩家揭示，
+    // 若被过滤器悄悄吃掉或露出，等于用筛选结果反向泄露了尚未鉴宝就不该知道的信息；
+    // 装备状态筛选则不受此限——未鉴定宝物本就无法装备，天然算作"未装备"
+    stockFilterOptionsHtml() {
+      const t = this._stockType || "all", r = this._stockRarity || "all", e = this._stockEquip || "all";
+      const typeOpts = `<option value="all">全部类别</option>` + Armory.TYPES.map(x => `<option value="${x.k}" ${t === x.k ? "selected" : ""}>${x.icon} ${x.n}</option>`).join("");
+      const rarOpts = `<option value="all">全部等级</option>` + Armory.RARITIES.map(x => `<option value="${x.k}" ${r === x.k ? "selected" : ""}>${x.n}</option>`).join("");
+      const eqOpts = `<option value="all" ${e === "all" ? "selected" : ""}>全部</option><option value="equipped" ${e === "equipped" ? "selected" : ""}>已装备</option><option value="unequipped" ${e === "unequipped" ? "selected" : ""}>未装备</option>`;
+      return `<div class="stock-filter-row">
+        <select id="stock-f-type">${typeOpts}</select>
+        <select id="stock-f-rarity">${rarOpts}</select>
+        <select id="stock-f-equip">${eqOpts}</select>
+      </div>`;
+    },
     renderStock() {
-      const items = Armory.data.items.slice();
+      const typeF = this._stockType || "all", rarF = this._stockRarity || "all", eqF = this._stockEquip || "all";
+      let items = Armory.data.items.slice();
+      const totalCount = items.length;
+      items = items.filter(i => {
+        const mystery = i.identified === false;
+        if (typeF !== "all" && !mystery && i.type !== typeF) return false;
+        if (rarF !== "all" && !mystery && i.rarity !== rarF) return false;
+        if (eqF === "equipped" && i.equippedBy == null) return false;
+        if (eqF === "unequipped" && i.equippedBy != null) return false;
+        return true;
+      });
       const rarIdx = k => Armory.RARITIES.findIndex(r => r.k === k);
       // 待鉴定的神秘宝物不按其（尚未揭示的）稀有度参与排序，固定排在已鉴定宝物之后，避免用位置泄露信息
       items.sort((a, b) => {
@@ -10620,8 +10618,10 @@
         if (au && bu) return 0;
         return rarIdx(b.rarity) - rarIdx(a.rarity);
       });
-      if (!items.length) return `<div class="empty">尚未获得任何宝物——去战场上搏一件吧</div>`;
-      return `<div class="section-hint">各玩法获胜后有机会掉落，但掉落的宝物为「未鉴定」状态，需花金鉴宝才能查看细节、装备与拆解；已装备的宝物请先在「角色扮演」或武将详情中卸下，才能在此拆解。</div>
+      if (!totalCount) return `<div class="empty">尚未获得任何宝物——去战场上搏一件吧</div>`;
+      const filterBar = this.stockFilterOptionsHtml();
+      if (!items.length) return `${filterBar}<div class="empty">没有符合筛选条件的宝物</div>`;
+      return `${filterBar}<div class="section-hint">各玩法获胜后有机会掉落，但掉落的宝物为「未鉴定」状态，需花金鉴宝才能查看细节、装备与拆解；已装备的宝物请先在「角色扮演」或武将详情中卸下，才能在此拆解。</div>
         <div class="item-grid">${items.map(itemCard).join("")}</div>`;
     },
     renderDex() {
@@ -10676,11 +10676,10 @@
         const item = Armory.data.items.find(i => i.uid === +b.dataset.uid);
         if (item && confirm(`确定拆解「${item.name}」？将永久失去此宝物，换取材料。`)) { Armory.dismantle(item.uid); this.render(); }
       });
-      $$(".ic-sell").forEach(b => b.onclick = () => {
-        const item = Armory.data.items.find(i => i.uid === +b.dataset.uid);
-        if (item && confirm(`确定出售「${item.name}」？将永久失去此宝物，换取金币（宝物会回流集市）。`)) { Armory.sellItem(item.uid); this.render(); }
-      });
       $$(".ic-identify").forEach(b => b.onclick = () => { if (Armory.identify(+b.dataset.uid)) this.render(); });
+      const ft = $("#stock-f-type"); if (ft) ft.onchange = (e) => { this._stockType = e.target.value; this.render(); };
+      const fr = $("#stock-f-rarity"); if (fr) fr.onchange = (e) => { this._stockRarity = e.target.value; this.render(); };
+      const fe = $("#stock-f-equip"); if (fe) fe.onchange = (e) => { this._stockEquip = e.target.value; this.render(); };
       const rf = $("#shop-refresh"); if (rf) rf.onclick = () => { if (Armory.refreshShop(true)) this.render(); };
       $$(".ic-buy").forEach(b => b.onclick = () => { if (Armory.buyShop(+b.dataset.idx)) this.render(); });
       $$(".forge-btn").forEach(b => b.onclick = () => { if (Armory.forge(b.dataset.type)) this.render(); });
