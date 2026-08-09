@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608080946";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608090901";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -223,8 +223,10 @@
       const curFid = mFac.generalFaction[g.id];
       const isMine = curFid && curFid === mFac.playerFaction;
       const isLord = curFid && isFactionLord(curFid, g.id);
+      const postK = (mFac.posts || {})[g.id];
+      const postTxt = curFid && !isLord && postK ? ` · 官位 <b style="color:var(--cn-gold)">${Rewards.postName(postK, g.side)}</b>` : "";
       const facLine = `🚩 现效力于：${curFid ? facChip(curFid) : "<b>在野</b>"}${isLord ? ' <span class="lord-mark" title="主公">👑 主公</span>' : ""}`
-        + (curFid ? ` · 忠诚 ${loyaltyCell(mFac, curFid, g.id)}` : "")
+        + (curFid ? ` · 忠诚 ${loyaltyCell(mFac, curFid, g.id)}` : "") + postTxt
         + (isMine ? ' · <b style="color:var(--cn-gold)">本势力</b>' : "");
       let btn = "";
       if (!opts.readonly && !isMine && sameSide) {
@@ -5294,6 +5296,10 @@
       Campaign.addFame(fameGain);
       let champHtml = "";
       const m = Campaign.mapState();
+      // 世界杯冠亚军亦是"重要战斗"，积一次庆功宴次数（"决赛止步"即负于决赛对手、屈居亚军）
+      if (m && m.playerFaction === "_player_" && (isChamp || placement.label === "决赛止步")) {
+        Rewards.grantFeastCharge(m, 1, isChamp ? "勇夺世界杯冠军" : "屈居世界杯亚军");
+      }
       if (isChamp && m && !m.cupWon) {
         m.cupWon = true; Campaign.save();
         champHtml = `<br>🏆 天下第一武道会首冠！`;
@@ -6123,11 +6129,18 @@
     init() { const o = {}; FACTIONS.forEach(f => { if (!DUMMY_FACTIONS.includes(f.id)) o[f.id] = 3; }); return o; },
   };
   const FactionGold = {
+    // 自立门户后，「势力金库」与自选武将的私人钱包实为同一笔钱——势力钱庄收上来的税本就是主公的家底，
+    // 募兵/城建历来也是直接花自选武将的金币（Bond.gold）。此前两本账各记各的，势力金库那本只进不出、
+    // 完全脱离玩家实际能花的钱，形同摆设。改为在此处统一收口：fid 为 "_player_" 时，get/set/add/spend
+    // 一律转发到 Bond，其余势力不受影响——全部势力列表、人事面板等一切读取点自然一并打通，无需逐处修改
     all(m) { return m.factionGold || (m.factionGold = {}); },
-    get(m, fid) { const v = this.all(m)[fid]; return v == null ? 0 : v; },
-    set(m, fid, v) { this.all(m)[fid] = Math.max(0, Math.round(v)); },
-    add(m, fid, n) { if (!fid || !n) return; this.set(m, fid, this.get(m, fid) + n); },
-    spend(m, fid, n) { if (this.get(m, fid) < n) return false; this.set(m, fid, this.get(m, fid) - n); return true; },
+    get(m, fid) { if (fid === "_player_") return Bond.gold(); const v = this.all(m)[fid]; return v == null ? 0 : v; },
+    set(m, fid, v) {
+      if (fid === "_player_") { Bond.data.gold = Math.max(0, Math.round(v)); Bond.save(); return; }
+      this.all(m)[fid] = Math.max(0, Math.round(v));
+    },
+    add(m, fid, n) { if (!fid || !n) return; if (fid === "_player_") { Bond.addGold(Math.round(n)); return; } this.set(m, fid, this.get(m, fid) + n); },
+    spend(m, fid, n) { if (fid === "_player_") return Bond.spend(Math.round(n)); if (this.get(m, fid) < n) return false; this.set(m, fid, this.get(m, fid) - n); return true; },
     // 日进：所辖各城「钱庄」贡献之和，按城市繁荣度加成——与 Estate（天下名楼等自选武将私产投资）
     // 彻底分账，不再借用后者的收益口径。城池纵使分文未投钱庄也有底税，不至于因无人经营而颗粒无收
     income(m, fid) {
@@ -6260,12 +6273,18 @@
       m.playerFaction = "_player_"; m.playerRank = this.RANKS.length; m.playerMerit = 0;
       FactionFame.set(m, "_player_", FactionFame.BASE_PER_CITY + seedFame);
       FactionOrders.set(m, "_player_", 3);
-      FactionGold.set(m, "_player_", 600);
-      // 团队就此并入势力：自立之后不再有"我的团队"，队友即本势力武将（见 myRoster）
+      // 势力金库自此与自选武将的私人钱包合一（见 FactionGold.get/set/add/spend 对 "_player_" 的转发），
+      // 这里不再是"重置"一本新账，而是往你已有的钱袋里添一笔开国启动资金
+      FactionGold.add(m, "_player_", 600);
+      // 团队就此并入势力：自立之后不再有"我的团队"，队友即本势力武将（见 myRoster）——
+      // 队友此前若在原势力挂有官位/封地/结义（generalFaction 平日不随入队变动，故旧职从未被清过），
+      // 此刻转投你的新势力仍会原样带过来、白占你新势力的官位/封地席位，必须一并清空，
+      // 往后由你的新势力（人事·封官）重新分封，规则与其他势力一致
       const joined = Bond.teamGenerals();
       joined.forEach(g => {
         m.generalFaction[g.id] = "_player_";
         Loyalty.set(m, g.id, 70 + (Bond.pts(g.id) / Bond.MAX_FRIEND) * 25);
+        Loyalty.stripRewards(m, g.id);
       });
       Bond.data.team = []; Bond.save();
       // 举事之日，根基之城中与你交厚、或本就对旧主离心的旧部会跟着反了——
@@ -6626,6 +6645,14 @@
       gens.forEach(g => Loyalty.set(m, g.id, Loyalty.get(m, g.id) + 3));
       return gens.length;
     },
+    // 庆功宴不可无功随时开——须先打了胜仗攒下"庆功次数"才能办一场：边境大战/攻城得胜（applyBorderWarOutcome）、
+    // 武将世界杯/武将大会夺冠或亚军均各积 1 次，用一次扣一次，见 openLordAction 的 feast 分支
+    feastCharges(m) { return m.feastCharges || 0; },
+    grantFeastCharge(m, n = 1, why) {
+      m.feastCharges = (m.feastCharges || 0) + n;
+      Campaign.save();
+      if (why) toast(`🍶 ${why}，可办一场庆功宴了（现有 ${m.feastCharges} 次）`);
+    },
   };
 
   /* ============================================================
@@ -6857,7 +6884,9 @@
       push("people", fid, `🍶 ${factionName(fid)}大宴群臣，麾下 ${n} 将同沐恩泽（忠诚小涨）`);
       return true;
     },
-    /* ---- 计谋：智力差决定能施何等手段、以及成败与效果强度 ---- */
+    /* ---- 计谋：智力差决定能施何等手段、以及成败与效果强度 ----
+       AI 随机施法与玩家亲自点选（见 MapUI.openPlot）共用同一套结算核心 resolvePlot，
+       前者自动挑目标与计谋种类，后者由玩家决定打谁、使哪一式，胜负判定与七式效果完全一致 */
     plot(m, fid, q, push) {
       const fr = this.frontiers(m, fid);
       if (!fr.length) return false;
@@ -6868,11 +6897,19 @@
       const adv = q - foeQ;
       const usable = this.PLOTS.filter(p => adv >= p.adv);
       if (!usable.length) return true;
-      const plot = usable[randInt(0, usable.length - 1)];
+      const plotKey = usable[randInt(0, usable.length - 1)].k;
+      this.resolvePlot(m, fid, foe, pick, plotKey, q, push);
+      return true;
+    },
+    // 判定成败并施展七式之一的效果，返回是否得手。pick={from,to,foe} 描述哪条边境线、target 城池是哪座
+    resolvePlot(m, fid, foe, pick, plotKey, q, push) {
+      const foeQ = FactionTop5.top5(m, foe, "zhi");
+      const adv = q - foeQ;
+      const plot = this.PLOTS.find(p => p.k === plotKey);
       const chance = Math.max(0.15, Math.min(0.85, 0.4 + adv / 100));
       if (Math.random() >= chance) {
         push("plot", fid, `🕵️ ${factionName(fid)}对${factionName(foe)}施「${plot.n}」之计，为其识破，无功而返`, foe);
-        return true;
+        return false;
       }
       const strength = (1 + Math.max(0, adv) / 40) * this.NON_WAR_DAMPEN;   // 智力差越大，效果越猛
       let detail = "";
@@ -7492,7 +7529,7 @@
           // 武将的初始效忠与忠诚由 initGeneralFactions 按史实/哈希兜底一次性生成
           cityFaction: initCityFaction(), playerFaction: null, playerRank: 0, playerMerit: 0, playerOwnFaction: null, exLordUntil: {},
           factionFame: FactionFame.init(), factionOrders: FactionOrders.init(), factionGold: FactionGold.init(),
-          hostility: {}, posts: {}, fiefs: {}, sworn: [], factionWeary: {}, pendingCourt: null, playerFief: null,
+          hostility: {}, posts: {}, fiefs: {}, sworn: [], factionWeary: {}, pendingCourt: null, playerFief: null, feastCharges: 0,
           ...initGeneralFactions(),
         },
       };
@@ -7581,6 +7618,7 @@
       if (m.activeNemesis === undefined) { m.activeNemesis = null; changed = true; }
       if (m.nemesisChallenge === undefined) { m.nemesisChallenge = false; changed = true; }
       if (!m.troops) { m.troops = {}; changed = true; }
+      if (m.feastCharges === undefined) { m.feastCharges = 0; changed = true; }
       if (changed) this.save();
       return m;
     },
@@ -7626,11 +7664,12 @@
       const m = this.mapState(); if (!m || !n) return;
       const lordMode = this.isLordMode(m);
       const before = this.fameTierIndex(this.effFame(m));
+      // 自立后行动力上限等一切门槛改读威名（见 effFame），但个人名声这个数字本身不再冻结在自立那一刻——
+      // 继续按老公式累加，只是不再驱动任何门槛，单纯作为「你个人的声望」与「你这家势力的威名」并存展示
+      m.fame = Math.min(this.FAME_MAX, (m.fame || 0) + Math.round(n / 2));
       if (lordMode) {
-        // 已自立：名声改道计入本家威名（名声这项个人指标就此并入势力，见 effFame 注释）
+        // 已自立：威名这项势力指标额外入账（名声与威名两条线各自增长，见 effFame 注释）
         FactionFame.add(m, "_player_", Math.round(n / 2 * this.FAME_TO_FACTION_FAME));
-      } else {
-        m.fame = Math.min(this.FAME_MAX, (m.fame || 0) + Math.round(n / 2));
       }
       const after = this.fameTierIndex(this.effFame(m));
       this.recalcApMax();
@@ -8018,40 +8057,38 @@
       const next = PlayerRank.nextNeed(m);
       return `🚩 ${PlayerRank.rankName(m)}·${factionDef(fid).n}　功勋 ${m.playerMerit || 0}${next ? `/${next.need}` : "（顶阶）"}`;
     },
-    // 身份对应的行动入口：在野→投效，仕官→自立门户，自立→人事（原「身份」面板的展示部分现已并入本卡片，
-    // 只剩「需要发起的动作」还留一个按钮，且按身份切换措辞与去处，不再是一个万年不变的「🏯 身份」）
+    // 身份对应的行动入口：在野→投效，仕官→自立门户，自立→人事+计谋（原「身份」面板的展示部分现已并入本卡片，
+    // 只剩「需要发起的动作」还留按钮，且按身份切换措辞与去处，不再是一个万年不变的「🏯 身份」）。
+    // 自立后新增「计谋」——此前只有 AI 势力能对敌施计谋，主公亲政却无此入口，明显遗漏，见 openPlot
     identityActionBtnHtml(m) {
       const fid = m.playerFaction;
       if (!fid) return `<button class="cup-go" id="map-join">🏯 投效</button>`;
-      if (fid === "_player_") return `<button class="cup-go" id="map-personnel">👑 人事</button>`;
+      if (fid === "_player_") return `<button class="cup-go" id="map-personnel">👑 人事</button><button class="cup-go" id="map-plot">🕵️ 计谋</button>`;
       return `<button class="cup-go" id="map-indep">⚔️ 自立门户</button>`;
     },
-    // 卡片改为整体纵向堆叠、按信息类别分行（原先"头像+三行简介"挤左、"名声/官职/两个按钮"全堆右列，
-    // 主次不分、行距又窄，观感杂乱）：① 身份行（头像+姓名+等级评级）② 声望行（名声/威名）
-    // ③ 官职行（官职·势力·功勋进度）④ 资源行（行动力/金币/军令，三项同性质的数值放一起最直观）
-    // ⑤ 操作行（两个按钮左右并排，不再各占一整行）
+    // 卡片改为整体纵向堆叠、按信息类别分行：① 身份行（头像+姓名+等级评级，头像本身即入口，
+    // 点击直接打开角色详情，不再另占一个按钮）② 声望行（名声/威名——自立后两条并存，见 Campaign.addFame）
+    // ③ 官职行（官职·势力·功勋进度）④ 资源行（行动力/金币/军令）⑤ 身份行右侧纵向排布的操作按钮
+    // （在野/仕官只有一个去处，自立后是人事+计谋两个）
     heroCardHtml(m) {
       const c = RPG.char, hg = RPG.heroGeneral();
       const fid = m.playerFaction;
       const fameLine = Campaign.isLordMode(m)
-        ? `🏯 ${FactionFame.tierName(FactionFame.get(m, "_player_"))}（${FactionFame.get(m, "_player_")}）`
+        ? `🏯 ${FactionFame.tierName(FactionFame.get(m, "_player_"))}（${FactionFame.get(m, "_player_")}） · ⭐ ${Campaign.fameLabel(m.fame || 0)}`
         : `⭐ ${Campaign.fameLabel(m.fame || 0)}`;
       const resLine = `⚡<b>${m.ap}</b>/${m.apMax} · 💰<b>${Bond.gold()}</b>${fid ? ` · 📜<b>${FactionOrders.get(m, fid)}</b>/${FactionOrders.cap(m, fid)}` : ""}`;
       return `<div class="map-hero-card hero-stack ${c.side}">
         <div class="mh-top">
-          <div class="mh-av">${avatarChar(c.name)}</div>
+          <div class="mh-av" id="mh-avatar-btn" title="角色详情">${avatarChar(c.name)}</div>
           <div class="mh-id">
             <div class="mh-name">${c.name}</div>
             <div class="mh-sub">Lv.${c.level} · ${ratingChip(hg)}</div>
           </div>
+          <div class="mh-side-btns">${this.identityActionBtnHtml(m)}</div>
         </div>
         <div class="mh-line">${fameLine}</div>
         <div class="mh-line">${this.identityLine(m)}</div>
         <div class="mh-res">${resLine}</div>
-        <div class="mh-btns">
-          <button class="cup-go" id="map-char">🎭 角色详情</button>
-          ${this.identityActionBtnHtml(m)}
-        </div>
       </div>`;
     },
     // 宿敌：未结缘时不显示；结缘后常驻展示战绩与终局进度，未在应战/拦路等待中时可随时主动下战书
@@ -8222,10 +8259,12 @@
       const postBtn = $("#map-post"); if (postBtn) postBtn.onclick = () => this.openPostTravel(m);
       const rescueBtn = $("#map-rescue"); if (rescueBtn) rescueBtn.onclick = () => this.openRescue();
       const campBtn = $("#map-camp"); if (campBtn) campBtn.onclick = () => this.camp();
-      const charBtn = $("#map-char"); if (charBtn) charBtn.onclick = () => RPG.open();
+      // 角色详情改由头像直接触发，不再另占一个按钮
+      const avatarBtn = $("#mh-avatar-btn"); if (avatarBtn) avatarBtn.onclick = () => RPG.open();
       const joinBtn = $("#map-join"); if (joinBtn) joinBtn.onclick = () => this.openJoin();
       const personnelBtn = $("#map-personnel"); if (personnelBtn) personnelBtn.onclick = () => this.openPersonnel();
       const indepBtn2 = $("#map-indep"); if (indepBtn2) indepBtn2.onclick = () => this.tryDeclareIndependence();
+      const plotBtn = $("#map-plot"); if (plotBtn) plotBtn.onclick = () => this.openPlot();
       // 图例只切换自身 class，不整体重渲染——避免展开/收起时地图缩放态被重置
       const flBtn = $("#fl-toggle"); if (flBtn) flBtn.onclick = () => { MapLegendOpen = !MapLegendOpen; const el = $("#map-legend"); if (el) el.classList.toggle("open", MapLegendOpen); };
       const nemBtn = $("#map-nemesis"); if (nemBtn) nemBtn.onclick = () => { if (spendAP()) Nemesis.duel(m); };
@@ -8521,8 +8560,9 @@
       $$(".est-mgr-cand").forEach(el => el.onclick = () => { Estate.appoint(m, cityId, +el.dataset.id); this.openEstate(); });
       $("#est-mgr-back").onclick = () => this.openEstate();
     },
-    /* ---- 城建面板：本城全部城建的捐修/升级——改为与委任掌柜/守将、驿站目的地等候选列表同一套
-       menu-btn 风格（整行可点、图标+标题+小字说明），不再是"描述文字 + 一个迷你按钮"的旧样式 ---- */
+    /* ---- 城建面板：本城全部城建的捐修/升级。行内布局：标题行（图标+名称+放大的等级数字+星级+
+       同行右侧的当前效果，一行不换行，效果文字过长则省略号截断）；标题行下方另起一行放"升级后
+       效果/兴建耗费"与操作按钮——此前挤在同一处 small 标签里，效果预览+花费经常被截断看不见。 ---- */
     openBuild() {
       const m = Campaign.mapState();
       const cityId = m.curCity;
@@ -8534,24 +8574,32 @@
         const bt = BUILD_TYPES[t];
         const lv = Buildings.lv(m, cityId, t);
         const maxed = lv >= Buildings.MAX_LV;
-        const curTxt = lv > 0 ? `${lv} 级 · ${bt.eff(lv)}` : "未建";
-        let small;
-        if (maxed) small = `${curTxt} · 已至顶级`;
-        else if (sealed) small = `${curTxt} · 敌占之城无法捐修`;
+        const maxLv = Buildings.MAX_LV;
+        const curEff = lv > 0 ? bt.eff(lv) : "未建";
+        let nextLine, action = "";
+        if (maxed) nextLine = "已至顶级";
+        else if (sealed) nextLine = "敌占之城无法捐修";
         else {
           const cost = Buildings.COSTS[lv];
-          small = `${curTxt} · ${lv === 0 ? "兴建" : `升至 ${lv + 1} 级`}至「${bt.eff(lv + 1)}」 · 耗 ${cost.gold}金${cost.mats ? `+${matType.n}×${cost.mats}` : ""}`;
+          nextLine = `${lv === 0 ? "兴建" : `升至 ${lv + 1} 级`}：${bt.eff(lv + 1)} · 耗 ${cost.gold}金${cost.mats ? `+${matType.n}×${cost.mats}` : ""}`;
+          action = `<button class="bld-up-btn" data-t="${t}">${lv === 0 ? "兴建" : "升级"}</button>`;
         }
-        const disabled = maxed || sealed;
-        return `<button class="menu-btn bld-up" data-t="${t}" ${disabled ? "disabled" : ""}><span class="mi">${bt.icon}</span><span>${bt.n}<small>${small}</small></span></button>`;
+        return `<div class="bld-row${maxed || sealed ? " maxed" : ""}">
+          <div class="bld-row-head">
+            <span class="mi">${bt.icon}</span><b class="bld-name">${bt.n}</b><b class="bld-lv">${lv}级</b>
+            <span class="bld-stars">${"★".repeat(lv)}${"☆".repeat(maxLv - lv)}</span>
+            <span class="bld-eff-now">${curEff}</span>
+          </div>
+          <div class="bld-row-next"><small>${nextLine}</small>${action}</div>
+        </div>`;
       }).join("");
       openOverlay(`<div class="result-card detail-card">
         <h1>🏗️ ${cityName(cityId)} · 城建</h1>
         ${sealed ? `<div class="wdesc" style="color:var(--cn-red)">⛔ 此城现为敌占——建筑为敌所用（城墙助其守城），夺回后原级保留、即刻为你效力。</div>` : `<div class="wdesc"><small>捐修花金币与本城专精材料（${matType.n}），不耗行动力；等级越高对繁荣度的贡献越大。</small></div>`}
-        <div class="menu bld-list">${rows}</div>
+        <div class="bld-list">${rows}</div>
         <div class="btns"><button class="btn-ghost" id="bld-close">离开</button></div>
       </div>`);
-      $$(".bld-up").forEach(b => b.onclick = () => { if (Buildings.build(m, cityId, b.dataset.t)) this.openBuild(); });
+      $$(".bld-up-btn").forEach(b => b.onclick = () => { if (Buildings.build(m, cityId, b.dataset.t)) this.openBuild(); });
       $("#bld-close").onclick = () => { closeOverlay(); this.render(); };
     },
     /* ---- 守将面板：委任/更换/解任，独立于城建按钮 ---- */
@@ -8694,7 +8742,7 @@
           ${this.lordActBtn(m, "post", "🎖️", "封官", `${used}/${slots} 席 · 忠诚上限 +10~20`)}
           ${this.lordActBtn(m, "fief", "🏯", "封地", `余 ${Rewards.freeFiefCities(m, fid).length} 城可封 · 忠诚上限 +15`)}
           ${this.lordActBtn(m, "sworn", "🤝", "结义", `${swornN}/${Rewards.SWORN_MAX} · 需友谊 ≥${Rewards.SWORN_BOND_MIN} · 免疫策反`)}
-          ${this.lordActBtn(m, "feast", "🍶", "庆功宴", `全军忠诚 +3`)}
+          ${this.lordActBtn(m, "feast", "🍶", "庆功宴", `全军忠诚 +3 · 庆功 ${Rewards.feastCharges(m)} 次`)}
         </div>
         <div class="btns"><button class="btn-ghost" id="id-close">离开</button></div>
       </div>`);
@@ -8710,8 +8758,11 @@
     lordActBtn(m, kind, icon, label, desc) {
       const need = this.LORD_ACT_COST[kind];
       const orders = FactionOrders.get(m, "_player_");
-      const low = orders < need;
-      return `<button class="menu-btn lord-act${low ? " low" : ""}" data-a="${kind}"><span class="mi">${icon}</span><span>${label}<small>${desc} · 耗 ${need} 军令${low ? `（现有 ${orders}，不足）` : ""}</small></span></button>`;
+      // 庆功宴不再是想办就办——须先攒下"庆功次数"（边境大战/攻城得胜、武将世界杯/武将大会夺冠或亚军各积 1 次）
+      const noCharge = kind === "feast" && Rewards.feastCharges(m) <= 0;
+      const low = orders < need || noCharge;
+      const reason = noCharge ? "（尚无庆功由头，先打场胜仗）" : low ? `（现有 ${orders}，不足）` : "";
+      return `<button class="menu-btn lord-act${low ? " low" : ""}" data-a="${kind}"><span class="mi">${icon}</span><span>${label}<small>${desc} · 耗 ${need} 军令${reason}</small></span></button>`;
     },
     openLordAction(kind) {
       const m = Campaign.mapState();
@@ -8722,6 +8773,10 @@
         toast(`📜 军令不足：${this.LORD_ACT_NAME[kind]}需 ${need} 道，现有 ${orders} 道——宿营一夜即可回满至 ${FactionOrders.cap(m, fid)} 道（威名越盛上限越高）`);
         return;
       }
+      if (kind === "feast" && Rewards.feastCharges(m) <= 0) {
+        toast(`🍶 尚无庆功由头——边境大战/攻城得胜，或武将世界杯、武将大会夺冠/亚军，方能积下庆功次数`);
+        return;
+      }
       const back = `<div class="btns"><button class="btn-ghost" id="la-back">返回</button></div>`;
       const bind = () => { $("#la-back").onclick = () => this.openPersonnel(); };
       const gens = factionGenerals(m, fid, true).sort((a, b) => ratingScore(Armory.geared(b, b.id)) - ratingScore(Armory.geared(a, a.id)));
@@ -8729,6 +8784,7 @@
 
       if (kind === "feast") {
         if (!FactionOrders.spend(m, fid, Rewards.FEAST_ORDERS)) { toast("军令不足"); return; }
+        m.feastCharges = Math.max(0, (m.feastCharges || 0) - 1);
         const n = Rewards.feast(m, fid);
         Campaign.save();
         toast(n ? `🍶 大宴群臣，麾下 ${n} 将同沐恩泽，忠诚各 +3` : "麾下暂无可赏之人");
@@ -8736,11 +8792,20 @@
         return;
       }
       if (kind === "post") {
-        const free = Rewards.postSlots(m, fid) - Rewards.postsHeldBy(m, fid).length;
+        const heldIds = Rewards.postsHeldBy(m, fid);
+        const free = Rewards.postSlots(m, fid) - heldIds.length;
         const cand = gens.filter(g => !(m.posts || {})[g.id]);
+        // 本势力官位一览：现任者一目了然，免得每次封官都要凭记忆猜"谁还没有官身"
+        const heldHtml = heldIds.length
+          ? `<div class="wdesc"><small>${heldIds.map(gid => {
+              const g = DB.get(gid);
+              return g ? `${g.name}：${Rewards.postName(m.posts[gid], g.side)}` : "";
+            }).filter(Boolean).join(" · ")}</small></div>`
+          : "";
         openOverlay(`<div class="result-card detail-card">
           <h1>🎖️ 封官</h1>
           <div class="wdesc">官位随疆域而增（每两城一席，现 ${Rewards.postSlots(m, fid)} 席，尚余 <b>${free}</b> 席）。授职可长久抬高其忠诚上限，是笼络重臣的根本。<br><small>耗 2 道军令 · 现有 ${orders} 道</small></div>
+          ${heldHtml}
           ${free <= 0 ? '<div class="wdesc">官位已满——再拓疆土方有新席位可授。</div>'
             : cand.length ? `<div class="menu" style="max-height:44vh;overflow-y:auto">${cand.map(g => row(g)).join("")}</div>`
             : '<div class="wdesc">麾下诸将皆已有职在身。</div>'}
@@ -8811,6 +8876,68 @@
           this.openPersonnel();
         });
       }
+    },
+    /* ---- 主公亲自施计：此前七式计谋只有 AI 势力能对敌施展，玩家自立为主后却无处发力，是明显遗漏。
+       与 AI 随机施法不同，主公亲政讲究知己知彼——玩家自己挑目标、挑计谋，结算核心复用
+       FactionAI.resolvePlot，胜负判定与七式效果同一套，唯独"打谁""使哪一式"由你亲自定夺。 ---- */
+    PLOT_ORDERS: 2,
+    openPlot() {
+      const m = Campaign.mapState();
+      const fid = "_player_";
+      const orders = FactionOrders.get(m, fid);
+      if (orders < this.PLOT_ORDERS) {
+        toast(`📜 军令不足：施计需 ${this.PLOT_ORDERS} 道，现有 ${orders} 道——宿营一夜即可回满至 ${FactionOrders.cap(m, fid)} 道（威名越盛上限越高）`);
+        return;
+      }
+      // 接壤敌对势力去重（同一势力可能与我方有多条边境线，只需列一次）
+      const fr = FactionAI.frontiers(m, fid);
+      if (!fr.length) { toast("四境未接敌对势力，无从施计"); return; }
+      const byFoe = new Map();
+      fr.forEach(f => { if (!byFoe.has(f.foe)) byFoe.set(f.foe, f); });
+      const q = FactionTop5.top5(m, fid, "zhi");
+      const targets = [...byFoe.values()];
+      openOverlay(`<div class="result-card detail-card">
+        <h1>🕵️ 计谋 · 择一势力下手</h1>
+        <div class="wdesc">按己方与对方的智力对比推算可用手段与成算，敌对度越深、优先级越靠前。<br><small>耗 ${this.PLOT_ORDERS} 道军令 · 现有 ${orders} 道</small></div>
+        <div class="menu" style="max-height:50vh;overflow-y:auto">${targets
+          .sort((a, b) => FactionAI.hostility(m, fid, b.foe) - FactionAI.hostility(m, fid, a.foe))
+          .map(f => {
+            const adv = Math.round(q - FactionTop5.top5(m, f.foe, "zhi"));
+            const usable = FactionAI.PLOTS.filter(p => adv >= p.adv).length;
+            return `<button class="menu-btn plot-target" data-foe="${f.foe}"><span class="mi">${factionDef(f.foe).side === "cn" ? "🐲" : "🏯"}</span><span>${factionName(f.foe)}<small>智力差 ${adv >= 0 ? "+" : ""}${adv} · 可用 ${usable}/${FactionAI.PLOTS.length} 式 · 敌对 ${FactionAI.hostility(m, fid, f.foe)}</small></span></button>`;
+          }).join("")}</div>
+        <div class="btns"><button class="btn-ghost" id="plot-close">离开</button></div>
+      </div>`);
+      $$(".plot-target").forEach(b => b.onclick = () => this.openPlotPick(m, byFoe.get(b.dataset.foe)));
+      $("#plot-close").onclick = () => { closeOverlay(); this.render(); };
+    },
+    openPlotPick(m, pick) {
+      const fid = "_player_", foe = pick.foe;
+      const q = FactionTop5.top5(m, fid, "zhi"), foeQ = FactionTop5.top5(m, foe, "zhi");
+      const adv = q - foeQ;
+      const usable = FactionAI.PLOTS.filter(p => adv >= p.adv);
+      const rows = FactionAI.PLOTS.map(p => {
+        const can = adv >= p.adv;
+        const chance = Math.round(Math.max(0.15, Math.min(0.85, 0.4 + adv / 100)) * 100);
+        return `<button class="menu-btn plot-pick" data-k="${p.k}" ${can ? "" : "disabled"}><span class="mi">🕵️</span><span>${p.n}<small>${p.desc}${can ? ` · 约 ${chance}% 成算` : ` · 智力差需 ≥${p.adv}（现 ${Math.round(adv)}）`}</small></span></button>`;
+      }).join("");
+      openOverlay(`<div class="result-card detail-card">
+        <h1>🕵️ 对${factionName(foe)}施计</h1>
+        <div class="wdesc">智力差 ${adv >= 0 ? "+" : ""}${Math.round(adv)}，可用 ${usable.length}/${FactionAI.PLOTS.length} 式。</div>
+        <div class="menu" style="max-height:50vh;overflow-y:auto">${rows}</div>
+        <div class="btns"><button class="btn-ghost" id="plotpick-back">返回</button></div>
+      </div>`);
+      $$(".plot-pick").forEach(b => b.onclick = () => {
+        if (!FactionOrders.spend(m, fid, this.PLOT_ORDERS)) { toast("军令不足"); return; }
+        const news = { plot: [] };
+        const push = (cat, f, text) => { if (news[cat]) news[cat].push(text); };
+        FactionAI.resolvePlot(m, fid, foe, pick, b.dataset.k, q, push);
+        Campaign.save();
+        toast(news.plot[0] || "施计完毕");
+        closeOverlay();
+        this.render();
+      });
+      $("#plotpick-back").onclick = () => this.openPlot();
     },
     /* ---- 驿站快马面板：独立于城建按钮；也可由地图直接点击已通驿的远方城市触发（见 confirmPostTravel） ---- */
     openPostTravel(m) {
@@ -9448,6 +9575,7 @@
         Prosper.add(m, capturedCity, 12);   // 己方光复/开拓此城，百废俱兴（六期：门槛整体上调后按比例重新赋值）
         // 己方夺城，牢门大开：此前被囚于此城的己方守将尽数放还
         Guard.heldAt(m, capturedCity).forEach(g => Guard.free(m, g.id, `——${cityName(capturedCity)}光复，牢门大开`));
+        if (m.playerFaction === "_player_") Rewards.grantFeastCharge(m, 1, `攻克${cityName(capturedCity)}`);
       }
       if (troops) {
         Garrison.set(m, capturedCity, troops.winner);   // 胜方幸存兵力就地驻守新占之城
@@ -9766,6 +9894,9 @@
         if (reachedTop4) { Bond.addGold(fee); feeHtml = `<br>杀入四强，报名费 <b style="color:var(--cn-red)">${fee}</b> 金全额退还！`; }
         const champHtml = this.applyTournamentPrize(m, champion, 3, true);
         const runnerHtml = this.applyTournamentPrize(m, runnerUp, 1, false);
+        if (m.playerFaction === "_player_" && (champion.id === -1 || runnerUp.id === -1)) {
+          Rewards.grantFeastCharge(m, 1, champion.id === -1 ? "武将大会夺魁" : "武将大会屈居亚军");
+        }
         openOverlay(`<div class="result-card detail-card">
           <h1>🏆 武将大会战报</h1>
           <div class="wdesc">冠军：<b style="color:var(--cn-red)">${champion.name}</b>${champion.id === -1 ? '（你）' : ''}　亚军：<b>${runnerUp.name}</b>${runnerUp.id === -1 ? '（你）' : ''}${feeHtml}</div>
@@ -9892,14 +10023,17 @@
       });
       const arrow = k => key === k ? (dir > 0 ? " ▲" : " ▼") : "";
       const th = (k, label) => `<th data-sort="${k}" class="${key === k ? 'sorted' : ''}">${label}${arrow(k)}</th>`;
-      const head = `<tr>${th("name", "姓名")}${th("fac", "势力")}${th("loyal", "忠诚")}${DIMS.map(([k, l]) => th(k, l[0])).join("")}${th("rating", "评分")}<th>评级</th>${th("bond", "友谊")}${th("city", "所在城")}</tr>`;
+      const head = `<tr>${th("name", "姓名")}${th("fac", "势力")}<th>官位</th>${th("loyal", "忠诚")}${DIMS.map(([k, l]) => th(k, l[0])).join("")}${th("rating", "评分")}<th>评级</th>${th("bond", "友谊")}${th("city", "所在城")}</tr>`;
       const body = rows.map(({ g, hg }) => {
         const cells = DIMS.map(([k]) => `<td class="num gt-${rateLetter(hg[k])}">${hg[k]}</td>`).join("");
         const fid = (m.generalFaction || {})[g.id];
         const lordMark = fid && isFactionLord(fid, g.id) ? '<span class="lord-mark" title="主公">👑</span>' : "";
+        const postK = (m.posts || {})[g.id];
+        const postTxt = fid && isFactionLord(fid, g.id) ? "—" : (postK ? Rewards.postName(postK, g.side) : "—");
         return `<tr data-id="${g.id}"${fid && fid === m.playerFaction ? ' class="row-mine"' : ""}>
           <td class="dt-name ${g.side}"><span class="dt-dot"></span>${g.name}${lordMark}</td>
           <td class="allgen-city">${fid ? facChip(fid) : '<span style="color:#8d8578">在野</span>'}</td>
+          <td class="allgen-city">${postTxt}</td>
           <td class="num">${fid ? loyaltyCell(m, fid, g.id) : "—"}</td>
           ${cells}
           <td class="dt-total">${ratingScore(hg)}</td>
@@ -10701,7 +10835,7 @@
 
   // 势力系统的推演调参需要能脱离 UI 直接跑上百天（逐日点「宿营」既慢又会被各种弹窗打断），
   // 故与 window.Skill / window.FieldBattle 同例，导出一个只读的自动化测试句柄
-  window.__wj = { Campaign, FactionAI, FactionFame, FactionOrders, FactionGold, FactionTop5, Loyalty, PlayerRank, Garrison, Prosper, Bond, RPG, MapUI, Buildings, BUILD_TYPES, cityBuildOptions, Estate, Armory, DB, CITIES, FACTIONS, cityFactionId, factionCityCount, factionName, liveFactionIds, isRealFaction, adjCities };
+  window.__wj = { Campaign, FactionAI, FactionFame, FactionOrders, FactionGold, FactionTop5, Loyalty, PlayerRank, Garrison, Prosper, Bond, RPG, MapUI, Buildings, BUILD_TYPES, cityBuildOptions, Estate, Armory, Rewards, DB, CITIES, FACTIONS, cityFactionId, factionCityCount, factionName, liveFactionIds, isRealFaction, adjCities, factionDef, isFactionLord, factionGenerals };
 
   document.addEventListener("DOMContentLoaded", init);
 })();

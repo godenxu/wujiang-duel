@@ -404,8 +404,31 @@ html, body {
 .detail-card .menu, .result-card .menu { width: 100%; }
 /* 驿站快马目的地列表：改单列，避免双列挤压导致按钮过窄、文字纵向折行 */
 .post-dest-list { grid-template-columns: 1fr; }
-/* 城建列表：每条描述文字较长（现状+下一级预览+花费），同样改单列，与其余候选列表同一视觉语言 */
-.bld-list { grid-template-columns: 1fr; }
+/* 城建列表：每条一个整块——标题行（图标+名称+放大等级数字+星级+同行右侧当前效果，
+   过长省略号截断，不换行）；下一行单独放"升级后效果+花费"与操作按钮，避免像旧版那样被挤没 */
+.bld-list { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.bld-row {
+  padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(212,175,55,.35);
+  background: rgba(0,0,0,.28);
+}
+.bld-row.maxed { opacity: .7; }
+.bld-row-head { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.bld-row-head .mi { font-size: 18px; flex: 0 0 auto; }
+.bld-name { font-size: 14px; color: var(--paper); flex: 0 0 auto; }
+.bld-lv { font-size: 18px; color: var(--cn-gold); flex: 0 0 auto; }
+.bld-stars { font-size: 11px; color: var(--cn-gold); letter-spacing: -1px; flex: 0 0 auto; white-space: nowrap; }
+.bld-eff-now {
+  flex: 1 1 auto; min-width: 0; font-size: 12px; color: #c9b890; text-align: right;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.bld-row-next { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; }
+.bld-row-next small { color: #9a8c66; font-size: 12px; line-height: 1.4; }
+.bld-up-btn {
+  flex: 0 0 auto; padding: 7px 14px; border-radius: 10px; border: 1px solid rgba(212,175,55,.5);
+  background: linear-gradient(135deg, rgba(193,39,45,.85), rgba(120,20,30,.9)); color: var(--paper);
+  font-family: inherit; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.bld-up-btn:active { transform: scale(.96); }
 .btn-primary { background: linear-gradient(135deg, var(--cn-red), #7a1420); color: #fff; }
 .btn-ghost { background: rgba(0,0,0,.1); color: var(--ink); border: 1px solid rgba(0,0,0,.2)!important; }
 
@@ -1154,8 +1177,12 @@ html, body {
 .mh-line { font-size: 13px; color: #c9b890; line-height: 1.5; }
 .mh-res { font-size: 13px; color: var(--paper); line-height: 1.5; }
 .mh-res b { color: var(--cn-gold); }
-.mh-btns { display: flex; gap: 8px; margin-top: 2px; }
-.mh-btns .cup-go { flex: 1; padding: 10px 14px; font-size: 14px; }
+/* 头像即角色详情入口：加一圈可点提示，触感与其余可点元素一致 */
+.map-hero-card.hero-stack .mh-av { cursor: pointer; }
+.map-hero-card.hero-stack .mh-av:active { transform: scale(.94); }
+/* 身份行右侧纵向操作按钮（人事/计谋，或在野·仕官下的单个按钮）——与头像、姓名同一行，不再占单独一整行 */
+.mh-side-btns { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; }
+.mh-side-btns .cup-go { padding: 7px 12px; font-size: 12px; white-space: nowrap; }
 
 /* 城池面板：主标题、行动卡（复用 menu/menu-btn 全站按钮）、悬赏、名录 */
 .map-city-panel { flex: 0 0 auto; padding: 4px 12px 16px; }
@@ -1246,6 +1273,8 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
   .map-info-col { grid-column: 1; padding: 4px 0 4px 12px; }
   .map-hero-card { flex-wrap: wrap; }
   .map-hero-card .cup-go { width: 100%; text-align: center; }
+  /* mh-side-btns 是身份行里贴着头像的纵向小按钮（人事/计谋），宽屏也不应被拉伸成整行 */
+  .map-hero-card .mh-side-btns .cup-go { width: auto; }
   .map-city-panel { grid-column: 2; padding: 4px 12px 16px 0; }
 }
 
