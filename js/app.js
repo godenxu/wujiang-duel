@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608090901";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608090957";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -224,10 +224,9 @@
       const isMine = curFid && curFid === mFac.playerFaction;
       const isLord = curFid && isFactionLord(curFid, g.id);
       const postK = (mFac.posts || {})[g.id];
-      const postTxt = curFid && !isLord && postK ? ` · 官位 <b style="color:var(--cn-gold)">${Rewards.postName(postK, g.side)}</b>` : "";
+      const postTxt = curFid && !isLord && postK ? ` · 官位 <b>${Rewards.postName(postK, g.side)}</b>` : "";
       const facLine = `🚩 现效力于：${curFid ? facChip(curFid) : "<b>在野</b>"}${isLord ? ' <span class="lord-mark" title="主公">👑 主公</span>' : ""}`
-        + (curFid ? ` · 忠诚 ${loyaltyCell(mFac, curFid, g.id)}` : "") + postTxt
-        + (isMine ? ' · <b style="color:var(--cn-gold)">本势力</b>' : "");
+        + (curFid ? ` · 忠诚 ${loyaltyCell(mFac, curFid, g.id)}` : "") + postTxt;
       let btn = "";
       if (!opts.readonly && !isMine && sameSide) {
         if (isLord) {
@@ -8066,29 +8065,52 @@
       if (fid === "_player_") return `<button class="cup-go" id="map-personnel">👑 人事</button><button class="cup-go" id="map-plot">🕵️ 计谋</button>`;
       return `<button class="cup-go" id="map-indep">⚔️ 自立门户</button>`;
     },
-    // 卡片改为整体纵向堆叠、按信息类别分行：① 身份行（头像+姓名+等级评级，头像本身即入口，
-    // 点击直接打开角色详情，不再另占一个按钮）② 声望行（名声/威名——自立后两条并存，见 Campaign.addFame）
-    // ③ 官职行（官职·势力·功勋进度）④ 资源行（行动力/金币/军令）⑤ 身份行右侧纵向排布的操作按钮
-    // （在野/仕官只有一个去处，自立后是人事+计谋两个）
+    // 金币「日增」估算：势力金库收入（仅自立当主时——势力钱庄税收已与私人钱包合一，见 FactionGold）
+    // + 名下各处产业中「已委掌柜」者的逐日代收之和（掌柜代收不问身份，仕官/在野一样适用）
+    dailyGoldGain(m) {
+      let gain = m.playerFaction === "_player_" ? FactionGold.income(m, "_player_") : 0;
+      const ests = Estate.all(m);
+      Object.keys(ests).forEach(cid => {
+        const est = ests[cid];
+        if (est.manager != null && !Estate.sealed(m, cid)) gain += Estate.dailyRate(m, cid);
+      });
+      return gain;
+    },
+    // 卡片改为左右两栏：左栏是「你是谁」——头像+姓名+等级（入口不变）与其下的身份行（在野/仕官/当主）；
+    // 右栏是「你有什么」——名声+行动力、威名+军令（仅自立时有威名一说）、金币（+日增估算）三行纵向堆叠；
+    // 两栏之下横贯一行的操作大按钮（在野/仕官单按钮占满，自立后人事+计谋各半），见 identityActionBtnHtml
     heroCardHtml(m) {
       const c = RPG.char, hg = RPG.heroGeneral();
       const fid = m.playerFaction;
-      const fameLine = Campaign.isLordMode(m)
-        ? `🏯 ${FactionFame.tierName(FactionFame.get(m, "_player_"))}（${FactionFame.get(m, "_player_")}） · ⭐ ${Campaign.fameLabel(m.fame || 0)}`
-        : `⭐ ${Campaign.fameLabel(m.fame || 0)}`;
-      const resLine = `⚡<b>${m.ap}</b>/${m.apMax} · 💰<b>${Bond.gold()}</b>${fid ? ` · 📜<b>${FactionOrders.get(m, fid)}</b>/${FactionOrders.cap(m, fid)}` : ""}`;
+      const lord = Campaign.isLordMode(m);
+      const fameLine = `⭐ ${Campaign.fameLabel(m.fame || 0)} · ⚡<b>${m.ap}</b>/${m.apMax}`;
+      let factionLine = "";
+      if (lord) {
+        factionLine = `🏯 ${FactionFame.tierName(FactionFame.get(m, "_player_"))}（${FactionFame.get(m, "_player_")}） · 📜<b>${FactionOrders.get(m, fid)}</b>/${FactionOrders.cap(m, fid)}`;
+      } else if (fid) {
+        factionLine = `📜 军令 <b>${FactionOrders.get(m, fid)}</b>/${FactionOrders.cap(m, fid)}`;
+      }
+      const gain = this.dailyGoldGain(m);
+      const goldLine = `💰<b>${Bond.gold()}</b>${gain > 0 ? `<small>（日增约 ${gain}）</small>` : ""}`;
       return `<div class="map-hero-card hero-stack ${c.side}">
-        <div class="mh-top">
-          <div class="mh-av" id="mh-avatar-btn" title="角色详情">${avatarChar(c.name)}</div>
-          <div class="mh-id">
-            <div class="mh-name">${c.name}</div>
-            <div class="mh-sub">Lv.${c.level} · ${ratingChip(hg)}</div>
+        <div class="mh-grid">
+          <div class="mh-left">
+            <div class="mh-top">
+              <div class="mh-av" id="mh-avatar-btn" title="角色详情">${avatarChar(c.name)}</div>
+              <div class="mh-id">
+                <div class="mh-name">${c.name}</div>
+                <div class="mh-sub">Lv.${c.level} · ${ratingChip(hg)}</div>
+              </div>
+            </div>
+            <div class="mh-line mh-identity">${this.identityLine(m)}</div>
           </div>
-          <div class="mh-side-btns">${this.identityActionBtnHtml(m)}</div>
+          <div class="mh-right">
+            <div class="mh-line">${fameLine}</div>
+            ${factionLine ? `<div class="mh-line">${factionLine}</div>` : ""}
+            <div class="mh-line">${goldLine}</div>
+          </div>
         </div>
-        <div class="mh-line">${fameLine}</div>
-        <div class="mh-line">${this.identityLine(m)}</div>
-        <div class="mh-res">${resLine}</div>
+        <div class="mh-act-row">${this.identityActionBtnHtml(m)}</div>
       </div>`;
     },
     // 宿敌：未结缘时不显示；结缘后常驻展示战绩与终局进度，未在应战/拦路等待中时可随时主动下战书
@@ -8595,7 +8617,7 @@
       }).join("");
       openOverlay(`<div class="result-card detail-card">
         <h1>🏗️ ${cityName(cityId)} · 城建</h1>
-        ${sealed ? `<div class="wdesc" style="color:var(--cn-red)">⛔ 此城现为敌占——建筑为敌所用（城墙助其守城），夺回后原级保留、即刻为你效力。</div>` : `<div class="wdesc"><small>捐修花金币与本城专精材料（${matType.n}），不耗行动力；等级越高对繁荣度的贡献越大。</small></div>`}
+        ${sealed ? `<div class="wdesc bld-desc" style="color:var(--cn-red)">⛔ 此城现为敌占——建筑为敌所用（城墙助其守城），夺回后原级保留、即刻为你效力。</div>` : `<div class="wdesc bld-desc"><small>捐修花金币与本城专精材料（${matType.n}），不耗行动力；等级越高对繁荣度的贡献越大。</small></div>`}
         <div class="bld-list">${rows}</div>
         <div class="btns"><button class="btn-ghost" id="bld-close">离开</button></div>
       </div>`);
@@ -10023,13 +10045,17 @@
       });
       const arrow = k => key === k ? (dir > 0 ? " ▲" : " ▼") : "";
       const th = (k, label) => `<th data-sort="${k}" class="${key === k ? 'sorted' : ''}">${label}${arrow(k)}</th>`;
-      const head = `<tr>${th("name", "姓名")}${th("fac", "势力")}<th>官位</th>${th("loyal", "忠诚")}${DIMS.map(([k, l]) => th(k, l[0])).join("")}${th("rating", "评分")}<th>评级</th>${th("bond", "友谊")}${th("city", "所在城")}</tr>`;
+      const head = `<tr>${th("name", "姓名")}${th("fac", "势力")}<th>官位</th>${th("loyal", "忠诚")}${DIMS.map(([k, l]) => th(k, l[0])).join("")}${th("rating", "评分")}<th>评级</th><th>将魂</th><th>携带宝物</th>${th("bond", "友谊")}${th("city", "所在城")}</tr>`;
       const body = rows.map(({ g, hg }) => {
         const cells = DIMS.map(([k]) => `<td class="num gt-${rateLetter(hg[k])}">${hg[k]}</td>`).join("");
         const fid = (m.generalFaction || {})[g.id];
         const lordMark = fid && isFactionLord(fid, g.id) ? '<span class="lord-mark" title="主公">👑</span>' : "";
         const postK = (m.posts || {})[g.id];
         const postTxt = fid && isFactionLord(fid, g.id) ? "—" : (postK ? Rewards.postName(postK, g.side) : "—");
+        const items = Armory.itemsOf(g.id);
+        const itemsTxt = items.length
+          ? items.map(it => { const rar = Armory.rarityDef(it.rarity); return `<span style="color:${rar.color}" title="${it.name}（${rar.n}）">${it.icon}${rar.n[0]}</span>`; }).join(" ")
+          : "—";
         return `<tr data-id="${g.id}"${fid && fid === m.playerFaction ? ' class="row-mine"' : ""}>
           <td class="dt-name ${g.side}"><span class="dt-dot"></span>${g.name}${lordMark}</td>
           <td class="allgen-city">${fid ? facChip(fid) : '<span style="color:#8d8578">在野</span>'}</td>
@@ -10038,6 +10064,8 @@
           ${cells}
           <td class="dt-total">${ratingScore(hg)}</td>
           <td class="dt-grade">${ratingChip(hg)}</td>
+          <td class="dt-skl">${Skill.tag(hg)}</td>
+          <td class="dt-items">${itemsTxt}</td>
           <td class="num">${Bond.pts(g.id)}</td>
           <td class="allgen-city">${cityName(m.assign[g.id])}</td>
         </tr>`;
