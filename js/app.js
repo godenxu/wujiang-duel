@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608090957";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608091819";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -2607,9 +2607,18 @@
         this.renderDuel();
       };
     },
-    // 主角/其团队成员可亲自操控斗将单挑，其余武将只能自动接战（旁观）
+    // 主角本人与其团队成员可亲自操控斗将单挑，其余武将只能自动接战（旁观）。
+    // 根因修复：主角自立当主后，declareIndependence 会清空 Bond.data.team（团队并入势力，见该处注释），
+    // 此后 myRoster() 改走 generalFaction 取「本势力麾下」，但本函数仍死认 Bond.data.team——
+    // 团队既已清空且永不再填，自立之后但凡挑到任何一将出阵，一律被判定为"不可操控"，全部自动接战，
+    // 玩家亲自出征却连自己的爱将都点不动。主角本人（id -1）任何时候都该能亲自上阵；
+    // 自立当主后麾下武将即"本势力麾下"这一集合，理应继承团队成员原有的可操控权
     controllable(g) {
-      return !!(RPG.char && typeof Bond !== "undefined" && Bond.data && (Bond.data.team || []).includes(g.id));
+      if (!RPG.char) return false;
+      if (g.id === -1) return true;
+      const m = typeof Campaign !== "undefined" && Campaign.mapState && Campaign.mapState();
+      if (m && m.playerFaction === "_player_") return (m.generalFaction || {})[g.id] === "_player_";
+      return !!(typeof Bond !== "undefined" && Bond.data && (Bond.data.team || []).includes(g.id));
     },
     pickDuelist(foe) {
       // 三阵各遣一将：已出战者（无论胜败存亡）不得再出
@@ -6079,6 +6088,19 @@
       toast(`🚩 ${cityName(cityId)}募得新兵 ${n.toLocaleString()}，耗 ${cost} 金${n < room ? "（金币所限，未能募满）" : "（已募至满编）"}（现有驻军 ${this.get(m, cityId).toLocaleString()}）`);
       return true;
     },
+    // 按指定数量募兵（供募兵滑杆调用）：数量卡在「兵额尚余」与「金币买得起」两者之间，超额部分自动截断
+    recruitN(m, cityId, n) {
+      const room = this.cap(m, cityId) - this.get(m, cityId);
+      const affordable = Math.floor(Bond.gold() / this.RECRUIT_GOLD_PER);
+      n = Math.max(0, Math.min(room, affordable, Math.round(n)));
+      if (n <= 0) { toast("募兵数量为 0，未曾发兵"); return false; }
+      const cost = Math.ceil(n * this.RECRUIT_GOLD_PER);
+      if (!Bond.spend(cost)) { toast(`金币不足（需 ${cost} 金）`); return false; }
+      this.add(m, cityId, n);
+      Campaign.save();
+      toast(`🚩 ${cityName(cityId)}募得新兵 ${n.toLocaleString()}，耗 ${cost} 金（现有驻军 ${this.get(m, cityId).toLocaleString()}）`);
+      return true;
+    },
   };
   /* ============================================================
    *  势力国力三件套：威名（Fame）／军令（Orders）／金库（Gold）
@@ -8077,21 +8099,18 @@
       return gain;
     },
     // 卡片改为左右两栏：左栏是「你是谁」——头像+姓名+等级（入口不变）与其下的身份行（在野/仕官/当主）；
-    // 右栏是「你有什么」——名声+行动力、威名+军令（仅自立时有威名一说）、金币（+日增估算）三行纵向堆叠；
-    // 两栏之下横贯一行的操作大按钮（在野/仕官单按钮占满，自立后人事+计谋各半），见 identityActionBtnHtml
+    // 右栏是「你有什么」——名声、威名（仅自立时有此说）、金币（+日增估算）三行纵向堆叠；
+    // 两栏下方另起一条放大字号的行动力+军令行，再下方才是横贯一行的操作大按钮（人事/计谋等），
+    // 行动力与军令是每天都要盯着花的硬通货，理应比声望/金币更醒目、且紧挨着要花它们的按钮
     heroCardHtml(m) {
       const c = RPG.char, hg = RPG.heroGeneral();
       const fid = m.playerFaction;
       const lord = Campaign.isLordMode(m);
-      const fameLine = `⭐ ${Campaign.fameLabel(m.fame || 0)} · ⚡<b>${m.ap}</b>/${m.apMax}`;
-      let factionLine = "";
-      if (lord) {
-        factionLine = `🏯 ${FactionFame.tierName(FactionFame.get(m, "_player_"))}（${FactionFame.get(m, "_player_")}） · 📜<b>${FactionOrders.get(m, fid)}</b>/${FactionOrders.cap(m, fid)}`;
-      } else if (fid) {
-        factionLine = `📜 军令 <b>${FactionOrders.get(m, fid)}</b>/${FactionOrders.cap(m, fid)}`;
-      }
+      const fameLine = `⭐ ${Campaign.fameLabel(m.fame || 0)}`;
+      const factionLine = lord ? `🏯 ${FactionFame.tierName(FactionFame.get(m, "_player_"))}（${FactionFame.get(m, "_player_")}）` : "";
       const gain = this.dailyGoldGain(m);
       const goldLine = `💰<b>${Bond.gold()}</b>${gain > 0 ? `<small>（日增约 ${gain}）</small>` : ""}`;
+      const statLine = `⚡<b>${m.ap}</b>/${m.apMax}${fid ? ` · 📜<b>${FactionOrders.get(m, fid)}</b>/${FactionOrders.cap(m, fid)}` : ""}`;
       return `<div class="map-hero-card hero-stack ${c.side}">
         <div class="mh-grid">
           <div class="mh-left">
@@ -8110,6 +8129,7 @@
             <div class="mh-line">${goldLine}</div>
           </div>
         </div>
+        <div class="mh-stat-line">${statLine}</div>
         <div class="mh-act-row">${this.identityActionBtnHtml(m)}</div>
       </div>`;
     },
@@ -8654,25 +8674,45 @@
       $$(".grd-cand").forEach(el => el.onclick = () => { Guard.appoint(m, cityId, +el.dataset.id); this.openGuard(); });
       $("#grd-back").onclick = () => this.openGuard();
     },
-    /* ---- 驻军面板：查看本城驻军上限构成并募兵；驻军决定边境大战出阵兵力上限 ---- */
+    // 募兵数量滑杆的说明文案：花多少钱、募多少兵，与出阵比例滑杆同一套措辞习惯
+    recruitLabel(m, cityId, n) {
+      const cost = Math.ceil(n * Garrison.RECRUIT_GOLD_PER);
+      return `募兵 <b>${n.toLocaleString()}</b> 人　耗 <b>${cost.toLocaleString()}</b> 金　｜　募后驻军 ${(Garrison.get(m, cityId) + n).toLocaleString()}/${Garrison.cap(m, cityId).toLocaleString()}`;
+    },
+    /* ---- 驻军面板：查看本城驻军上限构成并募兵；驻军决定边境大战出阵兵力上限。
+       募兵数量原是"一键尽量补满"，现改为滑杆自选数量（0 ~ 兵额与金币两者中较小者），
+       不再是一点就把钱包掏空、把兵额一次募满，方便按需分次调度金库 ---- */
     openGarrison() {
       const m = Campaign.mapState();
       const cityId = m.curCity;
       if (!isMyCity(m, cityId) || cityDef(cityId).side === "sea") return;
       const have = Garrison.get(m, cityId), cap = Garrison.cap(m, cityId);
       const wallLv = Buildings.lv(m, cityId, "wall"), prosperLv = Prosper.lv(m, cityId);
-      const affordAll = Math.ceil((cap - have) * Garrison.RECRUIT_GOLD_PER);
+      const room = cap - have;
+      const affordable = Math.floor(Bond.gold() / Garrison.RECRUIT_GOLD_PER);
+      const sliderMax = Math.max(0, Math.min(room, affordable));
+      this._grsN = sliderMax;   // 默认拉到当前买得起、兵额也容得下的最大值，可自行下调
       openOverlay(`<div class="result-card detail-card">
         <h1>🚩 ${cityName(cityId)} · 驻军</h1>
         <div class="wdesc">现有驻军 <b>${have.toLocaleString()}</b> / 上限 <b>${cap.toLocaleString()}</b>（基础 ${Garrison.BASE_CAP.toLocaleString()} + 繁荣${prosperLv}★ ${( Prosper.lv(m,cityId) * Garrison.PROSPER_CAP_STEP).toLocaleString()} + 城墙${wallLv}级 ${(wallLv * Garrison.WALL_CAP_STEP).toLocaleString()}）<br>
         每日宿营回复 <b>${Garrison.regen(m, cityId).toLocaleString()}</b>；边境大战出阵兵力由此处驻军按你选定的出阵比例调拨，请量力而行。<br>
-        募兵每员 ${Garrison.RECRUIT_GOLD_PER} 金，💰 现有 ${Bond.gold()} 金${cap > have ? `（募满尚需 ${affordAll} 金）` : ""}</div>
+        募兵每员 ${Garrison.RECRUIT_GOLD_PER} 金，💰 现有 ${Bond.gold()} 金</div>
+        ${sliderMax > 0 ? `
+        <div class="mc-sect">🚩 募兵数量<small>（兵额尚余 ${room.toLocaleString()}，金币最多募 ${affordable.toLocaleString()}）</small></div>
+        <input type="range" id="grs-n" min="0" max="${sliderMax}" step="${Math.max(1, Math.round(sliderMax / 200))}" value="${sliderMax}" style="width:100%">
+        <div class="wdesc" id="grs-n-label">${this.recruitLabel(m, cityId, sliderMax)}</div>` : `<div class="wdesc">${room <= 0 ? "驻军已满编" : "金币不足，暂募不得一兵"}</div>`}
         <div class="btns">
-          <button class="btn-primary" id="grs-recruit" ${have >= cap ? "disabled" : ""}>💰 募兵${have >= cap ? "（已满编）" : ""}</button>
+          <button class="btn-primary" id="grs-recruit" ${sliderMax > 0 ? "" : "disabled"}>💰 募兵</button>
           <button class="btn-ghost" id="grs-close">离开</button>
         </div>
       </div>`);
-      $("#grs-recruit").onclick = () => { if (Garrison.recruit(m, cityId)) { this.render(); this.openGarrison(); } };
+      if ($("#grs-n")) {
+        $("#grs-n").oninput = (e) => {
+          this._grsN = +e.target.value;
+          $("#grs-n-label").innerHTML = this.recruitLabel(m, cityId, this._grsN);
+        };
+      }
+      $("#grs-recruit").onclick = () => { if (Garrison.recruitN(m, cityId, this._grsN)) { this.render(); this.openGarrison(); } };
       $("#grs-close").onclick = () => { closeOverlay(); this.render(); };
     },
     /* ---- 身份面板：查看官职/功勋进度，投效/领俸禄/自立门户的唯一入口 ---- */
@@ -8925,8 +8965,8 @@
           .sort((a, b) => FactionAI.hostility(m, fid, b.foe) - FactionAI.hostility(m, fid, a.foe))
           .map(f => {
             const adv = Math.round(q - FactionTop5.top5(m, f.foe, "zhi"));
-            const usable = FactionAI.PLOTS.filter(p => adv >= p.adv).length;
-            return `<button class="menu-btn plot-target" data-foe="${f.foe}"><span class="mi">${factionDef(f.foe).side === "cn" ? "🐲" : "🏯"}</span><span>${factionName(f.foe)}<small>智力差 ${adv >= 0 ? "+" : ""}${adv} · 可用 ${usable}/${FactionAI.PLOTS.length} 式 · 敌对 ${FactionAI.hostility(m, fid, f.foe)}</small></span></button>`;
+            const chance = Math.round(Math.max(0.15, Math.min(0.85, 0.4 + adv / 100)) * 100);
+            return `<button class="menu-btn plot-target" data-foe="${f.foe}"><span class="mi">${factionDef(f.foe).side === "cn" ? "🐲" : "🏯"}</span><span>${factionName(f.foe)}<small>智力差 ${adv >= 0 ? "+" : ""}${adv} · 约 ${chance}% 基础成算 · 敌对 ${FactionAI.hostility(m, fid, f.foe)}</small></span></button>`;
           }).join("")}</div>
         <div class="btns"><button class="btn-ghost" id="plot-close">离开</button></div>
       </div>`);
@@ -8937,15 +8977,15 @@
       const fid = "_player_", foe = pick.foe;
       const q = FactionTop5.top5(m, fid, "zhi"), foeQ = FactionTop5.top5(m, foe, "zhi");
       const adv = q - foeQ;
-      const usable = FactionAI.PLOTS.filter(p => adv >= p.adv);
+      // 主公亲政，用兵用计但凭己意，不因一时智谋逊于敌手就束手束脚——七式一律可选，
+      // 智力差只影响成算与效果强度（见 resolvePlot 的 chance/strength 计算，已天然兜底负值）
       const rows = FactionAI.PLOTS.map(p => {
-        const can = adv >= p.adv;
         const chance = Math.round(Math.max(0.15, Math.min(0.85, 0.4 + adv / 100)) * 100);
-        return `<button class="menu-btn plot-pick" data-k="${p.k}" ${can ? "" : "disabled"}><span class="mi">🕵️</span><span>${p.n}<small>${p.desc}${can ? ` · 约 ${chance}% 成算` : ` · 智力差需 ≥${p.adv}（现 ${Math.round(adv)}）`}</small></span></button>`;
+        return `<button class="menu-btn plot-pick" data-k="${p.k}"><span class="mi">🕵️</span><span>${p.n}<small>${p.desc} · 约 ${chance}% 成算</small></span></button>`;
       }).join("");
       openOverlay(`<div class="result-card detail-card">
         <h1>🕵️ 对${factionName(foe)}施计</h1>
-        <div class="wdesc">智力差 ${adv >= 0 ? "+" : ""}${Math.round(adv)}，可用 ${usable.length}/${FactionAI.PLOTS.length} 式。</div>
+        <div class="wdesc">智力差 ${adv >= 0 ? "+" : ""}${Math.round(adv)}——差距越大成算与效果越猛，但七式一律可自由选用。</div>
         <div class="menu" style="max-height:50vh;overflow-y:auto">${rows}</div>
         <div class="btns"><button class="btn-ghost" id="plotpick-back">返回</button></div>
       </div>`);
@@ -9624,7 +9664,14 @@
       const [a, b] = edge;
       const factionA = cityFactionId(m, a), factionB = cityFactionId(m, b);
       const pickedSet = new Set(heroFaction ? (pickedIds || []) : []);
-      const teamIds = new Set(heroFaction ? Bond.myRoster().filter(g => g.side === RPG.char.side).map(g => g.id) : []);
+      // 根因修复：自立当主后 Bond.myRoster() 已改为返回「本势力麾下全部已现身武将」（见该函数注释），
+      // 不再是仕官/在野期那种与"其余武将"泾渭分明的小型私人团队——若仍按老逻辑把 myRoster() 整体
+      // 当作"团队"来强制排除未勾选者，会把麾下几乎所有人都当成"未点选的团队成员"一并剔除，导致
+      // 候选池随机补位的兜底名额（rest）形同虚设，出征十有八九只剩你亲自勾选的寥寥数人（甚至独自一人）
+      // 出战——阵型自然只见前一两条战线有人、其余空空如也。当主时麾下诸将本就直接听你号令，无需
+      // 逐一点选才肯到场，故此处不再区分"团队/非团队"，一律交由候选池随机补满
+      const isLordWar = heroFaction === "_player_";
+      const teamIds = new Set(heroFaction && !isLordWar ? Bond.myRoster().filter(g => g.side === RPG.char.side).map(g => g.id) : []);
       // 出阵兵力：只有当此战确系玩家现效力的本势力时，出阵比例才由玩家手上的滑杆决定——
       // 若只是"声援他国内战"（heroFaction 只是同属本国、玩家并无实际号令权的一方）或全程不介入，
       // 两边的出阵比例一律交给各自所属势力的 AI 按战力对比推算（commitRatio），不再由玩家越俎代庖，

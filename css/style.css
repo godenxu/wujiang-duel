@@ -1193,6 +1193,9 @@ html, body {
 .mh-left { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .mh-right { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 4px; }
 .mh-identity { margin-top: 2px; }
+/* 行动力+军令：每天都要花的硬通货，字号加大、紧挨在操作大按钮上方，比声望/金币更醒目 */
+.mh-stat-line { font-size: 17px; font-weight: 800; color: var(--paper); text-align: center; letter-spacing: .5px; }
+.mh-stat-line b { color: var(--cn-gold); }
 /* 两栏下方横贯一行的操作大按钮：自立后人事+计谋各半，在野/仕官单按钮占满 */
 .mh-act-row { display: flex; gap: 8px; }
 .mh-act-row .cup-go { flex: 1 1 0; min-width: 0; padding: 12px; font-size: 15px; }
