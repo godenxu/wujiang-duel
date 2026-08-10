@@ -1424,17 +1424,12 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 .fb-broke { font-weight: 900; font-size: 13px; margin-left: 4px; }
 .fb-broke.my { color: #ffd75e; }
 .fb-broke.foe { color: #ff8a8a; }
-.fb-push { position: relative; display: flex; height: 26px; border-radius: 6px; overflow: hidden; background: rgba(0,0,0,.3); }
-.fb-mass { height: 100%; display: flex; align-items: center; overflow: hidden; transition: width .5s linear; }
-.fb-mass.my { background: linear-gradient(90deg, rgba(178,34,52,.45), rgba(178,34,52,.8)); justify-content: flex-start; }
-.fb-mass.foe { background: linear-gradient(270deg, rgba(42,58,111,.45), rgba(42,58,111,.85)); justify-content: flex-end; }
-/* 兵力数字嵌在颜色条内：我方靠左、敌方靠右 */
-.fb-trin { font-size: 13px; font-weight: 900; color: #fff; padding: 0 6px; white-space: nowrap; text-shadow: 0 1px 2px rgba(0,0,0,.7); }
-.fb-clashpt {
-  position: absolute; top: 50%; transform: translate(-50%, -50%); font-size: 14px; z-index: 2;
-  animation: fbClash .5s ease-in-out infinite alternate; pointer-events: none;
-}
-@keyframes fbClash { from { transform: translate(-50%, -55%) scale(.9); } to { transform: translate(-50%, -45%) scale(1.15); } }
+/* 兵力推挤的可视化已移交 #fb-canvas 全景画布，此处只留双方兵力数字一行，供精确读数 */
+.fb-lane-row2 { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 12px; font-weight: 900; }
+.fb-trin { color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.7); }
+.fb-trin.my { color: #f0c9a0; }
+.fb-trin.foe { color: #aeb9e8; }
+.fb-lane-vs { opacity: .5; font-size: 11px; }
 .fb-orders { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin: 6px 0; }
 .fb-ord-left { font-size: 12px; font-weight: 900; margin-right: 2px; }
 .fb-ord {
@@ -1445,7 +1440,20 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 /* 调速+暂停合一钮：宽度比其余军令钮更大，未点「开始总攻」前以金色高亮吸引首击；进入 ×1/×2/×4/暂停循环后转为普通样式 */
 .fb-ord.ctrl { min-width: 96px; padding: 7px 14px; }
 .fb-ord.ctrl.primary { background: var(--cn-gold); color: #241a08; border-color: var(--cn-gold); }
+/* 战报日志：全景画布已承担主要画面感，文字战报退居辅助角色，压缩高度让画布腾出更多空间 */
 .fb-log {
-  margin-top: 8px; max-height: 150px; overflow-y: auto; font-size: 12px; line-height: 1.55;
-  background: rgba(0,0,0,.25); border-radius: 8px; padding: 7px 9px;
+  margin-top: 8px; max-height: 88px; overflow-y: auto; font-size: 12px; line-height: 1.5;
+  background: rgba(0,0,0,.25); border-radius: 8px; padding: 6px 9px;
 }
+/* 挥军破阵全景战场 / 排兵布阵阵型预览：两块画布固定挂在 #fb-content 之外，不随其 innerHTML 重写而销毁重建。
+   容器须给定明确高度（与 JS 里的逻辑缓冲高度一一对应），canvas 本身按 100%/100% 填满——
+   若只靠 canvas 自身的固有宽高比在 flex 列容器里反推高度，中间的 wrap 层拿不到定高，会整体塌陷成 0 */
+.fb-canvas-wrap {
+  flex: none;   /* #screen-field 是 flex 列容器且自身 overflow-y:auto——若不锁死 flex-shrink，浏览器会把这块
+                   "min-content 很小"的画布 wrap 直接压缩到 0 高度，而不是老老实实把整页撑高、交给外层滚动 */
+  width: 100%; border-radius: 10px; overflow: hidden; margin: 8px 0;
+  border: 1px solid rgba(212,175,55,.35); background: #2a3a1c; box-shadow: inset 0 0 12px rgba(0,0,0,.4);
+}
+#fb-deploy-canvas-wrap { height: 138px; }
+#fb-canvas-wrap { height: 282px; }
+#fb-canvas, #fb-deploy-canvas { width: 100%; height: 100%; display: block; image-rendering: pixelated; image-rendering: crisp-edges; }

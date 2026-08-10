@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608092025";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608102111";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -110,6 +110,7 @@
     if (id === "rpg" || id === "map") homeBase = id;
     if (id === "home" && typeof syncHomeButtons === "function") syncHomeButtons();
     if (id !== "battle" && typeof Duel !== "undefined" && Duel.stop) Duel.stop();
+    if (id !== "field" && typeof FieldFX !== "undefined" && FieldFX.stop) FieldFX.stop();
     // 按界面切换背景乐：指定界面用 OST，其余回退芯片乐
     if (BGM[id]) AudioSystem.playFile(BGM[id]);
     else AudioSystem.playChip();
@@ -2302,6 +2303,254 @@
     $("#skg-clear").onclick = () => { onPick(null); closeOverlay(); };
   }
 
+  /* ============================================================
+   *  野战演武·挥军破阵 全景画布（FieldFX）：五线战场连成一整幅画面，沿用 Duel 模块的像素堆叠
+   *  美术语言（无平滑、方块拼装），服务于"多线拉锯"而非"两人对决"——每条战线一道横带，双方
+   *  各自一队小兵方块隔着交锋点对推，主将骑影押阵，火光/烟尘/奇袭随军令而起。
+   *  仅负责视觉，不参与任何数值判定：每帧只读取 FieldBattle 的 lanes/myPos/foePos/terrain 作画；
+   *  军令/将魂发动等离散事件由 FieldBattle 主动调用 burst() 追加一段特效，持续伤害无需特意通知——
+   *  本模块自行比对逐帧兵力差值探测"刚挨了一下"并触发交锋点火花，解耦得更彻底、不必在战斗结算
+   *  代码里到处插柱子。画布本身独立于 renderClash() 的 DOM 重绘（后者只管信息条与按钮，见
+   *  #fb-canvas 常驻于 index.html，不随 innerHTML 重写而被销毁），故下军令时的特效不会被同一帧
+   *  触发的重渲染清空。 */
+  const FieldFX = {
+    cv: null, ctx: null, raf: 0, fx: [], _prevTr: {}, _pulse: {}, _onResize: null,
+    BAND_H: 50, TOP_M: 18, BOT_M: 14, MARGIN_X: 24,
+    mount(cv) {
+      this.stop();
+      this.cv = cv; this.ctx = cv.getContext("2d"); this.ctx.imageSmoothingEnabled = false;
+      this.fx = []; this._prevTr = {}; this._pulse = {};
+      if (!this._onResize) this._onResize = () => this.resize();
+      window.addEventListener("resize", this._onResize);
+      this.resize();
+      this.start();
+    },
+    unmount() {
+      this.stop();
+      if (this._onResize) window.removeEventListener("resize", this._onResize);
+      this.cv = null; this.ctx = null;
+    },
+    resize() {
+      if (!this.cv) return;
+      const cw = this.cv.clientWidth || 320;
+      const H = this.TOP_M + this.BAND_H * 5 + this.BOT_M;
+      const W = Math.max(300, Math.min(900, Math.round(cw)));
+      if (this.cv.width !== W || this.cv.height !== H) { this.cv.width = W; this.cv.height = H; this.ctx.imageSmoothingEnabled = false; }
+    },
+    start() { if (this.raf) return; const loop = t => { this.frame(t); this.raf = requestAnimationFrame(loop); }; this.raf = requestAnimationFrame(loop); },
+    stop() { if (this.raf) { cancelAnimationFrame(this.raf); this.raf = 0; } },
+    // 追加一段离散特效：kind ∈ drum/hold/fire/scheme/raid/skill，见 drawFx
+    burst(laneK, kind) { this.fx.push({ laneK, kind, t0: performance.now() }); if (this.fx.length > 50) this.fx.shift(); },
+    shade(hex, amt) {
+      const n = parseInt(hex.slice(1), 16);
+      let r = (n >> 16) + amt, g = ((n >> 8) & 0xff) + amt, b = (n & 0xff) + amt;
+      r = Math.max(0, Math.min(255, r)); g = Math.max(0, Math.min(255, g)); b = Math.max(0, Math.min(255, b));
+      return `rgb(${r},${g},${b})`;
+    },
+    frame(now) {
+      const FB = FieldBattle;
+      if (!this.ctx || !this.cv || !FB.lanes) return;
+      const ctx = this.ctx, W = this.cv.width, H = this.cv.height;
+      ctx.clearRect(0, 0, W, H);
+      this.drawSky(ctx, W, now);
+      FB.LANES.forEach((k, i) => {
+        const L = FB.lanes[k];
+        if (!L) return;
+        const prev = this._prevTr[k];
+        if (prev && (L.myTr < prev.my - 1 || L.foeTr < prev.foe - 1)) this._pulse[k] = now;
+        this._prevTr[k] = { my: L.myTr, foe: L.foeTr };
+        this.drawBand(ctx, FB, L, k, i, W, now);
+      });
+      this.drawBanners(ctx, W, H, FB, now);
+      this.fx = this.fx.filter(f => now - f.t0 < 1500);
+    },
+    drawSky(ctx, W, now) {
+      const sky = ["#2a3a63", "#48619a", "#7c93c4"];
+      const bh = Math.ceil(this.TOP_M / sky.length);
+      sky.forEach((c, i) => { ctx.fillStyle = c; ctx.fillRect(0, i * bh, W, bh + 1); });
+      ctx.fillStyle = "rgba(255,210,120,.35)"; ctx.fillRect(W - 36, 3, 12, 12);
+      ctx.fillStyle = "#ffd45a"; ctx.fillRect(W - 34, 5, 8, 8);
+    },
+    drawBanners(ctx, W, H, FB, now) {
+      const myCol = FB.side === "cn" ? "#c1272d" : "#2b3a67";
+      const foeCol = FB.side === "cn" ? "#2b3a67" : "#c1272d";
+      this.pole(ctx, 6, H - this.BOT_M, H - this.TOP_M - 2, myCol, now, 1);
+      this.pole(ctx, W - 10, H - this.BOT_M, H - this.TOP_M - 2, foeCol, now, -1);
+    },
+    pole(ctx, x, groundY, h, col, now, dir) {
+      ctx.fillStyle = "#5a4a2a"; ctx.fillRect(x, groundY - h, 2, h);
+      ctx.fillStyle = "#e8c25a"; ctx.fillRect(x - 1, groundY - h - 2, 4, 3);
+      const wv = Math.sin(now * 0.005) * 2;
+      for (let i = 0; i < 5; i++) {
+        const fy = groundY - h + 6 + i * 8;
+        const fw = 12 + (i % 2 ? wv : -wv);
+        ctx.fillStyle = col;
+        ctx.fillRect(dir > 0 ? x + 2 : x - 2 - fw, fy, fw, 5);
+      }
+    },
+    terrainGround(FB) { return FB.terrain === "pass" ? "#4a4032" : FB.terrain === "river" ? "#33506a" : "#3a4a24"; },
+    terrainDeco(ctx, FB, mx, y0, innerW, bandH, i) {
+      const t = FB.terrain;
+      if (t === "river") {
+        ctx.fillStyle = "rgba(140,190,230,.35)";
+        const wy = y0 + bandH - 6;
+        for (let x = mx; x < mx + innerW; x += 10) ctx.fillRect(x, wy + (Math.floor(x / 10 + i) % 2), 6, 1);
+      } else if (t === "pass") {
+        ctx.fillStyle = "rgba(90,80,60,.4)";
+        for (let x = mx + 6; x < mx + innerW; x += 26) ctx.fillRect(x, y0 + bandH - 10, 6, 4);
+      } else {
+        ctx.fillStyle = "rgba(120,200,90,.25)";
+        for (let x = mx + 4; x < mx + innerW; x += 8) ctx.fillRect(x, y0 + bandH - 6, 1, 4);
+      }
+    },
+    drawBand(ctx, FB, L, k, i, W, now) {
+      const y0 = this.TOP_M + i * this.BAND_H, bandH = this.BAND_H;
+      const mx = this.MARGIN_X, innerW = W - mx * 2;
+      const base = this.terrainGround(FB);
+      ctx.fillStyle = i % 2 === 0 ? base : this.shade(base, -8);
+      ctx.fillRect(mx - 6, y0 + 2, innerW + 12, bandH - 5);
+      this.terrainDeco(ctx, FB, mx, y0, innerW, bandH, i);
+      const broken = L.broken;
+      const w = FB.laneW(L);
+      const boundaryX = mx + innerW * w / 100;
+      const midY = y0 + bandH / 2;
+      this.drawSide(ctx, FB, L, "my", mx, boundaryX, midY, now, broken);
+      this.drawSide(ctx, FB, L, "foe", boundaryX, mx + innerW, midY, now, broken);
+      if (!broken) this.drawClash(ctx, boundaryX, midY, k, now);
+      else this.drawBrokenBanner(ctx, L, mx, mx + innerW, midY);
+      this.fx.filter(f => f.laneK === k).forEach(f => this.drawFx(ctx, f, mx, boundaryX, mx + innerW, y0, bandH, midY, now));
+      const lbl = FB.posName(k);
+      ctx.font = "9px sans-serif";
+      const tw = ctx.measureText(lbl).width;
+      ctx.fillStyle = "rgba(0,0,0,.55)"; ctx.fillRect(W / 2 - tw / 2 - 4, y0 + 1, tw + 8, 11);
+      ctx.fillStyle = "#e8c25a"; ctx.textAlign = "center"; ctx.textBaseline = "top";
+      ctx.fillText(lbl, W / 2, y0 + 2);
+      ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    },
+    troopCount(tr) { return tr <= 0 ? 0 : Math.max(1, Math.min(8, Math.round(Math.sqrt(tr) / 10))); },
+    drawSide(ctx, FB, L, side, x0, x1, midY, now, broken) {
+      const tr = side === "my" ? L.myTr : L.foeTr;
+      const n = this.troopCount(tr);
+      if (n <= 0) return;
+      const loserSide = broken === "my" ? "foe" : broken === "foe" ? "my" : null;
+      let alpha = 1, retreat = 0;
+      if (loserSide === side) {
+        const t = (now - (L.brokenAt || now)) / 900;
+        alpha = Math.max(0, 1 - t);
+        if (alpha <= 0) return;
+        retreat = t * 24 * (side === "my" ? -1 : 1);
+      }
+      const armor = side === "my" ? (FB.side === "cn" ? "#e03028" : "#3858d8") : (FB.side === "cn" ? "#3858d8" : "#e03028");
+      const dark = this.shade(armor, -60);
+      const avail = Math.max(10, Math.abs(x1 - x0) - 8);
+      const rows = n > 4 ? 2 : 1;
+      const perRow = Math.ceil(n / rows);
+      const spacing = Math.max(6, Math.min(11, avail / perRow));
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      for (let r = 0; r < rows; r++) {
+        const rowY = midY + (side === "my" ? -1 : 1) * (6 + r * 9);
+        const cnt = r === 0 ? perRow : n - perRow;
+        for (let c = 0; c < cnt; c++) {
+          const t = c + r * perRow;
+          const bob = Math.sin(now * 0.006 + t) * 1.2;
+          const dist = 5 + c * spacing;
+          const px = (side === "my" ? x1 - dist : x0 + dist) + retreat;
+          this.troopSprite(ctx, px, rowY + bob, armor, dark);
+        }
+      }
+      const lx = (side === "my" ? x1 - 3 : x0 + 3) + retreat;
+      this.leaderSprite(ctx, lx, midY, armor);
+      ctx.restore();
+    },
+    troopSprite(ctx, x, y, armor, dark) {
+      ctx.fillStyle = dark; ctx.fillRect(Math.round(x - 1), Math.round(y - 1), 3, 1);
+      ctx.fillStyle = armor; ctx.fillRect(Math.round(x - 1), Math.round(y), 3, 3);
+      ctx.fillStyle = "#d8c79c"; ctx.fillRect(Math.round(x), Math.round(y - 3), 1, 3);
+    },
+    leaderSprite(ctx, x, y, armor) {
+      ctx.fillStyle = "#7a5020"; ctx.fillRect(Math.round(x - 3), Math.round(y - 1), 6, 3);
+      ctx.fillStyle = armor; ctx.fillRect(Math.round(x - 2), Math.round(y - 5), 4, 4);
+      ctx.fillStyle = "#f8d038"; ctx.fillRect(Math.round(x - 1), Math.round(y - 7), 2, 2);
+    },
+    drawClash(ctx, x, y, k, now) {
+      const pulseAt = this._pulse[k];
+      const recent = pulseAt && now - pulseAt < 350;
+      const r = recent ? Math.max(1, 6 - (now - pulseAt) / 70) : 2 + Math.sin(now * 0.01) * 0.6;
+      ctx.fillStyle = recent ? "#fff2b0" : "rgba(255,220,140,.5)";
+      ctx.fillRect(Math.round(x - r), Math.round(y - 1), Math.round(r * 2), 2);
+      ctx.fillRect(Math.round(x - 1), Math.round(y - r), 2, Math.round(r * 2));
+    },
+    drawBrokenBanner(ctx, L, x0, x1, midY) {
+      const win = L.broken === "my";
+      ctx.fillStyle = win ? "#e8c25a" : "#e53935";
+      ctx.font = "11px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(win ? "突破" : "失守", (x0 + x1) / 2, midY);
+      ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+    },
+    drawFx(ctx, f, x0, boundaryX, x1, y0, bandH, midY, now) {
+      const age = now - f.t0;
+      if (f.kind === "drum") {
+        const p = Math.min(1, age / 500); if (p >= 1) return;
+        ctx.strokeStyle = `rgba(232,194,90,${1 - p})`; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc((x0 + boundaryX) / 2, midY, 4 + p * 16, 0, Math.PI * 2); ctx.stroke();
+      } else if (f.kind === "hold") {
+        const p = Math.min(1, age / 800); if (p >= 1) return;
+        ctx.fillStyle = `rgba(180,190,200,${0.7 * (1 - p)})`;
+        for (let i = 0; i < 4; i++) ctx.fillRect(Math.round(boundaryX - 6), Math.round(y0 + 8 + i * 8), 4, 6);
+      } else if (f.kind === "fire") {
+        const p = Math.min(1, age / 700); if (p >= 1) return;
+        for (let i = 0; i < 5; i++) {
+          const fx = boundaryX + 6 + i * ((x1 - boundaryX - 10) / 5);
+          const fh = 6 + Math.sin(now * 0.02 + i) * 3;
+          ctx.fillStyle = i % 2 ? "#ff8020" : "#ffd060";
+          ctx.fillRect(Math.round(fx), Math.round(midY - fh * (1 - p)), 3, Math.round(fh));
+        }
+      } else if (f.kind === "raid") {
+        const p = Math.min(1, age / 500); if (p >= 1) return;
+        const rx = x0 + (x1 - x0) * p;
+        ctx.fillStyle = "#7a5020"; ctx.fillRect(Math.round(rx - 4), Math.round(midY - 2), 8, 4);
+        ctx.fillStyle = "#f8d038"; ctx.fillRect(Math.round(rx - 1), Math.round(midY - 5), 2, 3);
+      } else if (f.kind === "scheme") {
+        const p = Math.min(1, age / 900); if (p >= 1) return;
+        for (let i = 0; i < 3; i++) {
+          const sx = (x0 + x1) / 2 + (i - 1) * 8, sy = midY - p * 14 - i * 2;
+          ctx.fillStyle = `rgba(180,180,190,${0.5 * (1 - p)})`;
+          ctx.beginPath(); ctx.arc(sx, sy, 3 + p * 3, 0, Math.PI * 2); ctx.fill();
+        }
+      } else if (f.kind === "skill") {
+        const p = Math.min(1, age / 400); if (p >= 1) return;
+        ctx.fillStyle = `rgba(255,255,255,${0.5 * (1 - p)})`;
+        ctx.fillRect(Math.round(x0), Math.round(y0 + 2), Math.round(x1 - x0), bandH - 5);
+      }
+    },
+    // 排兵布阵阶段的静态阵型预览：按当前五线站位的（武力+统帅）合计画一道左右分推的迷你条形图，
+    // 提前一窥"照此阵容开打，各线大致谁占优"；不参与动画循环，仅在 renderDeploy 每次重渲染时重画一次
+    drawDeployPreview(cv, FB) {
+      if (!cv) return;
+      const ctx = cv.getContext("2d"); ctx.imageSmoothingEnabled = false;
+      const cw = cv.clientWidth || 300, rowH = 26, H = rowH * 5 + 8, W = Math.max(260, Math.min(900, Math.round(cw)));
+      if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+      ctx.clearRect(0, 0, W, H);
+      const mx = 6, innerW = W - mx * 2;
+      const myCol = FB.side === "cn" ? "#e03028" : "#3858d8", foeCol = FB.side === "cn" ? "#3858d8" : "#e03028";
+      FB.POSITIONS.forEach(([k, n], i) => {
+        const y0 = 4 + i * rowH;
+        const myPow = (FB.myPos[k] || []).filter(g => g).reduce((s, g) => s + g.wu + g.tong, 0);
+        const foePow = (FB.foePos[k] || []).filter(g => g).reduce((s, g) => s + g.wu + g.tong, 0);
+        const tot = myPow + foePow;
+        const w = tot > 0 ? myPow / tot * innerW : innerW / 2;
+        ctx.fillStyle = "rgba(0,0,0,.28)"; ctx.fillRect(mx, y0, innerW, rowH - 6);
+        ctx.fillStyle = myCol; ctx.fillRect(mx, y0, w, rowH - 6);
+        ctx.fillStyle = foeCol; ctx.fillRect(mx + w, y0, innerW - w, rowH - 6);
+        ctx.font = "10px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.fillStyle = "rgba(0,0,0,.6)"; ctx.fillRect(W / 2 - 12, y0, 24, rowH - 6);
+        ctx.fillStyle = "#f0dcae"; ctx.fillText(n, W / 2, y0 + (rowH - 6) / 2);
+        ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+      });
+    },
+  };
+
   const FieldBattle = {
     gen: 0, phase: null, timer: null, side: "cn",
     POSITIONS: [["van", "前锋"], ["left", "左翼"], ["right", "右翼"], ["center", "中军"], ["reserve", "后路"]],
@@ -2318,6 +2567,13 @@
       river: { n: "河畔", icon: "🌊", desc: "临水人心浮动：斗将士气波动 ×1.5；奇袭得手率 +15%" },
     },
     posName(k) { const p = this.POSITIONS.find(x => x[0] === k); return p ? p[1] : k; },
+    // 两块常驻画布（排兵预览 / 挥军破阵全景战场）互斥切换显隐，见 index.html #screen-field 内固定挂载的两个 wrap——
+    // 不随 #fb-content 的 innerHTML 重写而销毁重建，故 FieldFX 的动画与特效队列不会被同一帧的信息条重渲染打断
+    showFieldCanvas(which) {
+      const dw = $("#fb-deploy-canvas-wrap"), bw = $("#fb-canvas-wrap");
+      if (dw) dw.style.display = which === "deploy" ? "" : "none";
+      if (bw) bw.style.display = which === "battle" ? "" : "none";
+    },
     open() { this.setup(this.side || "cn"); },
     setup(side) {
       this.gen++;
@@ -2416,7 +2672,7 @@
       const b = $("#fb-ord-ctrl");
       if (b) b.textContent = this.assaultCtrlLabel();
     },
-    abort() { this.gen++; clearInterval(this.timer); this.timer = null; this.phase = null; },
+    abort() { this.gen++; clearInterval(this.timer); this.timer = null; this.phase = null; FieldFX.stop(); },
     alive(g) { return !this.dead.has(g.id); },
     // 全军智谋均值折算军令道数（约 2~6 道）
     calcOrders(arr) {
@@ -2501,7 +2757,7 @@
       else if (type === "volley") { const dmg = dealDmg(randInt(190, 320)); msg = `⭐ ${g.name}【${sk.n}】连番齐射，${pos}线重创敌军 ${dmg.toLocaleString()} 众！`; }
       else if (type === "dualblade") { const dmg = dealDmg(g.wu * 3.2); msg = `⭐ ${g.name}【${sk.n}】连番猛击，${pos}线斩敌 ${dmg.toLocaleString()} 众！`; }
       else if (type === "tempo") { const dmg = dealDmg(g.wu); const mor = boostMyMor(8); msg = `⭐ ${g.name}【${sk.n}】临阵调度，${pos}线我方士气 +${mor}、敌军受挫 ${dmg.toLocaleString()} 众！`; }
-      if (msg) { this.log("🌟 " + msg); toast("🌟 " + msg); this.flashLane(laneK, side, g.id); }
+      if (msg) { this.log("🌟 " + msg); toast("🌟 " + msg); this.flashLane(laneK, side, g.id); FieldFX.burst(laneK, "skill"); }
     },
     flashLane(laneK, side, genId) {
       const el = document.querySelector(`.fb-lane[data-lane="${laneK}"]`);
@@ -2519,6 +2775,8 @@
     /* ---------- 第〇环 · 排兵布阵 ---------- */
     renderDeploy() {
       const t = this.TERRAINS[this.terrain];
+      this.showFieldCanvas("deploy");
+      FieldFX.drawDeployPreview($("#fb-deploy-canvas"), this);
       $("#fb-content").innerHTML = `
         <div class="section-hint">两军对圆：先排兵选阵，再阵前斗将，后挥军破阵——士气贯穿全场；军令我 <b>${this.orders}</b> 道 · 敌 <b>${this.foeOrders}</b> 道（全军智谋越高军令越多），省着用</div>
         <div class="fb-banner">${t.icon} 战场·${t.n}<small>${t.desc}</small></div>
@@ -2685,6 +2943,8 @@
           mySkillCds: {}, foeSkillCds: {},
         };
       });
+      this.showFieldCanvas("battle");
+      FieldFX.mount($("#fb-canvas"));
       this.renderClash();
       // 敌我同享阵形加成——开战时把双方阵形效果都摆到明面上
       this.log(`🥁 战鼓雷动，五线接敌！我军${this.FORMS[this.myForm].n}阵（${this.FORMS[this.myForm].desc}） 对 敌军${this.FORMS[this.foeForm].n}阵（${this.FORMS[this.foeForm].desc}）${this.beats(this.myForm, this.foeForm) ? "——我阵克敌，全线攻 +12%！" : this.beats(this.foeForm, this.myForm) ? "——敌阵克我（敌攻 +12%），小心！" : ""}`);
@@ -2781,12 +3041,14 @@
           this.foeOrders--;
           if (Math.random() < 0.5) {
             const losing = open.slice().sort((a, b) => (this.lanes[a].foeTr / this.lanes[a].foeTr0) - (this.lanes[b].foeTr / this.lanes[b].foeTr0))[0];
+            FieldFX.burst(losing, "drum");
             const gain = Math.max(3, Math.round(this.laneMei("foe", losing) / 12));
             this.lanes[losing].foeMor = Math.min(100, this.lanes[losing].foeMor + gain);
             this.log(`🥁 敌阵中军擂鼓，${this.posName(losing)}线敌军士气大振（+${gain}，敌令余 ${this.foeOrders}）`);
           } else {
             const target = open.slice().sort((a, b) =>
               (this.laneZhi("foe", b) - this.laneZhi("my", b)) - (this.laneZhi("foe", a) - this.laneZhi("my", a)))[0];
+            FieldFX.burst(target, "scheme");
             const p = this.schemeP("foe", target);
             if (Math.random() < p) {
               const L = this.lanes[target];
@@ -2807,6 +3069,7 @@
       const L = this.lanes[laneK];
       if (L.broken) return;
       L.broken = winner;
+      L.brokenAt = performance.now();   // 供 FieldFX 画败退淡出/位移动画
       const nbs = { van: ["left", "right"], left: ["van", "center"], right: ["van", "center"], center: ["left", "right", "reserve"], reserve: ["center"] }[laneK] || [];
       if (winner === "my") {
         this.stats.myBreach++;
@@ -2836,6 +3099,7 @@
         const cands = this.myPos.reserve.filter(g => this.alive(g));
         if (!cands.length) { toast("后路已无可遣之将"); this.orderMode = null; this.renderClash(); return; }
         this.orders--;
+        FieldFX.burst(laneK, "raid");
         const g = cands.sort((a, b) => b.zhi - a.zhi)[0];
         const p = 0.5 + (g.zhi - 70) / 250 + (this.terrain === "river" ? 0.15 : 0);
         if (Math.random() < p) {
@@ -2856,12 +3120,14 @@
       this.orders--;
       if (kind === "drum") {
         // 擂鼓振军：提振该线士气，幅度取决于该线武将魅力总值
+        FieldFX.burst(laneK, "drum");
         const gain = Math.max(3, Math.round(this.laneMei("my", laneK) / 12));
         L.myMor = Math.min(100, L.myMor + gain);
         this.log(`🥁 擂鼓！${this.posName(laneK)}线将士闻声振奋（魅力合计 ${this.laneMei("my", laneK)}，该线士气 +${gain}）`);
       }
-      if (kind === "hold") { L.myHold = this.tickN + 8; this.log(`🛡️ 鸣金稳守！${this.posName(laneK)}线我军守备倍增、结阵如山（8 刻）`); }
+      if (kind === "hold") { FieldFX.burst(laneK, "hold"); L.myHold = this.tickN + 8; this.log(`🛡️ 鸣金稳守！${this.posName(laneK)}线我军守备倍增、结阵如山（8 刻）`); }
       if (kind === "fire") {
+        FieldFX.burst(laneK, "fire");
         const master = this.armyHas("my", "firemaster");
         const burn = randInt(800, 1500) * (master ? 2 : 1);
         L.foeTr = Math.max(0, L.foeTr - burn);
@@ -2871,6 +3137,7 @@
         if (L.foeTr <= 0) this.breach("my", laneK);
       }
       if (kind === "scheme") {
+        FieldFX.burst(laneK, "scheme");
         // 计谋成败看该战线上敌我武将智谋之和（含将魂修正：连环/奸雄）
         const myZ = this.laneZhi("my", laneK), foeZ = this.laneZhi("foe", laneK);
         const p = this.schemeP("my", laneK);
@@ -2934,14 +3201,14 @@
       });
       return `<span class="fb-skillstack ${side}">${items.join("")}</span>`;
     },
+    // 兵力推挤的可视化已移交 #fb-canvas 全景画布（见 FieldFX.drawBand），此处只保留信息条与点击下令的
+    // 命中区——姓名/士气/战线名一行，双方兵力数字一行，不再重复画一条纯文字的色条推挤
     laneHtml(k) {
       const L = this.lanes[k];
       const myGs = this.myPos[k].map(g => this.alive(g) ? g.name : `<s>${g.name}</s>`).join("、");
       const foeGs = this.foePos[k].map(g => this.alive(g) ? g.name : `<s>${g.name}</s>`).join("、");
       const state = L.broken === "my" ? `<span class="fb-broke my">突破！</span>` : L.broken === "foe" ? `<span class="fb-broke foe">失守…</span>` : "";
       const pickable = this.orderMode && !L.broken;
-      const w = this.laneW(L);
-      // 最左/最右为将魂技能钮；中间两行：上行「己方姓名·己方士气·战线名·敌方士气·敌方姓名」，下行兵力色条
       return `<div class="fb-lane ${L.broken ? "done" : ""} ${pickable ? "pickable" : ""}" data-lane="${k}">
         ${this.skillBadgeHtml("my", k)}
         <div class="fb-lane-body">
@@ -2952,10 +3219,10 @@
             <span class="fb-lmor foe" id="fb-lmf-${k}">💪${Math.round(L.foeMor)}</span>
             <span class="fb-lane-foe">${foeGs}</span>
           </div>
-          <div class="fb-push">
-            <div class="fb-mass my" style="width:${w}%"><span class="fb-trin" id="fb-ltrm-${k}">${Math.round(L.myTr).toLocaleString()}</span></div>
-            <div class="fb-clashpt" style="left:${w}%">${L.broken ? "" : "💥"}</div>
-            <div class="fb-mass foe" style="width:${100 - w}%"><span class="fb-trin" id="fb-ltrf-${k}">${Math.round(L.foeTr).toLocaleString()}</span></div>
+          <div class="fb-lane-row2">
+            <span class="fb-trin my" id="fb-ltrm-${k}">${Math.round(L.myTr).toLocaleString()}</span>
+            <span class="fb-lane-vs">⚔</span>
+            <span class="fb-trin foe" id="fb-ltrf-${k}">${Math.round(L.foeTr).toLocaleString()}</span>
           </div>
         </div>
         ${this.skillBadgeHtml("foe", k)}
@@ -2991,11 +3258,6 @@
         const el = document.querySelector(`.fb-lane[data-lane="${k}"]`);
         if (!el) return;
         const L = this.lanes[k];
-        const w = this.laneW(L);
-        const my = el.querySelector(".fb-mass.my"), foe = el.querySelector(".fb-mass.foe"), pt = el.querySelector(".fb-clashpt");
-        if (my) my.style.width = w + "%";
-        if (foe) foe.style.width = (100 - w) + "%";
-        if (pt) { pt.style.left = w + "%"; if (L.broken) pt.textContent = ""; }
         const lm = $(`#fb-ltrm-${k}`), lf = $(`#fb-ltrf-${k}`);
         if (lm) lm.textContent = Math.round(L.myTr).toLocaleString();
         if (lf) lf.textContent = Math.round(L.foeTr).toLocaleString();
@@ -3050,6 +3312,7 @@
     finish(won, reason) {
       clearInterval(this.timer); this.timer = null;
       this.phase = "done";
+      FieldFX.stop();
       if (this.external) { this.finishExternal(won, reason); return; }
       if (!won) { this.showResult(false, reason, ""); return; }
       openOverlay(`<div class="result-card">
@@ -10909,7 +11172,7 @@
 
   // 势力系统的推演调参需要能脱离 UI 直接跑上百天（逐日点「宿营」既慢又会被各种弹窗打断），
   // 故与 window.Skill / window.FieldBattle 同例，导出一个只读的自动化测试句柄
-  window.__wj = { Campaign, FactionAI, FactionFame, FactionOrders, FactionGold, FactionTop5, Loyalty, PlayerRank, Garrison, Prosper, Bond, RPG, MapUI, Buildings, BUILD_TYPES, cityBuildOptions, Estate, Armory, Rewards, DB, CITIES, FACTIONS, cityFactionId, factionCityCount, factionName, liveFactionIds, isRealFaction, adjCities, factionDef, isFactionLord, factionGenerals };
+  window.__wj = { Campaign, FactionAI, FactionFame, FactionOrders, FactionGold, FactionTop5, Loyalty, PlayerRank, Garrison, Prosper, Bond, RPG, MapUI, Buildings, BUILD_TYPES, cityBuildOptions, Estate, Armory, Rewards, DB, CITIES, FACTIONS, cityFactionId, factionCityCount, factionName, liveFactionIds, isRealFaction, adjCities, factionDef, isFactionLord, factionGenerals, FieldFX };
 
   document.addEventListener("DOMContentLoaded", init);
 })();
