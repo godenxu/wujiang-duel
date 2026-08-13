@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608102111";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608132206";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -6309,8 +6309,11 @@
     set(m, cityId, v) { this.all(m)[cityId] = Math.max(0, Math.min(this.cap(m, cityId), Math.round(v))); },
     add(m, cityId, n) { if (n) this.set(m, cityId, this.get(m, cityId) + n); },
     spend(m, cityId, n) { this.set(m, cityId, this.get(m, cityId) - n); },
-    // 宿营时全图城池（不分敌我）同步回复驻军，繁荣越高恢复越快
-    tickAll(m) { CITIES.filter(c => c.side !== "sea").forEach(c => this.add(m, c.id, this.regen(m, c.id))); },
+    // 宿营时全图城池（不分敌我）同步回复驻军，繁荣越高恢复越快。
+    // 根因修复：对马岛（对马番所）原被排除在外，导致此地驻军只出不进——一旦被攻占并用其驻军
+    // 杀奔对岸，对马岛自身就此归零且永不回复，往后谁占了它都无法再借道继续进攻，中日双方一年多
+    // 都卡死在这座中转岛上寸步难进。对马岛虽不能筑城墙（无城建选项），但驻军理应与其余城池一视同仁地回补
+    tickAll(m) { CITIES.forEach(c => this.add(m, c.id, this.regen(m, c.id))); },
     // 募兵：一键花钱尽量补满至上限，金币不足则按现有金币折算尽力募集（不设次数/行动力限制——
     // 补满一城所需总花费恒定为 (上限-现存)×0.5 金，分几次点击花的钱都一样，无套利空间）
     recruit(m, cityId) {
@@ -8512,9 +8515,10 @@
       const guard = Guard.of(m, m.curCity);
       return `<button class="menu-btn" id="map-guard"><span class="mi">🛡️</span><span>守将<small>${guard ? `${guard.name} 驻守 · 六维+${Guard.STAT_BONUS}` : "空缺 · 可委任驻守"}</small></span></button>`;
     },
-    // 驻军按钮：本势力城池（非海路中转）可查看驻军存量并募兵——驻军是势力交战的本钱，须效力于据有此城的势力才能调度
+    // 驻军按钮：本势力城池可查看驻军存量并募兵——驻军是势力交战的本钱，须效力于据有此城的势力才能调度。
+    // 对马岛（海路中转）虽无法筑城建，但驻军照常可募可回复，否则占岛之后无兵可用、无法借道继续攻略对岸
     garrisonBtnHtml(m) {
-      if (!isMyCity(m, m.curCity) || cityDef(m.curCity).side === "sea") return "";
+      if (!isMyCity(m, m.curCity)) return "";
       const have = Garrison.get(m, m.curCity), cap = Garrison.cap(m, m.curCity);
       return `<button class="menu-btn" id="map-garrison"><span class="mi">🚩</span><span>驻军<small>${have.toLocaleString()}/${cap.toLocaleString()}${have >= cap ? "（满编）" : ""}</small></span></button>`;
     },
@@ -8923,7 +8927,7 @@
     openGarrison() {
       const m = Campaign.mapState();
       const cityId = m.curCity;
-      if (!isMyCity(m, cityId) || cityDef(cityId).side === "sea") return;
+      if (!isMyCity(m, cityId)) return;
       const have = Garrison.get(m, cityId), cap = Garrison.cap(m, cityId);
       const wallLv = Buildings.lv(m, cityId, "wall"), prosperLv = Prosper.lv(m, cityId);
       const room = cap - have;
@@ -9643,6 +9647,7 @@
       const followUp = () => {
         if (isTournamentDay(m.day) && this.checkTournament(m)) return true;
         if (isMonthEnd(m.day) && this.checkBorderWar(m)) return true;
+        if (this.checkFactionRaid(m)) return true;
         if (this.checkAmbush(m)) return true;
         if (Nemesis.checkCampChallenge(m)) return true;
         return false;
@@ -9711,12 +9716,50 @@
       this.openBorderWarPicker(m, pool[randInt(0, pool.length - 1)]);
       return true;
     },
+    /* ---- AI 主动犯境：填补玩家现效力势力（含自立当主与仕官）从不被 AI 主动攻打的空白 ----
+     * 根因：FactionAI.war()（诸侯日常内耗的即时结算版本）显式把 m.playerFaction 排除在可攻目标之外
+     * （`f.foe !== m.playerFaction`），本意是不让玩家的城池在毫无 UI、毫无还手余地的情况下被静默攻陷；
+     * 但月末国战只打跨国边境，同国接壤的 AI 邻居从此对玩家形同不存在——玩家可以放心大胆地只吞并邻居、
+     * 永无后顾之忧，边境战的攻守张力单方面消失。此处补一条同样走正式野战→攻城两段式流程（含排兵斗将/
+     * 挥军破阵的完整 UI）的每日小概率检查，专打"接壤玩家势力"这一此前被 FactionAI.war() 硬性剔除的缺口，
+     * 不改动 war() 本身的即时结算逻辑（避免打乱其原有的 AI 对 AI 内耗节奏与已校准过的数值）。 */
+    FACTION_RAID_CHANCE: 0.1,
+    checkFactionRaid(m) {
+      if (!m.playerFaction || !isRealFaction(m.playerFaction)) return false;
+      if (Math.random() >= this.FACTION_RAID_CHANCE) return false;
+      const fid = m.playerFaction;
+      const edges = borderEdges(m).filter(([a, b]) => {
+        const fa = cityFactionId(m, a), fb = cityFactionId(m, b);
+        return (fa === fid && isRealFaction(fb)) || (fb === fid && isRealFaction(fa));
+      });
+      if (!edges.length) return false;
+      // 按"敌方攻我方之利"打分：敌强我弱、宿怨越深越可能来犯；正在休整（weary）的势力这天不会犯境
+      const scored = edges.map(([a, b]) => {
+        const fa = cityFactionId(m, a), fb = cityFactionId(m, b);
+        const foe = fa === fid ? fb : fa;
+        const to = fa === fid ? a : b, from = fa === fid ? b : a;
+        return { edge: [a, b], foe,
+          score: (FactionAI.warStrength(m, foe, from) - FactionAI.defStrength(m, fid, to)) + FactionAI.hostility(m, foe, fid) * 3 };
+      }).filter(x => !FactionAI.weary(m, x.foe));
+      if (!scored.length) return false;
+      scored.sort((x, y) => y.score - x.score);
+      const top = scored.slice(0, Math.min(2, scored.length));
+      const pick = top[randInt(0, top.length - 1)];
+      if (pick.score < -400) return false;   // 敌方毫无胜算时不会以卵击石，宁可再等等
+      FactionAI.setWeary(m, pick.foe, 3);
+      toast(`⚠️ ${factionName(pick.foe)}举兵来犯！`);
+      this._sortieMode = false;
+      this.openBorderWarPicker(m, pick.edge);
+      return true;
+    },
     /* 主动出征：玩家随时可从本势力城池向接壤的非本势力城池发兵——耗 1 行动力 + 3 道本势力军令
      * （军令由威名决定回复速度，天然限制了出征频率，无需另设冷却）。战斗流程完全复用已验证的
      * 野战→攻城两段式，只是 edge 由玩家点选、声援方强制为本势力。 */
     SORTIE_ORDERS: 3,
+    // 根因修复：对马岛此前被列为"非海路中转不可出征"的例外，占岛之后既无法在此募兵回补、
+    // 出征入口又被这里堵死——两国真要跨海一统，对马岛恰恰是唯一必经的桥头堡，理应可从此处出征
     sortieTargets(m) {
-      if (!m.playerFaction || !isMyCity(m, m.curCity) || cityDef(m.curCity).side === "sea") return [];
+      if (!m.playerFaction || !isMyCity(m, m.curCity)) return [];
       return adjCities(m.curCity).filter(id => cityFactionId(m, id) !== m.playerFaction && isRealFaction(cityFactionId(m, id)));
     },
     sortieBtnHtml(m) {
@@ -9811,17 +9854,25 @@
       }
       const heroCity = heroFaction === factionA ? a : b;
       const picks = this._bwPicks;
+      // 自立当主后 Bond.myRoster() 返回本势力麾下全部已现身武将，人数动辄数十——原先每点选一人就
+      // 整块重渲染弹窗，滚动条随之弹回顶部，选到后面的人等于每次都要重新滚一遍。改为：列表本身按评分
+      // 降序排定后不再因点选而重排/重绘，只切换被点按钮的高亮与顶部计数，滚动位置纹丝不动；
+      // 另加一个按姓名过滤的搜索框，人多时不必硬滚，直接打字定位
       const pool = Bond.myRoster().filter(g => g.side === RPG.char.side).slice().sort((x, y) => ratingScore(y) - ratingScore(x));
-      const heroRow = `<button class="buff-btn bw-pick ${picks.has(-1) ? 'active' : ''}" data-id="-1"><span class="bi">👑</span><span class="bt"><b>${RPG.char.name}（你）</b><small>评分 ${ratingScore(RPG.heroGeneral())}</small></span></button>`;
-      const rows = [heroRow].concat(pool.map(g => `<button class="buff-btn bw-pick ${picks.has(g.id) ? 'active' : ''}" data-id="${g.id}"><span class="bi">${avatarChar(g.name)}</span><span class="bt"><b>${g.name}</b><small>评分 ${ratingScore(g)}</small></span></button>`));
+      const entries = [{ id: -1, icon: "👑", name: `${RPG.char.name}（你）`, score: ratingScore(RPG.heroGeneral()) }]
+        .concat(pool.map(g => ({ id: g.id, icon: avatarChar(g.name), name: g.name, score: ratingScore(g) })));
+      const pickBtnHtml = e =>
+        `<button class="buff-btn bw-pick ${picks.has(e.id) ? 'active' : ''}" data-id="${e.id}"><span class="bi">${e.icon}</span><span class="bt"><b>${e.name}</b><small>评分 ${e.score}</small></span></button>`;
+      const rows = entries.map(pickBtnHtml);
       // 出阵比例滑杆只在"此战确系本势力"时才由玩家亲自操盘；若只是声援同属本国的他家内战，
       // 兵力调度权本不在玩家手上，改由该势力 AI 按敌我战力对比自行决定（见 resolveBorderWar 的 commitOf）
       const isOwnFactionWar = heroFaction === m.playerFaction;
       openOverlay(`<div class="result-card detail-card">
         <h1>⚔️ 边境战事</h1>
         <div class="wdesc">冲突爆发：<b>${cityName(a)}（${defA.n}）</b> vs <b>${cityName(b)}（${defB.n}）</b>，你声援 <b>${factionDef(heroFaction).n}</b> 一方。主角本人一经勾选必定亲历野战；团队成员纵经点选，仍需看当日调度，按概率随军，未必人人到场（其余已现身武将由候选池随机补满，无需你操心）。此战分两阵：先打<b>野战</b>，得胜一方才能乘胜杀奔败方城下再打一场<b>攻城战</b>，攻克方能真正夺城。勾选自己即视为亲历野战，若野战得胜，你将随军继续亲征攻城——攻克可得所夺城池金币日产出 <b>${this.BORDER_WAR_GOLD_DAYS}</b> 倍犒赏，未克也有一份约合十天产出的掳掠慰劳金；野战落败或不勾选自己，则此战胜负不动你的钱袋。</div>
-        <div class="buff-list" style="max-height:32vh;overflow-y:auto">${rows.join("")}</div>
-        <div class="wdesc">已选 <b>${picks.size}</b> 员（至多 10 员）</div>
+        <input id="bw-search" placeholder="🔍 搜索武将姓名…" style="width:100%;box-sizing:border-box;padding:9px 10px;border-radius:8px;border:1px solid rgba(212,175,55,.35);background:rgba(0,0,0,.3);color:var(--paper);font-family:inherit;font-size:14px;margin-bottom:6px">
+        <div class="buff-list" id="bw-pick-list" style="max-height:32vh;overflow-y:auto">${rows.join("")}</div>
+        <div class="wdesc">已选 <b id="bw-pick-count">${picks.size}</b> 员（至多 10 员，评分降序排列，已选者高亮）</div>
         ${isOwnFactionWar ? `
         <div class="mc-sect">🚩 出阵比例<small>（兵力从${cityName(heroCity)}驻军中调拨，出得越多越经打，但家底也空得越多）</small></div>
         <input type="range" id="bw-ratio" min="10" max="100" step="5" value="${this._bwRatio}" style="width:100%">
@@ -9829,12 +9880,25 @@
         <div class="wdesc">🚩 此战并非本势力亲征，出阵比例由 <b>${factionDef(heroFaction).n}</b> 按敌我战力对比自行调度，不由你操盘。</div>`}
         <div class="btns"><button class="btn-primary" id="bw-go">开战</button></div>
       </div>`, { modal: true });
-      $$(".bw-pick").forEach(btn => btn.onclick = () => {
-        const id = +btn.dataset.id;
-        if (picks.has(id)) picks.delete(id);
-        else { if (picks.size >= 10) { toast(`最多派遣 10 员出战`); return; } picks.add(id); }
-        this.renderBorderWarPicker(m, edge);
-      });
+      const bindPickBtns = () => {
+        $$(".bw-pick").forEach(btn => btn.onclick = () => {
+          const id = +btn.dataset.id;
+          if (picks.has(id)) picks.delete(id);
+          else { if (picks.size >= 10) { toast(`最多派遣 10 员出战`); return; } picks.add(id); }
+          btn.classList.toggle("active", picks.has(id));
+          const cnt = $("#bw-pick-count"); if (cnt) cnt.textContent = picks.size;
+        });
+      };
+      bindPickBtns();
+      const search = $("#bw-search");
+      if (search) search.oninput = () => {
+        const kw = search.value.trim().toLowerCase();
+        const list = $("#bw-pick-list");
+        if (!list) return;
+        const filtered = kw ? entries.filter(e => e.name.toLowerCase().includes(kw)) : entries;
+        list.innerHTML = filtered.length ? filtered.map(pickBtnHtml).join("") : `<div class="empty">未找到符合条件的武将</div>`;
+        bindPickBtns();
+      };
       // 拖动滑杆只即时刷新自身文字标签，不整体重渲染（否则拖拽手感会被打断）；松手后的最终值随「开战」一并读取
       // 非本势力亲征时压根不渲染滑杆（见上），此处需判空，否则每次弹窗都会因 null.oninput 报错
       if ($("#bw-ratio")) {
@@ -10403,7 +10467,8 @@
         smith: Armory.TYPES[hashStr(c.id) % Armory.TYPES.length].n,
         estTxt, dailyGold, dailyTxt, appeared: appeared.length, total: locals.length,
         bounty: ((m.bounties && m.bounties[c.id]) || []).length,
-        troops: c.side === "sea" ? null : Garrison.get(m, c.id), troopsCap: c.side === "sea" ? null : Garrison.cap(m, c.id),
+        // 对马岛虽是海路中转站，驻军照常回补募兵，总览表不再对其隐藏兵力数字（见 Garrison.tickAll 的根因修复）
+        troops: Garrison.get(m, c.id), troopsCap: Garrison.cap(m, c.id),
       };
     },
     render() {
@@ -10478,7 +10543,7 @@
           ⚒️ 铁匠专精：${r.smith} · 🏪 集市：${factorTxt}<br>
           🏗️ 城建：${buildHtml}<br>
           🛡️ 守将：${guard ? guard.name : "无"}${captNames ? ` · ⛓️ 狱中：${captNames}` : ""}<br>
-          🚩 驻军：${r.troops == null ? "—（海路中转站不设驻军）" : `${r.troops.toLocaleString()} / ${r.troopsCap.toLocaleString()}（每日回复 ${Garrison.regen(m, cityId).toLocaleString()}）`}<br>
+          🚩 驻军：${r.troops.toLocaleString()} / ${r.troopsCap.toLocaleString()}（每日回复 ${Garrison.regen(m, cityId).toLocaleString()}）<br>
           🏠 产业：${estHtml}<br>
           🚶 本地已现身武将（${r.appeared}/${r.total}）：${appearedNames}<br>
           📋 悬赏（${bounties.length}）：${bounties.map(b => `${b.legendary ? "⭐" : ""}${b.desc}`).join("；") || "暂无"}<br>
