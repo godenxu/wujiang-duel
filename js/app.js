@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608161438";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608161720";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -3414,7 +3414,7 @@
   const GridZoom = { scale: 1, x: 0, y: 0 };   // 棋盘双指缩放/拖动状态，跨 render() 持久，命名与 MapZoom 区分避免顶层 const 撞名
   const GridBattle = {
     gen: 0, phase: null,
-    COLS: 12, ROWS: 9,
+    COLS: 13, ROWS: 9,
     TERRAINS: {
       plain: { n: "平地", icon: "🌾", moveCost: 1, defMul: 1 },
       hill:  { n: "丘陵", icon: "⛰️", moveCost: 2, defMul: 1.25 },
@@ -3546,17 +3546,20 @@
       this.logLines = [];
       this.myOrders = this.calcOrders(this.mine); this.foeOrders = this.calcOrders(this.foes);
       this.orderMode = null;
-      this.selectedUnit = null; this.selPhase = null; this.actionMode = null; this.deploySel = null; this.matchupOpen = false;
+      this.selectedUnit = null; this.selPhase = null; this.actionMode = null; this.deploySel = null;
+      this.myCampSiege = 0; this.foeCampSiege = 0;   // 大本营围城计数：连续 3 回合被占领即视为攻破
       this.busy = false;
       showScreen("fieldgrid");
       this.renderDeploy();
     },
-    // 全军智谋均值折算军令道数（约 2~6 道），每回合按当前存活武将重新核算
+    // 全军统帅+智力均值折算每回合军令恢复量（约 2~6 道）；军令不再是"每回合推倒重算"，
+    // 而是上限 10 道的累积池——恢复量按当前存活武将实时重算，折损越重恢复越慢，见 endTurnCycle
     calcOrders(arr) {
       if (!arr.length) return 2;
-      const avg = arr.reduce((s, g) => s + g.zhi, 0) / arr.length;
-      return Math.max(2, Math.min(6, Math.round((avg - 30) / 12)));
+      const avg = arr.reduce((s, g) => s + (g.tong + g.zhi) / 2, 0) / arr.length;
+      return Math.max(2, Math.min(6, Math.round((avg - 30) / 10)));
     },
+    ORDERS_CAP: 10,
 
     /* ---------- 共用查询 ---------- */
     unitAt(r, c) {
@@ -3656,7 +3659,11 @@
       let dmg = 220 * (att.atk * this.skillAtkMul(att) * formBonus(att, "atk") * beatBonus() * moraleMul)
         / Math.max(1, def.def * this.skillDefMul(def) * defTerr.defMul * formBonus(def, "def"))
         * (0.85 + Math.random() * 0.3);
-      if (flankers > 0) dmg *= 1 + Math.min(2, flankers) * 0.25;
+      // 夹击伤害改为按参战总人数（含发起者本人）取固定倍率：2 人 133%、3 人 167%、4 人及以上封顶 200%
+      if (flankers > 0) {
+        const n = flankers + 1;
+        dmg *= n >= 4 ? 2.0 : n === 3 ? 1.67 : 1.33;
+      }
       if (def.standDef) dmg *= 0.85;
       // 暴击：由攻方「魅力」决定（与单挑同一套公式），中则伤害 ×1.7
       let crit = false;
@@ -3685,8 +3692,15 @@
     syncTopBars() {
       const root = $("#fg-content"); if (!root) return;
       const vs = root.querySelector(".fg-area-vsbar"); if (vs) vs.innerHTML = this.vsbarHtml();
-      const mu = root.querySelector(".fg-area-matchup"); if (mu) mu.innerHTML = this.matchupAreaHtml();
-      this.bindMatchupToggle(root);
+      const mu = root.querySelector(".fg-area-matchup"); if (mu) mu.innerHTML = this.hintLineHtml();
+      const vb = $("#fg-vsbar-open", root); if (vb) vb.onclick = () => this.showMatchupOverlay();
+      this.syncTopbarTitle();
+    },
+    // 顶栏标题行：把"我方回合·第N回合"挪到最上面的主标题（野战演武）那一行、居中显示
+    syncTopbarTitle() {
+      const h2 = $("#screen-fieldgrid .topbar h2"); if (!h2) return;
+      if (this.phase === "battle") h2.textContent = `${this.turnSide === "my" ? "🟢 我方回合" : "🔴 敌方回合"} · 第 ${this.turnN} 回合`;
+      else h2.textContent = "野战演武";
     },
     // 攻击画面感：挥砍/受创闪动、暴击全屏微闪、伤害数字浮现于目标格，全程配以音效——先播完这段短促演出，
     // 再交回调用方去做真正的整块重绘（renderBattle），避免动画节点被同一帧的 innerHTML 重写瞬间冲掉
@@ -3989,6 +4003,13 @@
       }
     },
     endMyTurn() {
+      // 结束回合时，尚未行动的我方武将自动转入待命——未曾挪动过的同样吃到待命 +15% 防的加成，
+      // 与手动点「待命」按钮完全一致，玩家不必逐个补点才能吃满这份增益
+      this.myUnits.forEach(u => {
+        if (!u.alive || u.acted) return;
+        if (!u.moved) u.standDef = true;
+        u.acted = true;
+      });
       this.selectedUnit = null; this.selPhase = null;
       this.turnSide = "foe";
       this.renderBattle();
@@ -4060,7 +4081,14 @@
           u.moved = true; target = bestTarget;
         } else {
           const lowHp = u.hp < u.hpMax * 0.25;
-          const dest = lowHp ? this.foeCamp : this.nearestEnemyPos(u, enemies);
+          // 大本营策略：己方大营（foeCamp）已被围困或有敌军逼近时优先回防；否则在没有迫切战斗任务时
+          // 有三成概率主动向对方大本营（myCamp）进军，伺机围城——不再只会一味扑向最近的敌军
+          const campThreatened = this.foeCampSiege > 0 || enemies.some(e => this.manhattan(e, this.foeCamp) <= 2);
+          let dest;
+          if (lowHp) dest = this.foeCamp;
+          else if (campThreatened && this.manhattan(u, this.foeCamp) <= 5) dest = this.foeCamp;
+          else if (Math.random() < 0.3) dest = this.myCamp;
+          else dest = this.nearestEnemyPos(u, enemies);
           const best = reach.slice().sort((a, b) =>
             (Math.abs(a[0] - dest.r) + Math.abs(a[1] - dest.c)) - (Math.abs(b[0] - dest.r) + Math.abs(b[1] - dest.c)))[0];
           if (best) await this.animateMove(u, this.findPath(u, best[0], best[1]) || [best]);
@@ -4101,12 +4129,21 @@
         u.standDef = false; u.moved = false;
         if (u.skCd > 0) u.skCd--;
       });
-      // 军令每回合初始重置（design 3.3），按当前存活武将重新核算道数——折损越重、调度越吃紧
-      this.myOrders = this.calcOrders(this.myUnits.filter(u => u.alive).map(u => u.g));
-      this.foeOrders = this.calcOrders(this.foeUnits.filter(u => u.alive).map(u => u.g));
+      // 军令改为累积池：本回合未用完的军令带到下一回合，叠加新一轮恢复量，封顶 ORDERS_CAP（10）道
+      this.myOrders = Math.min(this.ORDERS_CAP, this.myOrders + this.calcOrders(this.myUnits.filter(u => u.alive).map(u => u.g)));
+      this.foeOrders = Math.min(this.ORDERS_CAP, this.foeOrders + this.calcOrders(this.foeUnits.filter(u => u.alive).map(u => u.g)));
+      // 大本营围城：敌军连续站在我方大营、或我军连续站在敌方大营满 3 回合，即视为攻破——
+      // 每回合末结算一次，中途换防（占领者撤走）就清零重新计，不是"累计出现过 3 次"
+      const foeInMyCamp = this.foeUnits.some(x => x.alive && x.r === this.myCamp.r && x.c === this.myCamp.c);
+      const myInFoeCamp = this.myUnits.some(x => x.alive && x.r === this.foeCamp.r && x.c === this.foeCamp.c);
+      this.myCampSiege = foeInMyCamp ? (this.myCampSiege || 0) + 1 : 0;
+      this.foeCampSiege = myInFoeCamp ? (this.foeCampSiege || 0) + 1 : 0;
+      if (foeInMyCamp) this.log(`⚠️ 我方大营遭敌军占据，已围 ${this.myCampSiege}/3 回合！`);
+      if (myInFoeCamp) this.log(`🔥 我军已占据敌方大营，围困 ${this.foeCampSiege}/3 回合！`);
+      if (this.foeCampSiege >= 3) { this.finish(true, "大军攻破敌方大营，敌军土崩瓦解"); return; }
+      if (this.myCampSiege >= 3) { this.finish(false, "大营失守三回合，全军溃败"); return; }
       if (this.checkBattleEnd()) return;
       this.turnN++;
-      if (this.turnN > 30) { this.finish(this.totalHp("my") >= this.totalHp("foe"), "鏖战三十回合，未分胜负，按存兵多寡定成败"); return; }
       this.turnSide = "my";
       this.myUnits.forEach(u => { u.acted = false; });
       this.log(`—— 第 ${this.turnN} 回合 ——`);
@@ -4160,7 +4197,8 @@
           let cls = "fg-cell fg-t-" + terr;
           if (opts.reachSet && opts.reachSet.has(r + "," + c)) cls += " fg-reach";
           if (opts.enemySet && opts.enemySet.has(r + "," + c)) cls += " fg-enemy-in-range";
-          if (this.selectedUnit && u === this.selectedUnit) cls += " fg-selected";
+          const selUnit = opts.selectedUnit || this.selectedUnit;
+          if (selUnit && u === selUnit) cls += " fg-selected";
           let token = "";
           if (u) {
             const pct = Math.max(0, u.hp / u.hpMax);
@@ -4181,22 +4219,38 @@
           } else {
             token = `<span class="fg-terrain-icon">${this.TERRAINS[terr].icon}</span>`;
           }
-          html += `<div class="${cls}" data-r="${r}" data-c="${c}">${token}</div>`;
+          // 大本营围城光圈：不论格上有没有棋子都要显示，进度对应围了几个回合（满 3 即破营）
+          let siegeHtml = "";
+          if (terr === "camp" && this.phase === "battle") {
+            const isMy = r === this.myCamp.r && c === this.myCamp.c;
+            const isFoe = r === this.foeCamp.r && c === this.foeCamp.c;
+            const siege = isMy ? (this.myCampSiege || 0) : isFoe ? (this.foeCampSiege || 0) : 0;
+            if (siege > 0) siegeHtml = `<span class="fg-siege-ring s${Math.min(3, siege)}" title="已被围 ${siege}/3 回合"></span>`;
+          }
+          html += `<div class="${cls}" data-r="${r}" data-c="${c}">${token}${siegeHtml}</div>`;
         }
       }
       return html;
     },
     renderDeploy() {
       showScreen("fieldgrid");
+      this.syncTopbarTitle();
       const tplName = this.TERRAIN_TPL_NAME[this.terrainTpl];
       const root = $("#fg-content");
+      // 选中武将后，框出该棋子本身（.fg-selected）与可落子的空格（.fg-reach），不然分不清在调谁、能挪到哪
+      const deployReachSet = new Set();
+      if (this.deploySel) {
+        for (let r = this.ROWS - 2; r < this.ROWS; r++) for (let c = 0; c < this.COLS; c++) {
+          if (!this.unitAt(r, c)) deployReachSet.add(r + "," + c);
+        }
+      }
       root.innerHTML = `
         <div class="section-hint">棋盘对垒：方格步阵，一将一格。阵形按将而定——点棋子左上角图标可切换该将的阵形，备好后出击</div>
         <div class="fb-banner">🗺️ 战场·${tplName} · 军令 <b>${this.myOrders}</b> 道</div>
         <div class="fg-legend">${Object.entries(this.TERRAINS).map(([k, t]) => `<span class="fg-legend-item"><i class="fg-t-${k}"></i>${t.icon}${t.n}</span>`).join("")}</div>
         <div class="fg-legend">${Object.entries(this.FORMS).map(([k, f]) => `<span class="fg-legend-item">${f.icon}${f.n}</span>`).join("")}</div>
-        <div class="fg-board-wrap"><div class="fg-board" style="grid-template-columns:repeat(${this.COLS},1fr)">${this.boardCellsHtml()}</div></div>
-        <div class="section-hint">🚩 我营在下，🚩 敌营在上；点选我方武将再点空格可调整初始站位</div>
+        <div class="fg-board-wrap"><div class="fg-board" style="grid-template-columns:repeat(${this.COLS},1fr)">${this.boardCellsHtml({ selectedUnit: this.deploySel, reachSet: deployReachSet })}</div></div>
+        <div class="section-hint">🚩 我营在下，🚩 敌营在上；${this.deploySel ? `已选中 <b>${this.deploySel.g.name}</b>，点蓝框空格调整站位` : "点选我方武将再点空格可调整初始站位"}</div>
         <div class="cup-start-btns" style="margin-top:10px"><button class="cup-go primary" id="fg-go">⚔️ 全军出击</button></div>`;
       const formKeys = Object.keys(this.FORMS);
       $$(".fg-cell", root).forEach(cell => cell.onclick = (e) => {
@@ -4217,39 +4271,42 @@
     },
     // 顶部 VS 兵力条：两条从中线向外撑满，兵力越少、外沿越往中间方向收缩——一眼看出此消彼长；
     // 拆成独立方法是为了让 syncTopBars() 能在命中瞬间原地刷新这一小块，不必牵动整块棋盘重绘
+    // 顶部这一行现在把兵力条与存活/均气/军令全部并进同一行——点这一整条即弹出逐将详情浮层（见 showMatchupOverlay）
     vsbarHtml() {
       const myTotalHp = this.totalHp("my"), foeTotalHp = this.totalHp("foe");
       const myMax = this.myUnits.reduce((s, x) => s + x.hpMax, 0) || 1;
       const foeMax = this.foeUnits.reduce((s, x) => s + x.hpMax, 0) || 1;
       const myPct = Math.max(0, Math.min(100, myTotalHp / myMax * 100));
       const foePct = Math.max(0, Math.min(100, foeTotalHp / foeMax * 100));
-      return `<div class="fg-vsbar">
-        <div class="fg-vsbar-side"><b>我军</b><span>${myTotalHp.toLocaleString()}</span></div>
+      const myAlive = this.myUnits.filter(x => x.alive).length, foeAlive = this.foeUnits.filter(x => x.alive).length;
+      return `<div class="fg-vsbar" id="fg-vsbar-open">
+        <div class="fg-vsbar-side">
+          <b>我军</b><span class="fg-vsbar-num">${myTotalHp.toLocaleString()}</span>
+          <span class="fg-vsbar-sub">存${myAlive}/${this.myUnits.length}・气${this.avgMorale("my")}・令${this.myOrders}</span>
+        </div>
         <div class="fg-vsbar-track">
           <div class="fg-vsbar-half my"><i style="width:${myPct}%"></i></div>
           <div class="fg-vsbar-mid">VS</div>
           <div class="fg-vsbar-half foe"><i style="width:${foePct}%"></i></div>
         </div>
-        <div class="fg-vsbar-side"><b>敌军</b><span>${foeTotalHp.toLocaleString()}</span></div>
+        <div class="fg-vsbar-side">
+          <b>敌军</b><span class="fg-vsbar-num">${foeTotalHp.toLocaleString()}</span>
+          <span class="fg-vsbar-sub">存${foeAlive}/${this.foeUnits.length}・气${this.avgMorale("foe")}・令${this.foeOrders}</span>
+        </div>
       </div>`;
     },
-    // 对阵基本情况一行 + 点开后的逐将详细对比——同样拆出独立方法供 syncTopBars() 复用
-    matchupAreaHtml() {
-      const myAlive = this.myUnits.filter(x => x.alive).length, foeAlive = this.foeUnits.filter(x => x.alive).length;
-      return `<div class="fb-banner fg-banner-compact">${this.turnSide === "my" ? "🟢 我方回合" : "🔴 敌方回合"} · 第 ${this.turnN} 回合${this.formTurnsLeft > 0 ? `（阵形+${this.formTurnsLeft}）` : ""}
-          ${this.orderMode === "fire" ? "<b>· 请点选要火攻的敌方单位</b>" : ""}
-        </div>
-        <div class="fg-matchup" id="fg-matchup-toggle">
-          <span>存活 我${myAlive}/${this.myUnits.length}・敌${foeAlive}/${this.foeUnits.length}</span>
-          <span>均气 我${this.avgMorale("my")}・敌${this.avgMorale("foe")}</span>
-          <span>军令 我${this.myOrders}・敌${this.foeOrders}</span>
-          <span class="fg-matchup-fold">${this.matchupOpen ? "▴ 收起详情" : "▾ 查看详情"}</span>
-        </div>
-        ${this.matchupDetailHtml()}`;
+    // 阵形加成倒计时/火攻选目标提示——仅在有内容时才占位，平时这一区域高度为 0
+    hintLineHtml() {
+      const bits = [];
+      if (this.formTurnsLeft > 0) bits.push(`阵形相克加成剩 ${this.formTurnsLeft} 回合`);
+      if (this.orderMode === "fire") bits.push("🔥 请点选要火攻的敌方单位（已用橙框标出可选目标）");
+      if (this.myCampSiege > 0) bits.push(`⚠️ 我方大营已被围 ${this.myCampSiege}/3 回合`);
+      if (this.foeCampSiege > 0) bits.push(`🔥 已围困敌方大营 ${this.foeCampSiege}/3 回合`);
+      if (!bits.length) return "";
+      return `<div class="fg-hintline">${bits.join(" · ")}</div>`;
     },
-    // 逐将对比明细：点击「查看详情」展开，双栏分列我方/敌方每员武将的兵力/士气/攻/防
-    matchupDetailHtml() {
-      if (!this.matchupOpen) return "";
+    // 逐将对比明细的行/列构建，供 showMatchupOverlay() 弹层复用
+    matchupDetailInner() {
       const row = u => `<div class="fg-md-row${u.alive ? "" : " dead"}">
         <span class="fg-md-name">${u.g.name}</span>
         <span class="fg-md-form">${this.FORMS[u.form].icon}</span>
@@ -4264,10 +4321,15 @@
       </div>`;
       return `<div class="fg-matchup-detail">${col(this.myUnits, "我方")}${col(this.foeUnits, "敌方")}</div>`;
     },
-    // 对比区域的展开/收起点击绑定，供整块渲染与 syncTopBars() 局部刷新共用一份逻辑
-    bindMatchupToggle(root) {
-      const t = $("#fg-matchup-toggle", root);
-      if (t) t.onclick = e => { e.stopPropagation(); this.matchupOpen = !this.matchupOpen; this.syncTopBars(); };
+    // 点顶部兵力条弹出的半透明浮层：不挤占棋盘任何空间，点浮层内任意处即关闭（复用全局 openOverlay，
+    // 非 modal 模式下点遮罩本就会关闭，这里再给内容区自身也补一个点击关闭，覆盖"点任何区域"的要求）
+    showMatchupOverlay() {
+      openOverlay(`<div class="fg-matchup-overlay">
+        <div class="fg-matchup-overlay-title">⚔️ 两军阵前对比</div>
+        ${this.matchupDetailInner()}
+        <div class="fg-matchup-overlay-hint">点任意处关闭</div>
+      </div>`);
+      $("#overlay-content").onclick = () => closeOverlay();
     },
     renderBattle() {
       const u = this.selectedUnit;
@@ -4280,6 +4342,12 @@
       if (u && this.selPhase === "act" && this.actionMode) {
         const range = u.ranged ? 2 : 1;
         this.foeUnits.filter(e => e.alive && this.manhattan(u, e) <= range && (this.actionMode !== "challenge" || this.manhattan(u, e) === 1))
+          .forEach(e => enemySet.add(e.r + "," + e.c));
+      }
+      // 火攻军令：标出当前满足条件（站在山道，或我方有精通天时者时不限地形）的敌方目标
+      if (this.orderMode === "fire") {
+        const master = this.armyHasFiremaster("my");
+        this.foeUnits.filter(e => e.alive && (this.tiles[e.r][e.c] === "hill" || master))
           .forEach(e => enemySet.add(e.r + "," + e.c));
       }
       // 行动菜单浮在该武将棋子正周围、按钮环形分布一圈；一旦选定行动类型（点了🗡️/⚔️/🤺）立即收起按钮，
@@ -4330,7 +4398,7 @@
       root.innerHTML = `
         <div class="fg-layout">
           <div class="fg-area-vsbar">${this.vsbarHtml()}</div>
-          <div class="fg-area-matchup">${this.matchupAreaHtml()}</div>
+          <div class="fg-area-matchup">${this.hintLineHtml()}</div>
           <div class="fg-area-log"><div class="fb-log fg-log-compact" id="fg-log">${(this.logLines || []).join("")}</div></div>
           <div class="fg-area-board">
             <div class="fg-board-wrap zoomable" id="fg-board-wrap">
@@ -4373,7 +4441,8 @@
       const drum = $("#fg-drum", root); if (drum) drum.onclick = () => this.useOrder("drum");
       const fire = $("#fg-fire", root); if (fire) fire.onclick = () => this.useOrder("fire");
       this.bindGridZoom($("#fg-board-wrap", root));
-      this.bindMatchupToggle(root);
+      const vb = $("#fg-vsbar-open", root); if (vb) vb.onclick = () => this.showMatchupOverlay();
+      this.syncTopbarTitle();
       // 点击棋盘/浮动菜单以外的区域（顶部对比条、战报、空白处等）：视为放弃当前武将的行动选择
       root.onclick = e => {
         if (!this.selectedUnit || this.busy) return;

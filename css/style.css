@@ -68,6 +68,9 @@ html, body {
 .topbar h2 { margin: 0; font-size: 22px; color: var(--cn-gold); letter-spacing: 2px; flex: 1;
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #screen-map .topbar h2 { flex: 0 0 auto; }
+/* 野战演武战斗中，标题行改显示"我方回合·第N回合"（JS 动态换字），居中显示；
+   字数比"野战演武"长不少，窄屏下把字距收零、字号再降一档，避免被省略号截断 */
+#screen-fieldgrid .topbar h2 { text-align: center; font-size: 15px; letter-spacing: 0; }
 .map-topbar-status {
   display: flex; align-items: center; justify-content: center;
   gap: 6px 10px; flex: 1; min-width: 0; font-size: 15px; color: #d8c79c; letter-spacing: 0;
@@ -1456,10 +1459,12 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 .fg-area-vsbar, .fg-area-matchup, .fg-area-log, .fg-area-orders { flex: 0 0 auto; }
 .fg-area-board { flex: 1 1 auto; min-height: 80px; }
 /* 顶部 VS 兵力对比条：两条从中线各自向外撑开，兵力越少、外沿越往中间收缩 */
-.fg-vsbar { display: flex; align-items: center; gap: 6px; font-size: 12px; }
-.fg-vsbar-side { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; line-height: 1.2; min-width: 34px; }
+/* 兵力条这一整行现在兼管存活/均气/军令三项数据，并可整行点击弹出逐将详情浮层 */
+.fg-vsbar { display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
+.fg-vsbar-side { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; line-height: 1.2; min-width: 58px; }
 .fg-vsbar-side b { font-size: 11px; opacity: .8; font-weight: 700; }
-.fg-vsbar-side span { font-weight: 900; }
+.fg-vsbar-num { font-weight: 900; }
+.fg-vsbar-sub { font-size: 9px; opacity: .75; white-space: nowrap; }
 .fg-vsbar-track { flex: 1; display: flex; align-items: center; height: 14px; background: rgba(0,0,0,.4); border-radius: 7px; overflow: hidden; border: 1px solid rgba(212,175,55,.35); }
 .fg-vsbar-half { flex: 1; height: 100%; overflow: hidden; }
 .fg-vsbar-half.my { display: flex; justify-content: flex-end; }
@@ -1467,14 +1472,18 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 .fg-vsbar-half.my i { display: block; height: 100%; background: linear-gradient(90deg, #7a1420, var(--cn-red)); }
 .fg-vsbar-half.foe i { display: block; height: 100%; background: linear-gradient(90deg, var(--jp-indigo), #4a5da0); }
 .fg-vsbar-mid { flex: 0 0 auto; width: 26px; text-align: center; font-size: 9.5px; font-weight: 800; opacity: .75; }
-.fg-matchup { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 12px; font-size: 11px; opacity: .85; padding: 2px 10px 4px; cursor: pointer; }
-.fg-matchup-fold { margin-left: auto; opacity: .8; white-space: nowrap; }
-/* 点开的逐将详情：双栏（我方/敌方）列出每员武将的兵力/士气/攻/防，阵亡者灰显 */
-.fg-matchup-detail { display: flex; gap: 8px; padding: 2px 10px 6px; font-size: 10.5px; }
-.fg-md-col { flex: 1; min-width: 0; background: rgba(0,0,0,.22); border-radius: 6px; padding: 4px 6px; max-height: 160px; overflow-y: auto; }
-.fg-md-head { display: flex; justify-content: space-between; font-weight: 800; color: var(--cn-gold); opacity: .9; margin-bottom: 2px; }
+/* 阵形/火攻等提示行：平时无内容时高度为 0，不占位 */
+.fg-hintline { font-size: 11px; opacity: .85; padding: 2px 10px; }
+/* 点兵力条弹出的半透明详情浮层：双栏（我方/敌方）列出每员武将的兵力/士气/攻/防，阵亡者灰显；
+   复用既有 #overlay 遮罩系统，不挤占棋盘任何空间，点浮层内任意处即关闭 */
+.fg-matchup-overlay { padding: 4px 2px; }
+.fg-matchup-overlay-title { font-size: 17px; font-weight: 800; color: var(--cn-gold); text-align: center; margin-bottom: 10px; }
+.fg-matchup-overlay-hint { text-align: center; font-size: 11px; opacity: .6; margin-top: 8px; }
+.fg-matchup-detail { display: flex; gap: 8px; font-size: 11px; }
+.fg-md-col { flex: 1; min-width: 0; background: rgba(0,0,0,.22); border-radius: 6px; padding: 6px 7px; max-height: 50vh; overflow-y: auto; }
+.fg-md-head { display: flex; justify-content: space-between; font-weight: 800; color: var(--cn-gold); opacity: .9; margin-bottom: 3px; }
 .fg-md-hint { font-weight: 400; opacity: .7; font-size: 9.5px; }
-.fg-md-row { display: grid; grid-template-columns: 1.4fr .5fr 1.1fr .6fr .5fr .5fr; gap: 2px; padding: 1.5px 0; opacity: .95; }
+.fg-md-row { display: grid; grid-template-columns: 1.4fr .5fr 1.1fr .6fr .5fr .5fr; gap: 2px; padding: 2px 0; opacity: .95; }
 .fg-md-row.dead { opacity: .4; text-decoration: line-through; }
 .fg-md-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fg-board-wrap {
@@ -1506,6 +1515,14 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   font-size: 92%; opacity: .55; pointer-events: none; filter: drop-shadow(0 1px 1px rgba(0,0,0,.4));
 }
+/* 大本营围城光圈：进度越高圈越粗越亮，满 3 回合即攻破，脉冲提醒玩家留意 */
+.fg-siege-ring {
+  position: absolute; inset: 2px; border-radius: 3px; pointer-events: none; z-index: 2;
+  border: 2px solid rgba(255,110,20,.55); animation: fgSiegePulse 1.4s ease-in-out infinite;
+}
+.fg-siege-ring.s2 { border-width: 3px; border-color: rgba(255,80,10,.75); }
+.fg-siege-ring.s3 { border-width: 4px; border-color: rgba(255,40,0,.95); box-shadow: 0 0 10px rgba(255,70,0,.75); }
+@keyframes fgSiegePulse { 0%, 100% { opacity: .6; } 50% { opacity: 1; } }
 .fg-cell.fg-reach::after {
   content: ""; position: absolute; inset: 8%; border-radius: 3px;
   background: rgba(90,160,255,.42); border: 1px solid rgba(140,190,255,.9);
@@ -1583,8 +1600,9 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 /* 军令条只留一行，靠右排列，按钮进一步放大方便点按 */
 #screen-fieldgrid .fg-orders-row { margin: 4px 0; padding: 6px 8px; display: flex; flex-wrap: nowrap; justify-content: flex-end; gap: 8px; }
 #screen-fieldgrid .fg-orders-row .fb-ord { padding: 10px 16px; font-size: 15px; white-space: nowrap; }
-/* 战报满宽横条，挪到对比区与棋盘之间；高度按 3~5 行文字估算，超出部分滚动查看 */
-.fg-log-compact { max-height: 84px; margin-top: 0; font-size: 12.5px; overflow-y: auto; }
+/* 战报满宽横条，挪到棋盘正上方；高度锁定为固定 3 行文字（不随内容多少而变化，避免布局跳动），
+   超出部分内部滚动查看 */
+.fg-log-compact { height: 70px; max-height: 70px; margin-top: 0; font-size: 12.5px; overflow-y: auto; flex: 0 0 70px; }
 
 /* 攻击画面感：挥砍前倾、受击闪红+微震、暴击全屏亮闪、伤害数字浮现于目标格 */
 @keyframes fgLunge { 0%,100%{ transform: translateY(0) scale(1); } 45%{ transform: translateY(-2px) scale(1.08); } }
