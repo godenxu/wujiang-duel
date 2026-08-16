@@ -84,7 +84,8 @@
     war: "assets/bgm/tactics.mp3",            // 阵营大战
     cup: "assets/bgm/tactics.mp3",            // 世界杯（沿用战术曲）
     teamwar: "assets/bgm/tactics.mp3",        // 组队大战（沿用战术曲）
-    field: "assets/bgm/tactics.mp3",          // 野战演武（沿用战术曲）
+    field: "assets/bgm/tactics.mp3",          // 野战演武·经典版（沿用战术曲）
+    fieldgrid: "assets/bgm/tactics.mp3",      // 野战演武·棋盘对垒（沿用战术曲）
   };
   // 记录"上一次停留的主页面"（角色扮演主页 或 天下地图）：战斗/宝物库等子界面结算后
   // 借此判断该回到哪一层，而不是一律固定返回某一处
@@ -150,11 +151,17 @@
       if (RPG.char && Campaign.meta && Campaign.meta.active) { MapUI.open(); return; }
       showScreen("home"); return;
     }
-    // 野战演武：从小游戏自由试玩进入时退出中止整场回首页；从边境战事等角色扮演流程发起时（rpg 标记为真）回到天下地图
+    // 野战演武·经典版：从小游戏自由试玩进入时退出中止整场回首页；从边境战事等角色扮演流程发起时（rpg 标记为真）回到天下地图
     if ($("#screen-field").classList.contains("active")) {
       const rpg = FieldBattle.rpg;
       FieldBattle.abort();
       if (rpg) goHome(); else showScreen("home");
+      return;
+    }
+    // 野战演武·棋盘对垒：目前仅作小游戏自由试玩入口，退出直接中止回首页
+    if ($("#screen-fieldgrid").classList.contains("active")) {
+      GridBattle.abort();
+      showScreen("home");
       return;
     }
     // 阵营大战/组队大战/国战/世界杯：从「小游戏」自由试玩进入时退出回首页；
@@ -3392,6 +3399,667 @@
     },
   };
   window.FieldBattle = FieldBattle;   // 导出到 window，便于自动化测试等外部脚本直接读取战场状态
+
+  /* ============================================================
+   *  野战演武 · 棋盘对垒（GridBattle）
+   *  回合制方格棋盘，一将一格，取代原五线推兵版成为「野战演武」主入口；
+   *  旧版 FieldBattle 原样保留（小游戏合集「野战演武·经典版」+ 边境战事内部调用不受影响）。
+   *  第一期骨架：方格移动/交锋/阵形部署窗口/士气崩溃胜负 + 每回合「挑发」概率触发单挑
+   *  （复用 startTeamDuel 引擎）；军令、将魂主动技能网格化、夺营判定留待后续分期。
+   * ============================================================ */
+  const GridBattle = {
+    gen: 0, phase: null,
+    COLS: 12, ROWS: 9,
+    TERRAINS: {
+      plain: { n: "平地", icon: "🌾", moveCost: 1, defMul: 1 },
+      hill:  { n: "丘陵", icon: "⛰️", moveCost: 2, defMul: 1.25 },
+      river: { n: "河道", icon: "🌊", moveCost: 3, defMul: 1, noAtk: true },
+      road:  { n: "道路", icon: "🛤️", moveCost: 0.5, defMul: 1 },
+      camp:  { n: "大营", icon: "🚩", moveCost: 1, defMul: 1.4, heal: true },
+    },
+    FORMS: {
+      cone:  { n: "锥形", icon: "🔺", desc: "前 3 回合全军攻击 +20%", atkMul: 1.2 },
+      crane: { n: "鹤翼", icon: "🕊️", desc: "前 3 回合全军攻击 +20%（散开克锥形）", atkMul: 1.2 },
+      round: { n: "方圆", icon: "🛡️", desc: "前 3 回合全军防御 +25%", defMul: 1.25 },
+      goose: { n: "雁行", icon: "🏹", desc: "前 3 回合乱箭蚀敌，敌军士气每回合 -1.5", moraleDrain: 1.5 },
+    },
+    // 锥克方圆、方圆克雁行、雁行克鹤翼、鹤翼克锥形——克敌方阵形加成期内攻击再 +10%
+    FORM_BEATS: { cone: "round", round: "goose", goose: "crane", crane: "cone" },
+    TERRAIN_TPL_NAME: { plain: "平原", hill: "山道", river: "河畔" },
+
+    open() {
+      this.gen++;
+      this.side = "cn";
+      const draft = s => { const p = DB.bySide(s).slice(); shuffle(p); return p.slice(0, 10).map(clone); };
+      this.mine = draft("cn"); this.foes = draft("jp");
+      this._setupCommon();
+    },
+    controllable(g) {
+      if (!RPG.char) return false;
+      if (g.id === -1) return true;
+      const m = typeof Campaign !== "undefined" && Campaign.mapState && Campaign.mapState();
+      if (m && m.playerFaction === "_player_") return (m.generalFaction || {})[g.id] === "_player_";
+      return !!(typeof Bond !== "undefined" && Bond.data && (Bond.data.team || []).includes(g.id));
+    },
+    abort() { this.gen++; this.phase = null; this.selectedUnit = null; },
+
+    /* ---------- 开局：地形生成 + 布阵 ---------- */
+    generateTerrain() {
+      const templates = ["plain", "hill", "river"];
+      const tpl = templates[randInt(0, 2)];
+      const tiles = [];
+      for (let r = 0; r < this.ROWS; r++) {
+        const row = [];
+        for (let c = 0; c < this.COLS; c++) {
+          let t = "plain";
+          const midBand = r > 1 && r < this.ROWS - 2;
+          if (tpl === "hill" && midBand && Math.random() < 0.24) t = "hill";
+          else if (tpl === "plain" && midBand && Math.random() < 0.10) t = "hill";
+          else if (tpl === "river" && r === Math.floor(this.ROWS / 2) && c !== 2 && c !== this.COLS - 3) t = "river";
+          row.push(t);
+        }
+        tiles.push(row);
+      }
+      // 主干道：中线纵向打通（河畔模板遇河即断，须绕行 2 处渡口）
+      const midC = Math.floor(this.COLS / 2);
+      for (let r = 0; r < this.ROWS; r++) if (tiles[r][midC] === "plain") tiles[r][midC] = "road";
+      const myCamp = { r: this.ROWS - 1, c: midC }, foeCamp = { r: 0, c: midC };
+      tiles[myCamp.r][myCamp.c] = "camp"; tiles[foeCamp.r][foeCamp.c] = "camp";
+      this.terrainTpl = tpl;
+      return { tiles, myCamp, foeCamp };
+    },
+    // 将魂冷却（回合制换算）：统帅越高冷却越短，2~4 回合宽幅（design 6.2）
+    warCD(g) { return Math.max(2, Math.min(4, Math.round((14 - ((g.tong || 0) - 40) / 7) / 3))); },
+    makeUnit(g, side) {
+      const hpMax = Math.max(100, Math.round(g.tong * 100));
+      const skType = Skill.of(g).type;
+      return {
+        uid: g.side + "-" + g.id + "-" + Math.random().toString(36).slice(2, 7),
+        g, side, r: 0, c: 0,
+        hp: hpMax, hpMax,
+        atk: g.wu * 0.65 + g.tong * 0.35,
+        def: g.tong * 0.65 + g.wu * 0.35,
+        moveMax: Math.max(3, Math.min(5, Math.round(g.tong / 28))),
+        // volley 已直接落实为「远程 2 格且不受反击」的被动，不再重复挂一枚战法钮（design 6.2 表格 volley 行）
+        ranged: skType === "volley",
+        skActive: (Skill.ACTIVE_WAR_TYPES.has(skType) && skType !== "volley") ? skType : null,
+        skCd: 0, skCdMax: this.warCD(g),
+        alive: true, acted: false, moved: false, standDef: false,
+      };
+    },
+    // 被动将魂：融入攻防结算的乘区（design 6.1，网格化版）
+    skillAtkMul(u) {
+      const t = Skill.of(u.g).type;
+      let m = 1;
+      if (t === "sanada") m *= 1.08;
+      return m;
+    },
+    skillDefMul(u) {
+      const t = Skill.of(u.g).type;
+      let m = 1;
+      if (t === "school-tong") m *= 1.1;
+      if (t === "adamant") m *= 1.2;
+      if (t === "tiger") m *= 1.15;
+      if (t === "sanada") m *= 1.08;
+      return m;
+    },
+    armyHasFiremaster(side) {
+      const arr = side === "my" ? this.myUnits : this.foeUnits;
+      return arr.some(u => u.alive && Skill.of(u.g).type === "firemaster");
+    },
+    // 阵形只决定初始站位形状（一将一格），加成效果为全队平坦乘区（见 computeCombat），
+    // 具体逐格位置加成留待后续分期打磨（design 2.4）
+    placeFormation(units, side, form) {
+      const rows = side === "my" ? [this.ROWS - 2, this.ROWS - 1] : [0, 1];
+      const mid = Math.floor(this.COLS / 2);
+      const order = [];
+      for (let d = 0; d <= this.COLS; d++) {
+        if (mid - d >= 0) order.push(mid - d);
+        if (d > 0 && mid + d < this.COLS) order.push(mid + d);
+      }
+      const cells = [];
+      if (form === "crane") {
+        order.slice().sort((a, b) => Math.abs(b - mid) - Math.abs(a - mid)).forEach(c => rows.forEach(r => cells.push([r, c])));
+      } else if (form === "round") {
+        order.slice(0, 6).forEach(c => rows.forEach(r => cells.push([r, c])));
+      } else if (form === "goose") {
+        order.forEach((c, i) => cells.push([rows[i % 2], c]));
+      } else {
+        order.forEach(c => rows.forEach(r => cells.push([r, c])));
+      }
+      const sorted = units.slice().sort((a, b) => (b.g.wu + b.g.tong) - (a.g.wu + a.g.tong));
+      sorted.forEach((u, i) => { const cell = cells[i]; if (cell) { u.r = cell[0]; u.c = cell[1]; } });
+    },
+    _setupCommon() {
+      this.phase = "deploy";
+      this.myForm = "cone";
+      const fk = Object.keys(this.FORMS); this.foeForm = fk[randInt(0, fk.length - 1)];
+      const { tiles, myCamp, foeCamp } = this.generateTerrain();
+      this.tiles = tiles; this.myCamp = myCamp; this.foeCamp = foeCamp;
+      this.myUnits = this.mine.map(g => this.makeUnit(g, "my"));
+      this.foeUnits = this.foes.map(g => this.makeUnit(g, "foe"));
+      this.placeFormation(this.myUnits, "my", this.myForm);
+      this.placeFormation(this.foeUnits, "foe", this.foeForm);
+      this.myMorale = 50; this.foeMorale = 50;
+      this.formTurnsLeft = 3;
+      this.turnSide = "my"; this.turnN = 1;
+      this.logLines = [];
+      this.myOrders = this.calcOrders(this.mine); this.foeOrders = this.calcOrders(this.foes);
+      this.foeFormKnown = false; this.orderMode = null;
+      this.selectedUnit = null; this.selPhase = null; this.actionMode = "attack"; this.deploySel = null;
+      showScreen("fieldgrid");
+      this.renderDeploy();
+    },
+    // 全军智谋均值折算军令道数（约 2~6 道），每回合按当前存活武将重新核算
+    calcOrders(arr) {
+      if (!arr.length) return 2;
+      const avg = arr.reduce((s, g) => s + g.zhi, 0) / arr.length;
+      return Math.max(2, Math.min(6, Math.round((avg - 30) / 12)));
+    },
+
+    /* ---------- 共用查询 ---------- */
+    unitAt(r, c) {
+      return [...this.myUnits, ...this.foeUnits].find(u => u.alive && u.r === r && u.c === c) || null;
+    },
+    manhattan(a, b) { return Math.abs(a.r - b.r) + Math.abs(a.c - b.c); },
+    totalHp(side) { return (side === "my" ? this.myUnits : this.foeUnits).reduce((s, u) => s + (u.alive ? u.hp : 0), 0); },
+    reachable(unit) {
+      const cost = { [unit.r + "," + unit.c]: 0 };
+      const queue = [[unit.r, unit.c, 0]];
+      const result = [];
+      while (queue.length) {
+        const [r, c, cc] = queue.shift();
+        for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nr = r + dr, nc = c + dc;
+          if (nr < 0 || nr >= this.ROWS || nc < 0 || nc >= this.COLS) continue;
+          const terr = this.TERRAINS[this.tiles[nr][nc]];
+          const nCost = cc + terr.moveCost;
+          if (nCost > unit.moveMax) continue;
+          const occ = this.unitAt(nr, nc);
+          if (occ && occ !== unit) continue;
+          const key = nr + "," + nc;
+          if (cost[key] !== undefined && cost[key] <= nCost) continue;
+          cost[key] = nCost;
+          result.push([nr, nc]);
+          queue.push([nr, nc, nCost]);
+        }
+      }
+      return result;
+    },
+
+    /* ---------- 战斗结算 ---------- */
+    computeCombat(att, def) {
+      const defTerr = this.TERRAINS[this.tiles[def.r][def.c]];
+      const formBonus = (side, kind) => {
+        if (this.formTurnsLeft <= 0) return 1;
+        const f = this.FORMS[side === "my" ? this.myForm : this.foeForm];
+        return (kind === "atk" && f.atkMul) || (kind === "def" && f.defMul) || 1;
+      };
+      const beatBonus = side => {
+        if (this.formTurnsLeft <= 0) return 1;
+        const aForm = side === "my" ? this.myForm : this.foeForm;
+        const dForm = side === "my" ? this.foeForm : this.myForm;
+        return this.FORM_BEATS[aForm] === dForm ? 1.1 : 1;
+      };
+      const moraleMul = side => 0.7 + (side === "my" ? this.myMorale : this.foeMorale) / 100 * 0.6;
+      let dmg = 220 * (att.atk * this.skillAtkMul(att) * formBonus(att.side, "atk") * beatBonus(att.side) * moraleMul(att.side))
+        / Math.max(1, def.def * this.skillDefMul(def) * defTerr.defMul * formBonus(def.side, "def"))
+        * (0.85 + Math.random() * 0.3);
+      if (def.standDef) dmg *= 0.85;
+      return Math.max(1, Math.round(dmg));
+    },
+    computeCombatAt(att, def, r, c) {
+      const sr = att.r, sc = att.c;
+      att.r = r; att.c = c;
+      const dmg = this.computeCombat(att, def);
+      att.r = sr; att.c = sc;
+      return dmg;
+    },
+    resolveAttack(att, def) {
+      if (this.TERRAINS[this.tiles[att.r][att.c]].noAtk) { toast("半渡之际，不可出战！"); return; }
+      const dmg = this.computeCombat(att, def);
+      def.hp = Math.max(0, def.hp - dmg);
+      this.log(`⚔️ ${att.g.name} 攻击 ${def.g.name}，造成 ${dmg} 点伤害${def.hp <= 0 ? "，一举击溃！" : ""}`);
+      if (def.hp <= 0) this.routUnit(def);
+      if (def.hp > 0 && !att.ranged && !this.TERRAINS[this.tiles[def.r][def.c]].noAtk) {
+        const counterDmg = Math.round(this.computeCombat(def, att) * 0.5);
+        att.hp = Math.max(0, att.hp - counterDmg);
+        this.log(`↩️ ${def.g.name} 奋力反击，造成 ${counterDmg} 点伤害${att.hp <= 0 ? "，反遭击溃！" : ""}`);
+        if (att.hp <= 0) this.routUnit(att);
+      }
+    },
+    routUnit(u) {
+      u.alive = false;
+      if (u.side === "my") { this.myMorale = Math.max(0, this.myMorale - 10); this.foeMorale = Math.min(100, this.foeMorale + 6); }
+      else { this.foeMorale = Math.max(0, this.foeMorale - 10); this.myMorale = Math.min(100, this.myMorale + 6); }
+      this.log(`💀 ${u.g.name} 兵败溃退，退出战场！`);
+    },
+    doTargetAction(def) {
+      const att = this.selectedUnit;
+      if (!att) return;
+      if (this.actionMode === "challenge") return this.challenge(att, def);
+      this.resolveAttack(att, def);
+      att.acted = true;
+      this.afterAction();
+    },
+    // 挑发（decision #4）：向相邻敌将发起单挑请求，成败取决于己方魅力与对方智力之差；
+    // 应战则复用 startTeamDuel 引擎真实打一场；败方兵力折半、士气受挫，小概率（12%）当场全军崩溃
+    async challenge(att, def) {
+      const pAccept = Math.max(0.25, Math.min(0.85, 0.5 + (att.g.mei - def.g.zhi) / 200));
+      if (Math.random() >= pAccept) {
+        this.log(`🤺 ${att.g.name} 跃马挑发，${def.g.name} 识破其意，按兵不动。`);
+        att.acted = true; this.afterAction();
+        return;
+      }
+      this.log(`🤺 ${att.g.name} 跃马挑发，${def.g.name} 按捺不住，两将阵前一战！`);
+      const myGen = this.gen;
+      const res = await startTeamDuel(clone(att.g), clone(def.g), {
+        title: "阵前挑发", backScreen: "fieldgrid", spectate: !this.controllable(att.g),
+        intro: `${att.g.name} 挑发 ${def.g.name}，两将阵前一决高下！`,
+      });
+      if (this.gen !== myGen) return;
+      showScreen("fieldgrid");
+      att.acted = true;
+      if (!res) { this.afterAction(); return; }
+      const winnerIsAtt = res.winner.name === att.g.name;
+      const loser = winnerIsAtt ? def : att;
+      const loserSide = loser.side;
+      loser.hp = Math.max(1, Math.round(loser.hp * 0.5));
+      if (loserSide === "my") { this.myMorale = Math.max(0, this.myMorale - 8); this.foeMorale = Math.min(100, this.foeMorale + 5); }
+      else { this.foeMorale = Math.max(0, this.foeMorale - 8); this.myMorale = Math.min(100, this.myMorale + 5); }
+      this.log(`${winnerIsAtt ? "⚔️" : "💥"} ${res.winner.name} 挑发得胜，${res.loser.name} 部众折损过半、军心动摇！`);
+      if (Math.random() < 0.12) {
+        if (loserSide === "my") this.myMorale = 0; else this.foeMorale = 0;
+        this.log(`🏳️ ${loserSide === "my" ? "我军" : "敌军"}士气瞬间崩溃，全军溃退之势已成！`);
+      }
+      this.afterAction();
+    },
+    // 主动将魂 → 战法钮（design 6.2）：占用本回合行动，冷却以回合计；效果按持有者所属阵营通用判定，
+    // 故 AI 一方（foe）可直接复用同一函数。school-wu/ti/mei/zheng 对应四门通用技，其余为名将专属。
+    useActiveSkill(u) {
+      const type = u.skActive;
+      if (!type) return;
+      const sk = Skill.of(u.g);
+      const enemies = (u.side === "my" ? this.foeUnits : this.myUnits).filter(e => e.alive);
+      const allies = (u.side === "my" ? this.myUnits : this.foeUnits).filter(e => e.alive);
+      const near = enemies.filter(e => this.manhattan(u, e) <= 1);
+      let msg = "";
+      if (type === "school-wu") {
+        const target = near[0];
+        if (target) {
+          const dmg = Math.round(this.computeCombat(u, target) * 1.6);
+          target.hp = Math.max(0, target.hp - dmg);
+          msg = `${u.g.name}【${sk.n}】陷阵突击，斩敌 ${target.g.name} 部 ${dmg} 点！`;
+          if (target.hp <= 0) this.routUnit(target);
+        } else msg = `${u.g.name}【${sk.n}】未寻得近旁可突击的目标。`;
+      } else if (type === "school-ti") {
+        const heal = Math.round(u.hpMax * 0.18); u.hp = Math.min(u.hpMax, u.hp + heal);
+        msg = `${u.g.name}【${sk.n}】游走整军，自部兵力回复 ${heal}！`;
+      } else if (type === "school-mei") {
+        if (u.side === "my") this.myMorale = Math.min(100, this.myMorale + 8); else this.foeMorale = Math.min(100, this.foeMorale + 8);
+        msg = `${u.g.name}【${sk.n}】振臂高呼，全军士气 +8！`;
+      } else if (type === "school-zheng") {
+        const heal = Math.round(u.hpMax * 0.15); u.hp = Math.min(u.hpMax, u.hp + heal);
+        msg = `${u.g.name}【${sk.n}】调度粮秣，自部兵力回复 ${heal}！`;
+      } else if (type === "awe" || type === "discord" || type === "roar") {
+        if (u.side === "my") this.foeMorale = Math.max(0, this.foeMorale - 10); else this.myMorale = Math.max(0, this.myMorale - 10);
+        msg = `⭐ ${u.g.name}【${sk.n}】威慑当面，敌军士气 -10！`;
+      } else if (type === "infiltrate") {
+        const target = enemies[randInt(0, enemies.length - 1)];
+        if (target) {
+          const dmg = randInt(700, 1200);
+          target.hp = Math.max(0, target.hp - dmg);
+          msg = `⭐ ${u.g.name}【${sk.n}】潜行突袭，${target.g.name} 部折损 ${dmg}！`;
+          if (target.hp <= 0) this.routUnit(target);
+        } else msg = `⭐ ${u.g.name}【${sk.n}】敌军已无可袭之部。`;
+      } else if (type === "dualblade") {
+        const target = near[0];
+        if (target) { this.resolveAttack(u, target); msg = `⭐ ${u.g.name}【${sk.n}】技势不衰，连番猛击！`; }
+        else msg = `${u.g.name}【${sk.n}】附近无可连击的目标。`;
+      } else if (type === "tempo") {
+        const ally = allies.find(a => a !== u && a.acted && this.manhattan(u, a) <= 1);
+        if (ally) { ally.acted = false; msg = `${u.g.name}【${sk.n}】临阵调度，${ally.g.name} 获得额外行动！`; }
+        else msg = `${u.g.name}【${sk.n}】附近无已行动的友军可供调度。`;
+      }
+      if (msg) this.log("🌟 " + msg);
+      u.skCd = u.skCdMax;
+      u.acted = true;
+      this.afterAction();
+    },
+    // 军令：斥候探阵（揭示敌阵形）/ 擂鼓（全军士气+8）/ 火攻（须山道地形或军中有精通天时者，直接烧一路敌军）
+    useOrder(kind) {
+      if (this.myOrders <= 0) { toast("军令已用尽！"); return; }
+      if (kind === "scout") {
+        if (this.foeFormKnown) return;
+        this.myOrders--; this.foeFormKnown = true;
+        toast(`🕵️ 斥候回报：敌军摆的是${this.FORMS[this.foeForm].n}之阵！`);
+        this.log(`🕵️ 斥候探明敌阵：${this.FORMS[this.foeForm].n}（${this.FORMS[this.foeForm].desc}）`);
+      } else if (kind === "drum") {
+        this.myOrders--; this.myMorale = Math.min(100, this.myMorale + 8);
+        this.log(`🥁 擂鼓助威！我军士气 +8（军令余 ${this.myOrders}）`);
+      } else if (kind === "fire") {
+        this.orderMode = this.orderMode === "fire" ? null : "fire";
+      }
+      if (this.phase === "battle") this.renderBattle(); else this.renderDeploy();
+    },
+    tryFireAttack(target) {
+      if (this.myOrders <= 0) { toast("军令已用尽！"); this.orderMode = null; this.renderBattle(); return; }
+      const terr = this.tiles[target.r][target.c];
+      const master = this.armyHasFiremaster("my");
+      if (terr !== "hill" && !master) { toast("火攻须在山道地形，或军中有精通天时的谋士"); return; }
+      this.myOrders--; this.orderMode = null;
+      const dmg = randInt(400, 800) * (master ? 2 : 1);
+      target.hp = Math.max(0, target.hp - dmg);
+      this.log(`🔥 火攻！${master ? "⭐ 借东风，风向骤转、火势倍增——" : ""}${target.g.name} 部折损 ${dmg}（军令余 ${this.myOrders}）！`);
+      if (target.hp <= 0) this.routUnit(target);
+      if (!this.checkBattleEnd()) this.renderBattle();
+    },
+
+    /* ---------- 我方回合：选将/移动/行动 ---------- */
+    selectUnit(u) {
+      if (u.acted || u.side !== "my" || this.turnSide !== "my") return;
+      this.selectedUnit = u; this.selPhase = "move"; this.actionMode = "attack";
+      this.renderBattle();
+    },
+    moveTo(r, c) {
+      const u = this.selectedUnit; if (!u) return;
+      u.moved = !(r === u.r && c === u.c);
+      u.r = r; u.c = c;
+      this.selPhase = "act";
+      this.renderBattle();
+    },
+    standDown() {
+      const u = this.selectedUnit; if (!u) return;
+      if (!u.moved) u.standDef = true;
+      u.acted = true;
+      this.afterAction();
+    },
+    afterAction() {
+      this.selectedUnit = null; this.selPhase = null;
+      if (this.checkBattleEnd()) return;
+      this.renderBattle();
+    },
+    onCellClick(r, c) {
+      if (this.turnSide !== "my") return;
+      const u = this.unitAt(r, c);
+      if (this.orderMode === "fire") {
+        if (u && u.side === "foe") this.tryFireAttack(u);
+        return;
+      }
+      if (!this.selectedUnit) {
+        if (u && u.side === "my" && !u.acted) this.selectUnit(u);
+        return;
+      }
+      if (this.selPhase === "move") {
+        if (u === this.selectedUnit) { this.moveTo(r, c); return; }
+        if (u) { if (u.side === "my" && !u.acted) this.selectUnit(u); return; }
+        const ok = this.reachable(this.selectedUnit).some(([rr, cc]) => rr === r && cc === c);
+        if (ok) this.moveTo(r, c);
+        return;
+      }
+      if (this.selPhase === "act" && u && u.side === "foe") {
+        const range = this.selectedUnit.ranged ? 2 : 1;
+        const d = this.manhattan(this.selectedUnit, u);
+        if (d <= range && (this.actionMode !== "challenge" || d === 1)) this.doTargetAction(u);
+      }
+    },
+    endMyTurn() {
+      this.selectedUnit = null; this.selPhase = null;
+      this.turnSide = "foe";
+      this.renderBattle();
+      setTimeout(() => this.runFoeTurn(), 400);
+    },
+
+    /* ---------- 敌方回合：简化 AI ---------- */
+    uiPause(ms = 260) { return new Promise(res => setTimeout(res, ms)); },
+    nearestEnemyPos(u, enemies) { return enemies.slice().sort((a, b) => this.manhattan(u, a) - this.manhattan(u, b))[0]; },
+    async runFoeTurn() {
+      const myGen = this.gen;
+      // 敌军军令 AI：小概率擂鼓提振士气，或对山道/己方通晓天时者不限地形的我军单位施以火攻
+      if (this.foeOrders > 0 && Math.random() < 0.4) {
+        if (Math.random() < 0.5) {
+          this.foeOrders--; this.foeMorale = Math.min(100, this.foeMorale + 8);
+          this.log(`🥁 敌阵擂鼓，敌军士气 +8（敌令余 ${this.foeOrders}）`);
+        } else {
+          const master = this.armyHasFiremaster("foe");
+          const targets = this.myUnits.filter(u => u.alive && (this.tiles[u.r][u.c] === "hill" || master));
+          if (targets.length) {
+            this.foeOrders--;
+            const t = targets[randInt(0, targets.length - 1)];
+            const dmg = randInt(400, 800) * (master ? 2 : 1);
+            t.hp = Math.max(0, t.hp - dmg);
+            this.log(`🔥 敌军火攻！${t.g.name} 部折损 ${dmg}（敌令余 ${this.foeOrders}）！`);
+            if (t.hp <= 0) this.routUnit(t);
+            if (this.checkBattleEnd()) return;
+          }
+        }
+        this.renderBattle();
+      }
+      for (const u of this.foeUnits) {
+        if (this.gen !== myGen) return;
+        if (!u.alive) continue;
+        await this.aiActUnit(u);
+        if (this.gen !== myGen) return;
+        if (this.checkBattleEnd()) return;
+      }
+      if (this.gen !== myGen) return;
+      this.endTurnCycle();
+    },
+    async aiActUnit(u) {
+      const enemies = this.myUnits.filter(e => e.alive);
+      if (!enemies.length) return;
+      // 冷却完毕的将魂战法：约四成概率优先使用，而非单纯移动攻击
+      if (u.skActive && u.skCd <= 0 && Math.random() < 0.4) {
+        this.useActiveSkill(u);
+        await this.uiPause();
+        return;
+      }
+      const range = u.ranged ? 2 : 1;
+      // 集火：可斩杀目标优先挑血量最低者；找不到必杀目标时，移动后攻击也优先伤害更高/更容易斩杀的目标
+      let target = enemies.filter(e => this.manhattan(u, e) <= range).sort((a, b) => a.hp - b.hp)
+        .find(e => this.computeCombat(u, e) >= e.hp);
+      if (!target) {
+        const reach = this.reachable(u);
+        let bestMove = null, bestTarget = null, bestScore = -1;
+        for (const [r, c] of reach) {
+          const near = enemies.filter(e => Math.abs(e.r - r) + Math.abs(e.c - c) <= range);
+          for (const e of near) {
+            const dmg = this.computeCombatAt(u, e, r, c);
+            const score = dmg + (dmg >= e.hp ? 1000 : 0) - e.hp * 0.001;
+            if (score > bestScore) { bestScore = score; bestMove = [r, c]; bestTarget = e; }
+          }
+        }
+        if (bestMove) { u.r = bestMove[0]; u.c = bestMove[1]; u.moved = true; target = bestTarget; }
+        else {
+          const lowHp = u.hp < u.hpMax * 0.25;
+          const dest = lowHp ? this.foeCamp : this.nearestEnemyPos(u, enemies);
+          const best = reach.slice().sort((a, b) =>
+            (Math.abs(a[0] - dest.r) + Math.abs(a[1] - dest.c)) - (Math.abs(b[0] - dest.r) + Math.abs(b[1] - dest.c)))[0];
+          if (best) { u.r = best[0]; u.c = best[1]; }
+          u.acted = true;
+          await this.uiPause();
+          this.renderBattle();
+          return;
+        }
+      }
+      this.resolveAttack(u, target);
+      u.acted = true;
+      await this.uiPause();
+      this.renderBattle();
+    },
+
+    /* ---------- 回合推进与胜负 ---------- */
+    startBattle() {
+      this.phase = "battle";
+      this.turnSide = "my"; this.turnN = 1;
+      this.myOrders = this.calcOrders(this.mine); this.foeOrders = this.calcOrders(this.foes);
+      this.myUnits.forEach(u => { u.acted = false; });
+      const beat = this.FORM_BEATS[this.myForm] === this.foeForm ? "——我阵克敌，前三回合攻击再 +10%！"
+        : this.FORM_BEATS[this.foeForm] === this.myForm ? "——敌阵克我，前三回合小心应对！" : "";
+      this.log(`🥁 两军对圆！我方${this.FORMS[this.myForm].n}阵 对 敌方${this.FORMS[this.foeForm].n}阵${beat}`);
+      this.renderBattle();
+    },
+    endTurnCycle() {
+      this.formTurnsLeft = Math.max(0, this.formTurnsLeft - 1);
+      if (this.myForm === "goose" && this.formTurnsLeft > 0) this.foeMorale = Math.max(0, this.foeMorale - this.FORMS.goose.moraleDrain);
+      if (this.foeForm === "goose" && this.formTurnsLeft > 0) this.myMorale = Math.max(0, this.myMorale - this.FORMS.goose.moraleDrain);
+      [...this.myUnits, ...this.foeUnits].forEach(u => {
+        if (!u.alive) return;
+        if (u.side === "my" && u.r === this.myCamp.r && u.c === this.myCamp.c) u.hp = Math.min(u.hpMax, u.hp + Math.round(u.hpMax * 0.08));
+        if (u.side === "foe" && u.r === this.foeCamp.r && u.c === this.foeCamp.c) u.hp = Math.min(u.hpMax, u.hp + Math.round(u.hpMax * 0.08));
+        u.standDef = false; u.moved = false;
+        if (u.skCd > 0) u.skCd--;
+      });
+      // 军令每回合初始重置（design 3.3），按当前存活武将重新核算道数——折损越重、调度越吃紧
+      this.myOrders = this.calcOrders(this.myUnits.filter(u => u.alive).map(u => u.g));
+      this.foeOrders = this.calcOrders(this.foeUnits.filter(u => u.alive).map(u => u.g));
+      if (this.checkBattleEnd()) return;
+      this.turnN++;
+      if (this.turnN > 30) { this.finish(this.totalHp("my") >= this.totalHp("foe"), "鏖战三十回合，未分胜负，按存兵多寡定成败"); return; }
+      this.turnSide = "my";
+      this.myUnits.forEach(u => { u.acted = false; });
+      this.log(`—— 第 ${this.turnN} 回合 ——`);
+      this.renderBattle();
+    },
+    checkBattleEnd() {
+      if (this.myMorale <= 0 || this.totalHp("my") <= 0) { this.finish(false, "我军士气崩溃、全线溃败"); return true; }
+      if (this.foeMorale <= 0 || this.totalHp("foe") <= 0) { this.finish(true, "敌军士气崩溃、全线溃败"); return true; }
+      return false;
+    },
+    finish(won, reason) {
+      this.phase = "done";
+      openOverlay(`<div class="result-card">
+        <h1>${won ? "🏆 野战大捷" : "💀 兵败如山"}</h1>
+        <div class="wdesc">${reason}<br><br>
+          💀 阵亡：我方 ${this.myUnits.filter(u => !u.alive).length} 将 · 敌方 ${this.foeUnits.filter(u => !u.alive).length} 将<br>
+          💪 士气：我 ${Math.round(this.myMorale)} · 敌 ${Math.round(this.foeMorale)}<br>
+          ⚔️ 鏖战 ${this.turnN} 回合</div>
+        <div class="btns">
+          <button class="btn-primary" id="fg-again">再战一场</button>
+          <button class="btn-ghost" id="fg-home">返回菜单</button>
+        </div></div>`, { modal: true });
+      $("#fg-again").onclick = () => { closeOverlay(); this.open(); };
+      $("#fg-home").onclick = () => { closeOverlay(); this.abort(); showScreen("home"); };
+    },
+
+    /* ---------- 渲染 ---------- */
+    boardCellsHtml(opts = {}) {
+      let html = "";
+      for (let r = 0; r < this.ROWS; r++) {
+        for (let c = 0; c < this.COLS; c++) {
+          const terr = this.tiles[r][c];
+          const u = this.unitAt(r, c);
+          let cls = "fg-cell fg-t-" + terr;
+          if (opts.reachSet && opts.reachSet.has(r + "," + c)) cls += " fg-reach";
+          if (opts.enemySet && opts.enemySet.has(r + "," + c)) cls += " fg-enemy-in-range";
+          if (this.selectedUnit && u === this.selectedUnit) cls += " fg-selected";
+          let token = "";
+          if (u) {
+            const pct = Math.max(0, u.hp / u.hpMax);
+            const sk = u.skActive ? Skill.of(u.g) : null;
+            const skBadge = sk ? `<span class="fg-skbadge ${u.skCd > 0 ? "cd" : ""}" title="${sk.n}${u.skCd > 0 ? `（冷却 ${u.skCd}）` : "（可用）"}">${sk.icon}</span>` : "";
+            token = `<div class="fg-unit ${u.side} ${this.phase === "battle" && u.acted ? "acted" : ""}" title="${u.g.name}">
+              <span class="fg-av">${avatarChar(u.g.name)}</span>
+              ${skBadge}
+              <span class="fg-hpbar"><i style="width:${pct * 100}%;background:${hpColor(pct)}"></i></span>
+            </div>`;
+          }
+          html += `<div class="${cls}" data-r="${r}" data-c="${c}">${token}</div>`;
+        }
+      }
+      return html;
+    },
+    renderDeploy() {
+      showScreen("fieldgrid");
+      const tplName = this.TERRAIN_TPL_NAME[this.terrainTpl];
+      const root = $("#fg-content");
+      root.innerHTML = `
+        <div class="section-hint">棋盘对垒：方格步阵，一将一格。选阵形定初始站位（前 3 回合生效），备好后擂鼓开战</div>
+        <div class="fb-banner">🗺️ 战场·${tplName} · 军令 <b>${this.myOrders}</b> 道</div>
+        <div class="fg-legend">${Object.entries(this.TERRAINS).map(([k, t]) => `<span class="fg-legend-item"><i class="fg-t-${k}"></i>${t.icon}${t.n}</span>`).join("")}</div>
+        <div class="fb-sect">我方阵形</div>
+        <div class="fb-forms">${Object.entries(this.FORMS).map(([k, f]) =>
+          `<button class="fb-form ${k === this.myForm ? "active" : ""}" data-form="${k}">${f.icon} ${f.n}<small>${f.desc}</small></button>`).join("")}</div>
+        <div class="fb-sect">敌军阵形：${this.foeFormKnown
+          ? `<b>${this.FORMS[this.foeForm].icon} ${this.FORMS[this.foeForm].n}</b>（${this.FORMS[this.foeForm].desc}）`
+          : `旌旗蔽日看不真切 <button class="cup-go" id="fg-scout" ${this.myOrders > 0 ? "" : "disabled"} style="padding:4px 10px">🕵️ 斥候探阵（耗 1 军令）</button>`}</div>
+        <div class="fg-board" style="grid-template-columns:repeat(${this.COLS},1fr)">${this.boardCellsHtml()}</div>
+        <div class="section-hint">🚩 我营在下，🚩 敌营在上；点选我方武将再点空格可调整初始站位</div>
+        <div class="cup-start-btns" style="margin-top:10px"><button class="cup-go primary" id="fg-go">🥁 擂鼓 · 两军对圆</button></div>`;
+      $$(".fb-form", root).forEach(b => b.onclick = () => { this.myForm = b.dataset.form; this.placeFormation(this.myUnits, "my", this.myForm); this.renderDeploy(); });
+      const scout = $("#fg-scout", root); if (scout) scout.onclick = () => this.useOrder("scout");
+      $$(".fg-cell", root).forEach(cell => cell.onclick = () => {
+        const r = +cell.dataset.r, c = +cell.dataset.c;
+        const u = this.unitAt(r, c);
+        if (this.deploySel) {
+          const sel = this.deploySel; this.deploySel = null;
+          if (r >= this.ROWS - 2 && !u) { sel.r = r; sel.c = c; }
+          this.renderDeploy(); return;
+        }
+        if (u && u.side === "my") { this.deploySel = u; this.renderDeploy(); }
+      });
+      $("#fg-go", root).onclick = () => this.startBattle();
+    },
+    renderBattle() {
+      const u = this.selectedUnit;
+      let reachSet = new Set(), enemySet = new Set();
+      if (u && this.selPhase === "move") {
+        this.reachable(u).forEach(([r, c]) => reachSet.add(r + "," + c));
+        reachSet.add(u.r + "," + u.c);
+      }
+      if (u && this.selPhase === "act") {
+        const range = u.ranged ? 2 : 1;
+        this.foeUnits.filter(e => e.alive && this.manhattan(u, e) <= range && (this.actionMode !== "challenge" || this.manhattan(u, e) === 1))
+          .forEach(e => enemySet.add(e.r + "," + e.c));
+      }
+      let actionBar = "";
+      if (u && this.selPhase === "act") {
+        const hasTargets = enemySet.size > 0;
+        const sk = u.skActive ? Skill.of(u.g) : null;
+        actionBar = `<div class="fg-actionbar">
+          <span>已选 <b>${u.g.name}</b>（体力 ${Math.max(0, Math.round(u.hp))}/${u.hpMax}）</span>
+          ${hasTargets ? `<button class="fb-ord ${this.actionMode === "attack" ? "active" : ""}" id="fg-mode-atk">🗡️ 攻击</button>
+          <button class="fb-ord ${this.actionMode === "challenge" ? "active" : ""}" id="fg-mode-chg">🤺 挑发</button>`
+            : `<span class="dim">附近无目标，仅可待命</span>`}
+          ${sk ? (u.skCd <= 0 ? `<button class="fb-ord" id="fg-skill-btn">🌟 ${sk.n}</button>` : `<span class="dim">🌟 ${sk.n}（冷却 ${u.skCd}）</span>`) : ""}
+          <button class="fb-ord" id="fg-standdown">🛡️ 待命${u.moved ? "结束" : "（+15%防）"}</button>
+        </div>`;
+      }
+      const orderToolbar = `<div class="fb-orders">
+        <span class="fb-ord-left">军令 <b>${this.myOrders}</b> · 敌令 <b>${this.foeOrders}</b></span>
+        ${!this.foeFormKnown ? `<button class="fb-ord" id="fg-scout2" ${this.myOrders > 0 ? "" : "disabled"}>🕵️ 斥候</button>` : ""}
+        <button class="fb-ord" id="fg-drum" ${this.myOrders > 0 ? "" : "disabled"}>🥁 擂鼓（+8士气）</button>
+        <button class="fb-ord ${this.orderMode === "fire" ? "active" : ""}" id="fg-fire" ${this.myOrders > 0 ? "" : "disabled"} title="须山道地形，或军中有精通天时者">🔥 火攻</button>
+        <button class="fb-ord ctrl" id="fg-endturn" ${this.turnSide === "my" ? "" : "disabled"}>⏭ 结束我方回合</button>
+      </div>`;
+      const root = $("#fg-content");
+      root.innerHTML = `
+        <div class="fb-banner">${this.turnSide === "my" ? "🟢 我方回合" : "🔴 敌方回合"} · 第 ${this.turnN} 回合${this.formTurnsLeft > 0 ? `（阵形加成剩 ${this.formTurnsLeft} 回合）` : ""}${this.orderMode === "fire" ? "· 请点选要火攻的敌方单位" : ""}
+          <div class="fb-morales"><div class="fb-mor my"><span>我军士气</span><div class="fb-mor-bar"><i style="width:${this.myMorale}%;background:${hpColor(this.myMorale / 100)}"></i></div><b>${Math.round(this.myMorale)}</b></div>
+          <div class="fb-mor foe"><b>${Math.round(this.foeMorale)}</b><div class="fb-mor-bar foe"><i style="width:${this.foeMorale}%;background:${hpColor(this.foeMorale / 100)}"></i></div><span>敌军士气</span></div></div>
+        </div>
+        <div class="fg-board" style="grid-template-columns:repeat(${this.COLS},1fr)">${this.boardCellsHtml({ reachSet, enemySet })}</div>
+        ${actionBar}
+        ${orderToolbar}
+        <div class="fb-log" id="fg-log">${(this.logLines || []).join("")}</div>`;
+      $$(".fg-cell", root).forEach(cell => cell.onclick = () => this.onCellClick(+cell.dataset.r, +cell.dataset.c));
+      const endBtn = $("#fg-endturn", root); if (endBtn) endBtn.onclick = () => this.endMyTurn();
+      const sd = $("#fg-standdown", root); if (sd) sd.onclick = () => this.standDown();
+      const ma = $("#fg-mode-atk", root); if (ma) ma.onclick = () => { this.actionMode = "attack"; this.renderBattle(); };
+      const mc = $("#fg-mode-chg", root); if (mc) mc.onclick = () => { this.actionMode = "challenge"; this.renderBattle(); };
+      const skb = $("#fg-skill-btn", root); if (skb) skb.onclick = () => this.useActiveSkill(u);
+      const sc2 = $("#fg-scout2", root); if (sc2) sc2.onclick = () => this.useOrder("scout");
+      const drum = $("#fg-drum", root); if (drum) drum.onclick = () => this.useOrder("drum");
+      const fire = $("#fg-fire", root); if (fire) fire.onclick = () => this.useOrder("fire");
+    },
+    log(msg) {
+      this.logLines = this.logLines || [];
+      this.logLines.unshift(`<div>${msg}</div>`);
+      if (this.logLines.length > 30) this.logLines.pop();
+      const el = $("#fg-log"); if (el) el.innerHTML = this.logLines.join("");
+    },
+  };
+  window.GridBattle = GridBattle;   // 导出到 window，便于自动化测试等外部脚本直接读取战场状态
 
   /* ============================================================
    *  国战 · 攻城略地
@@ -11148,6 +11816,7 @@
       if (go === "select") SelectUI.open(b.dataset.mode);
       else if (go === "war") War.open();
       else if (go === "field") FieldBattle.open();
+      else if (go === "fieldgrid") GridBattle.open();
       else if (go === "conquest") Conquest.open();
       else if (go === "cup") Tournament.open();
       else if (go === "rpg") RPG.open();

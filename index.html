@@ -77,8 +77,11 @@
       <button class="menu-btn" data-go="select" data-mode="team">
         <span class="mi">🛡️</span><span>组队大战<small>各带兵最多10将，攻城计谋挑唆征兵</small></span>
       </button>
+      <button class="menu-btn" data-go="fieldgrid">
+        <span class="mi">🏹</span><span>野战演武<small>方格棋盘·回合制排兵斗阵，一将一格</small></span>
+      </button>
       <button class="menu-btn" data-go="field">
-        <span class="mi">🏹</span><span>野战演武<small>排兵斗将，四线推锋，军令定乾坤</small></span>
+        <span class="mi">🎏</span><span>野战演武·经典版<small>五线推锋旧版留存，军令定乾坤</small></span>
       </button>
       <button class="menu-btn" data-go="conquest">
         <span class="mi">🗺️</span><span>国战·攻城略地<small>随机城池地图，攻城调兵一统天下</small></span>
@@ -247,11 +250,24 @@
     </div>
   </section>
 
-  <!-- ========== 野战演武（两军对圆·斗将破阵） ========== -->
-  <section id="screen-field" class="screen">
+  <!-- ========== 野战演武 · 棋盘对垒（GridBattle：方格回合制，取代旧版成为主入口） ========== -->
+  <section id="screen-fieldgrid" class="screen">
     <div class="topbar">
       <span class="back" data-back>‹</span>
       <h2>野战演武</h2>
+      <div class="audio-btns">
+        <button id="btn-music17">♪</button>
+        <button id="btn-sfx17">🔊</button>
+      </div>
+    </div>
+    <div id="fg-content"></div>
+  </section>
+
+  <!-- ========== 野战演武·经典版（两军对圆·斗将破阵，旧版原样留存） ========== -->
+  <section id="screen-field" class="screen">
+    <div class="topbar">
+      <span class="back" data-back>‹</span>
+      <h2>野战演武·经典版</h2>
       <div class="audio-btns">
         <button id="btn-music12">♪</button>
         <button id="btn-sfx12">🔊</button>

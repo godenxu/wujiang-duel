@@ -1445,6 +1445,58 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
   margin-top: 8px; max-height: 88px; overflow-y: auto; font-size: 12px; line-height: 1.5;
   background: rgba(0,0,0,.25); border-radius: 8px; padding: 6px 9px;
 }
+
+/* ---------- 野战演武 · 棋盘对垒（GridBattle）：方格棋盘、单位徽标、可达/可攻高亮 ---------- */
+.fg-board {
+  display: grid; gap: 2px;
+  background: rgba(0,0,0,.25); border: 1px solid rgba(212,175,55,.35); border-radius: 6px;
+  padding: 3px; margin: 10px 0; aspect-ratio: 12 / 9; max-width: 100%;
+}
+.fg-cell {
+  position: relative; border-radius: 2px; min-width: 0; min-height: 0; cursor: pointer;
+}
+.fg-t-plain { background: #5f7f45; }
+.fg-t-hill  { background: #83693f; }
+.fg-t-river { background: #33607e; }
+.fg-t-road  { background: #ad9760; }
+.fg-t-camp  { background: #9c3d2a; }
+.fg-cell.fg-reach::after {
+  content: ""; position: absolute; inset: 8%; border-radius: 3px;
+  background: rgba(90,160,255,.42); border: 1px solid rgba(140,190,255,.9);
+}
+.fg-cell.fg-enemy-in-range::after {
+  content: ""; position: absolute; inset: 8%; border-radius: 3px;
+  background: rgba(255,70,70,.4); border: 1px solid rgba(255,120,120,.95);
+}
+.fg-cell.fg-selected { outline: 2px solid var(--cn-gold); outline-offset: -2px; z-index: 1; }
+.fg-unit {
+  position: absolute; inset: 9%; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: clamp(9px, 1.7vw, 15px); font-weight: 800; color: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,.5); z-index: 2;
+}
+.fg-unit.my  { background: linear-gradient(135deg, var(--cn-red), #7a1420); border: 1px solid var(--cn-gold); }
+.fg-unit.foe { background: linear-gradient(135deg, var(--jp-indigo), #1a2440); border: 1px solid #8fa0d0; }
+.fg-hpbar { position: absolute; left: 6%; right: 6%; bottom: -5px; height: 3px; background: rgba(0,0,0,.55); border-radius: 2px; overflow: hidden; }
+.fg-hpbar i { display: block; height: 100%; }
+.fg-actionbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  background: rgba(0,0,0,.28); border: 1px solid rgba(212,175,55,.3);
+  border-radius: 8px; padding: 8px 10px; margin: 8px 0; font-size: 13px; color: var(--paper);
+}
+.fg-actionbar .dim { opacity: .65; }
+.fb-ord.active { background: linear-gradient(135deg, #f0d678, var(--accent)); color: #1a1410; border-color: transparent; }
+.fg-unit.acted { opacity: .5; filter: grayscale(.4); }
+.fg-skbadge {
+  position: absolute; top: -4px; right: -4px; width: 15px; height: 15px; border-radius: 50%;
+  background: var(--cn-gold); color: #241a08; font-size: 9px; line-height: 15px; text-align: center;
+  box-shadow: 0 1px 2px rgba(0,0,0,.6); z-index: 3;
+}
+.fg-skbadge.cd { background: #6a6255; color: rgba(255,255,255,.6); }
+.fg-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 6px 0 10px; font-size: 12px; color: var(--paper); opacity: .85; }
+.fg-legend-item { display: inline-flex; align-items: center; gap: 4px; }
+.fg-legend-item i { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+
 /* 挥军破阵全景战场 / 排兵布阵阵型预览：两块画布固定挂在 #fb-content 之外，不随其 innerHTML 重写而销毁重建。
    容器须给定明确高度（与 JS 里的逻辑缓冲高度一一对应），canvas 本身按 100%/100% 填满——
    若只靠 canvas 自身的固有宽高比在 flex 列容器里反推高度，中间的 wrap 层拿不到定高，会整体塌陷成 0 */
