@@ -1446,11 +1446,15 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
   background: rgba(0,0,0,.25); border-radius: 8px; padding: 6px 9px;
 }
 
-/* ---------- 野战演武 · 棋盘对垒（GridBattle）：方格棋盘、单位徽标、可达/可攻高亮 ---------- */
+/* ---------- 野战演武 · 棋盘对垒（GridBattle）：方格棋盘、单位徽标、可达/可攻高亮 ----------
+   整体针对手机竖屏做了紧凑化：banner/军令条/日志的内边距与行高普遍收窄，棋盘按视口高度
+   （而非纯宽度）反推尺寸上限，避免一局下来要频繁上下滚动屏幕。 */
+#screen-fieldgrid #fg-content { padding-bottom: 4px; }
 .fg-board {
-  display: grid; gap: 2px;
+  display: grid; gap: 1.5px;
   background: rgba(0,0,0,.25); border: 1px solid rgba(212,175,55,.35); border-radius: 6px;
-  padding: 3px; margin: 10px 0; aspect-ratio: 12 / 9; max-width: 100%;
+  padding: 3px; margin: 6px auto; aspect-ratio: 12 / 9;
+  width: min(100%, 54vh); max-width: 100%;
 }
 .fg-cell {
   position: relative; border-radius: 2px; min-width: 0; min-height: 0; cursor: pointer;
@@ -1469,33 +1473,69 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
   background: rgba(255,70,70,.4); border: 1px solid rgba(255,120,120,.95);
 }
 .fg-cell.fg-selected { outline: 2px solid var(--cn-gold); outline-offset: -2px; z-index: 1; }
+/* 方形徽标（而非圆形）：容得下完整姓名，中文名较长时靠 ellipsis 兜底而非硬挤成一坨 */
 .fg-unit {
-  position: absolute; inset: 9%; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-size: clamp(9px, 1.7vw, 15px); font-weight: 800; color: #fff;
+  position: absolute; inset: 5%; border-radius: 3px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding-top: 1px; overflow: hidden;
   box-shadow: 0 1px 3px rgba(0,0,0,.5); z-index: 2;
 }
 .fg-unit.my  { background: linear-gradient(135deg, var(--cn-red), #7a1420); border: 1px solid var(--cn-gold); }
 .fg-unit.foe { background: linear-gradient(135deg, var(--jp-indigo), #1a2440); border: 1px solid #8fa0d0; }
-.fg-hpbar { position: absolute; left: 6%; right: 6%; bottom: -5px; height: 3px; background: rgba(0,0,0,.55); border-radius: 2px; overflow: hidden; }
-.fg-hpbar i { display: block; height: 100%; }
+.fg-name {
+  font-size: clamp(6px, 1.6vw, 9px); font-weight: 800; color: #fff; line-height: 1.1;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 92%;
+  text-shadow: 0 1px 1px rgba(0,0,0,.6);
+}
+.fg-hpbar, .fg-morbar { position: relative; width: 84%; height: 2.5px; background: rgba(0,0,0,.55); border-radius: 2px; overflow: hidden; margin-top: 1px; }
+.fg-hpbar i, .fg-morbar i { display: block; height: 100%; }
 .fg-actionbar {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
   background: rgba(0,0,0,.28); border: 1px solid rgba(212,175,55,.3);
-  border-radius: 8px; padding: 8px 10px; margin: 8px 0; font-size: 13px; color: var(--paper);
+  border-radius: 8px; padding: 6px 9px; margin: 6px 0; font-size: 12.5px; color: var(--paper);
 }
 .fg-actionbar .dim { opacity: .65; }
 .fb-ord.active { background: linear-gradient(135deg, #f0d678, var(--accent)); color: #1a1410; border-color: transparent; }
 .fg-unit.acted { opacity: .5; filter: grayscale(.4); }
 .fg-skbadge {
-  position: absolute; top: -4px; right: -4px; width: 15px; height: 15px; border-radius: 50%;
-  background: var(--cn-gold); color: #241a08; font-size: 9px; line-height: 15px; text-align: center;
+  position: absolute; top: -3px; right: -3px; width: 13px; height: 13px; border-radius: 50%;
+  background: var(--cn-gold); color: #241a08; font-size: 8px; line-height: 13px; text-align: center;
   box-shadow: 0 1px 2px rgba(0,0,0,.6); z-index: 3;
 }
 .fg-skbadge.cd { background: #6a6255; color: rgba(255,255,255,.6); }
-.fg-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 6px 0 10px; font-size: 12px; color: var(--paper); opacity: .85; }
+.fg-legend { display: flex; flex-wrap: wrap; gap: 3px 10px; margin: 4px 0 6px; font-size: 11px; color: var(--paper); opacity: .85; }
 .fg-legend-item { display: inline-flex; align-items: center; gap: 4px; }
-.fg-legend-item i { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+.fg-legend-item i { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+/* banner/军令条/日志：比旧版 FieldBattle 共用的 .fb-banner/.fb-orders/.fb-log 更紧凑一档 */
+.fg-banner-compact { padding: 6px 10px; font-size: 12.5px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.fg-avgmor { opacity: .8; font-size: 11.5px; }
+#screen-fieldgrid .fb-orders { margin: 4px 0; padding: 5px 8px; }
+#screen-fieldgrid .fb-ord { padding: 5px 8px; font-size: 12px; }
+.fg-log-compact { max-height: 56px; margin-top: 4px; font-size: 11px; }
+
+/* 攻击画面感：挥砍前倾、受击闪红+微震、暴击全屏亮闪、伤害数字浮现于目标格 */
+@keyframes fgLunge { 0%,100%{ transform: translateY(0) scale(1); } 45%{ transform: translateY(-2px) scale(1.08); } }
+.fg-cell.fg-atk-anim .fg-unit { animation: fgLunge .28s ease; z-index: 4; }
+@keyframes fgHitShake { 0%,100%{ transform: translateX(0); } 25%{ transform: translateX(-2px); } 75%{ transform: translateX(2px); } }
+.fg-cell.fg-hit-flash .fg-unit { animation: fgHitShake .28s ease; }
+.fg-cell.fg-hit-flash::before {
+  content: ""; position: absolute; inset: 0; background: rgba(255,60,60,.5); border-radius: 2px;
+  animation: fgFlashFade .5s ease forwards; pointer-events: none; z-index: 3;
+}
+@keyframes fgFlashFade { from{ opacity: 1; } to{ opacity: 0; } }
+.fg-board.fg-screenflash { animation: fgScreenFlash .3s ease; }
+@keyframes fgScreenFlash { 0%,100%{ filter: none; } 40%{ filter: brightness(1.7) saturate(1.4); } }
+.fg-dmgnum {
+  position: absolute; left: 50%; top: 6%; transform: translateX(-50%);
+  font-weight: 900; font-size: 12px; color: #fff; text-shadow: 0 1px 3px #000;
+  pointer-events: none; z-index: 6; animation: fgDmgUp .85s ease forwards;
+}
+.fg-dmgnum.crit { color: var(--cn-gold); font-size: 16px; }
+@keyframes fgDmgUp {
+  0%{ opacity: 0; transform: translateX(-50%) translateY(6px) scale(.6); }
+  20%{ opacity: 1; transform: translateX(-50%) translateY(-4px) scale(1.15); }
+  100%{ opacity: 0; transform: translateX(-50%) translateY(-24px) scale(1); }
+}
 
 /* 挥军破阵全景战场 / 排兵布阵阵型预览：两块画布固定挂在 #fb-content 之外，不随其 innerHTML 重写而销毁重建。
    容器须给定明确高度（与 JS 里的逻辑缓冲高度一一对应），canvas 本身按 100%/100% 填满——

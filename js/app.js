@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608132206";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608160330";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -3477,7 +3477,8 @@
       return {
         uid: g.side + "-" + g.id + "-" + Math.random().toString(36).slice(2, 7),
         g, side, r: 0, c: 0,
-        hp: hpMax, hpMax,
+        hp: hpMax, hpMax,           // 兵力（非"体力"——沿用武将六维数值，但战场语境下代表其所辖部众）
+        morale: 50,                 // 士气：每员武将独立维护，不再是全队共享的单一数值
         atk: g.wu * 0.65 + g.tong * 0.35,
         def: g.tong * 0.65 + g.wu * 0.35,
         moveMax: Math.max(3, Math.min(5, Math.round(g.tong / 28))),
@@ -3541,13 +3542,13 @@
       this.foeUnits = this.foes.map(g => this.makeUnit(g, "foe"));
       this.placeFormation(this.myUnits, "my", this.myForm);
       this.placeFormation(this.foeUnits, "foe", this.foeForm);
-      this.myMorale = 50; this.foeMorale = 50;
       this.formTurnsLeft = 3;
       this.turnSide = "my"; this.turnN = 1;
       this.logLines = [];
       this.myOrders = this.calcOrders(this.mine); this.foeOrders = this.calcOrders(this.foes);
       this.foeFormKnown = false; this.orderMode = null;
       this.selectedUnit = null; this.selPhase = null; this.actionMode = "attack"; this.deploySel = null;
+      this.busy = false;
       showScreen("fieldgrid");
       this.renderDeploy();
     },
@@ -3564,6 +3565,17 @@
     },
     manhattan(a, b) { return Math.abs(a.r - b.r) + Math.abs(a.c - b.c); },
     totalHp(side) { return (side === "my" ? this.myUnits : this.foeUnits).reduce((s, u) => s + (u.alive ? u.hp : 0), 0); },
+    avgMorale(side) {
+      const arr = (side === "my" ? this.myUnits : this.foeUnits).filter(u => u.alive);
+      return arr.length ? Math.round(arr.reduce((s, u) => s + u.morale, 0) / arr.length) : 0;
+    },
+    // 士气增减的唯一入口：跌至 0 即视为该部气丧胆寒、不战自溃（与兵力耗尽同为"溃退"的两条独立触因）
+    dropMorale(u, amt) {
+      if (!u.alive) return;
+      u.morale = Math.max(0, u.morale - amt);
+      if (u.morale <= 0) this.routUnit(u, "士气涣散、军心崩溃");
+    },
+    gainMorale(u, amt) { if (u.alive) u.morale = Math.min(100, u.morale + amt); },
     reachable(unit) {
       const cost = { [unit.r + "," + unit.c]: 0 };
       const queue = [[unit.r, unit.c, 0]];
@@ -3589,6 +3601,12 @@
     },
 
     /* ---------- 战斗结算 ---------- */
+    // 夹击：守方相邻格（除攻方本身外）另有攻方同袍存活，每员再 +25% 伤害，封顶两员 +50%——
+    // 由此产生"结阵靠拢多面围攻、散阵单打独斗吃亏"的走位策略
+    flankerCount(att, def) {
+      const allies = att.side === "my" ? this.myUnits : this.foeUnits;
+      return allies.filter(a => a !== att && a.alive && this.manhattan(a, def) === 1).length;
+    },
     computeCombat(att, def) {
       const defTerr = this.TERRAINS[this.tiles[def.r][def.c]];
       const formBonus = (side, kind) => {
@@ -3602,94 +3620,137 @@
         const dForm = side === "my" ? this.foeForm : this.myForm;
         return this.FORM_BEATS[aForm] === dForm ? 1.1 : 1;
       };
-      const moraleMul = side => 0.7 + (side === "my" ? this.myMorale : this.foeMorale) / 100 * 0.6;
-      let dmg = 220 * (att.atk * this.skillAtkMul(att) * formBonus(att.side, "atk") * beatBonus(att.side) * moraleMul(att.side))
+      // 士气不再是全队共享的单一数值：以攻方自身士气决定其发挥
+      const moraleMul = 0.7 + att.morale / 100 * 0.6;
+      let dmg = 220 * (att.atk * this.skillAtkMul(att) * formBonus(att.side, "atk") * beatBonus(att.side) * moraleMul)
         / Math.max(1, def.def * this.skillDefMul(def) * defTerr.defMul * formBonus(def.side, "def"))
         * (0.85 + Math.random() * 0.3);
+      const flankers = this.flankerCount(att, def);
+      if (flankers > 0) dmg *= 1 + Math.min(2, flankers) * 0.25;
       if (def.standDef) dmg *= 0.85;
-      return Math.max(1, Math.round(dmg));
+      // 暴击：由攻方「魅力」决定（与单挑同一套公式），中则伤害 ×1.7
+      let crit = false;
+      if (Math.random() < Math.min(0.6, (att.g.mei || 0) / 280)) { dmg *= 1.7; crit = true; }
+      return { dmg: Math.max(1, Math.round(dmg)), crit, flankers };
     },
     computeCombatAt(att, def, r, c) {
       const sr = att.r, sc = att.c;
       att.r = r; att.c = c;
-      const dmg = this.computeCombat(att, def);
+      const res = this.computeCombat(att, def);
       att.r = sr; att.c = sc;
-      return dmg;
+      return res;
     },
-    resolveAttack(att, def) {
+    // 攻击画面感：挥砍/受创闪动、暴击全屏微闪、伤害数字浮现于目标格，全程配以音效——先播完这段短促演出，
+    // 再交回调用方去做真正的整块重绘（renderBattle），避免动画节点被同一帧的 innerHTML 重写瞬间冲掉
+    async playAttackFx(att, def, res) {
+      const root = $("#fg-content");
+      const attCell = root && root.querySelector(`.fg-cell[data-r="${att.r}"][data-c="${att.c}"]`);
+      const defCell = root && root.querySelector(`.fg-cell[data-r="${def.r}"][data-c="${def.c}"]`);
+      AudioSystem.sfx.swing();
+      if (attCell) attCell.classList.add("fg-atk-anim");
+      await this.uiPause(150);
+      if (res.crit) { AudioSystem.sfx.crit(); const board = root && root.querySelector(".fg-board"); if (board) board.classList.add("fg-screenflash"); }
+      else AudioSystem.sfx.hit();
+      if (defCell) {
+        defCell.classList.add("fg-hit-flash");
+        const num = document.createElement("div");
+        num.className = "fg-dmgnum" + (res.crit ? " crit" : "");
+        num.textContent = "-" + res.dmg;
+        defCell.appendChild(num);
+        setTimeout(() => num.remove(), 850);
+      }
+      await this.uiPause(280);
+      if (attCell) attCell.classList.remove("fg-atk-anim");
+      if (defCell) defCell.classList.remove("fg-hit-flash");
+      const board2 = root && root.querySelector(".fg-board"); if (board2) board2.classList.remove("fg-screenflash");
+    },
+    async resolveAttack(att, def) {
       if (this.TERRAINS[this.tiles[att.r][att.c]].noAtk) { toast("半渡之际，不可出战！"); return; }
-      const dmg = this.computeCombat(att, def);
-      def.hp = Math.max(0, def.hp - dmg);
-      this.log(`⚔️ ${att.g.name} 攻击 ${def.g.name}，造成 ${dmg} 点伤害${def.hp <= 0 ? "，一举击溃！" : ""}`);
+      const res = this.computeCombat(att, def);
+      def.hp = Math.max(0, def.hp - res.dmg);
+      this.log(`⚔️ ${att.g.name} 攻击 ${def.g.name}${res.flankers ? "（夹击）" : ""}，造成 ${res.dmg} 点伤害${res.crit ? " 💥暴击！" : ""}${def.hp <= 0 ? "，一举击溃！" : ""}`);
+      await this.playAttackFx(att, def, res);
       if (def.hp <= 0) this.routUnit(def);
       if (def.hp > 0 && !att.ranged && !this.TERRAINS[this.tiles[def.r][def.c]].noAtk) {
-        const counterDmg = Math.round(this.computeCombat(def, att) * 0.5);
+        const cres = this.computeCombat(def, att);
+        const counterDmg = Math.round(cres.dmg * 0.5);
         att.hp = Math.max(0, att.hp - counterDmg);
-        this.log(`↩️ ${def.g.name} 奋力反击，造成 ${counterDmg} 点伤害${att.hp <= 0 ? "，反遭击溃！" : ""}`);
+        this.log(`↩️ ${def.g.name} 奋力反击${cres.crit ? " 💥暴击" : ""}，造成 ${counterDmg} 点伤害${att.hp <= 0 ? "，反遭击溃！" : ""}`);
+        await this.playAttackFx(def, att, { dmg: counterDmg, crit: cres.crit });
         if (att.hp <= 0) this.routUnit(att);
       }
     },
-    routUnit(u) {
+    // 溃退：兵力或士气（见 dropMorale）任一见底皆触发，两者互为独立判定；殃及己方同袍士气小幅下滑、
+    // 敌方同步小振——由个体的溃败连锁牵动全局，而非旧版"全队一个开关"式的整队瞬间崩溃
+    routUnit(u, reason) {
+      if (!u.alive) return;
       u.alive = false;
-      if (u.side === "my") { this.myMorale = Math.max(0, this.myMorale - 10); this.foeMorale = Math.min(100, this.foeMorale + 6); }
-      else { this.foeMorale = Math.max(0, this.foeMorale - 10); this.myMorale = Math.min(100, this.myMorale + 6); }
-      this.log(`💀 ${u.g.name} 兵败溃退，退出战场！`);
+      const allies = u.side === "my" ? this.myUnits : this.foeUnits;
+      const enemies = u.side === "my" ? this.foeUnits : this.myUnits;
+      allies.forEach(a => this.dropMorale(a, 5));
+      enemies.forEach(e => this.gainMorale(e, 3));
+      AudioSystem.sfx.ko();
+      this.log(`💀 ${u.g.name} 部${reason || "兵力耗尽，全军溃退"}，退出战场！`);
     },
-    doTargetAction(def) {
+    async doTargetAction(def) {
       const att = this.selectedUnit;
-      if (!att) return;
+      if (!att || this.busy) return;
       if (this.actionMode === "challenge") return this.challenge(att, def);
-      this.resolveAttack(att, def);
+      this.busy = true;
+      await this.resolveAttack(att, def);
       att.acted = true;
+      this.busy = false;
       this.afterAction();
     },
-    // 挑发（decision #4）：向相邻敌将发起单挑请求，成败取决于己方魅力与对方智力之差；
-    // 应战则复用 startTeamDuel 引擎真实打一场；败方兵力折半、士气受挫，小概率（12%）当场全军崩溃
+    // 单挑（decision #4，原「挑发」改名）：向相邻敌将发起单挑请求，成败取决于己方魅力与对方智力之差；
+    // 应战则复用 startTeamDuel 引擎真实打一场；败方兵力折半、士气受挫，且均只落在败方这一员武将身上——
+    // 不再是旧版"团队共享一个士气开关"，一场单挑输赢至多只会让败者本人这一部溃退，不会牵动全军
     async challenge(att, def) {
+      if (this.busy) return;
+      this.busy = true;
       const pAccept = Math.max(0.25, Math.min(0.85, 0.5 + (att.g.mei - def.g.zhi) / 200));
       if (Math.random() >= pAccept) {
-        this.log(`🤺 ${att.g.name} 跃马挑发，${def.g.name} 识破其意，按兵不动。`);
-        att.acted = true; this.afterAction();
+        this.log(`🤺 ${att.g.name} 请战单挑，${def.g.name} 识破其意，按兵不动。`);
+        att.acted = true; this.busy = false; this.afterAction();
         return;
       }
-      this.log(`🤺 ${att.g.name} 跃马挑发，${def.g.name} 按捺不住，两将阵前一战！`);
+      this.log(`🤺 ${att.g.name} 请战单挑，${def.g.name} 按捺不住，两将阵前一战！`);
       const myGen = this.gen;
       const res = await startTeamDuel(clone(att.g), clone(def.g), {
-        title: "阵前挑发", backScreen: "fieldgrid", spectate: !this.controllable(att.g),
-        intro: `${att.g.name} 挑发 ${def.g.name}，两将阵前一决高下！`,
+        title: "阵前单挑", backScreen: "fieldgrid", spectate: !this.controllable(att.g),
+        intro: `${att.g.name} 请战单挑 ${def.g.name}，两将阵前一决高下！`,
       });
       if (this.gen !== myGen) return;
       showScreen("fieldgrid");
       att.acted = true;
+      this.busy = false;
       if (!res) { this.afterAction(); return; }
       const winnerIsAtt = res.winner.name === att.g.name;
       const loser = winnerIsAtt ? def : att;
-      const loserSide = loser.side;
       loser.hp = Math.max(1, Math.round(loser.hp * 0.5));
-      if (loserSide === "my") { this.myMorale = Math.max(0, this.myMorale - 8); this.foeMorale = Math.min(100, this.foeMorale + 5); }
-      else { this.foeMorale = Math.max(0, this.foeMorale - 8); this.myMorale = Math.min(100, this.myMorale + 5); }
-      this.log(`${winnerIsAtt ? "⚔️" : "💥"} ${res.winner.name} 挑发得胜，${res.loser.name} 部众折损过半、军心动摇！`);
-      if (Math.random() < 0.12) {
-        if (loserSide === "my") this.myMorale = 0; else this.foeMorale = 0;
-        this.log(`🏳️ ${loserSide === "my" ? "我军" : "敌军"}士气瞬间崩溃，全军溃退之势已成！`);
-      }
+      this.dropMorale(loser, 20);
+      this.log(`${winnerIsAtt ? "⚔️" : "💥"} ${res.winner.name} 单挑得胜，${res.loser.name} 部众折损过半、军心动摇！`);
+      // 小概率（12%）此部当场溃散——只影响败者本人这一部，不再殃及全军
+      if (loser.alive && Math.random() < 0.12) this.routUnit(loser, "单挑落败后军心涣散、当场溃散");
       this.afterAction();
     },
     // 主动将魂 → 战法钮（design 6.2）：占用本回合行动，冷却以回合计；效果按持有者所属阵营通用判定，
     // 故 AI 一方（foe）可直接复用同一函数。school-wu/ti/mei/zheng 对应四门通用技，其余为名将专属。
-    useActiveSkill(u) {
+    async useActiveSkill(u) {
       const type = u.skActive;
-      if (!type) return;
+      if (!type || this.busy) return;
+      this.busy = true;
       const sk = Skill.of(u.g);
       const enemies = (u.side === "my" ? this.foeUnits : this.myUnits).filter(e => e.alive);
       const allies = (u.side === "my" ? this.myUnits : this.foeUnits).filter(e => e.alive);
       const near = enemies.filter(e => this.manhattan(u, e) <= 1);
-      let msg = "";
+      let msg = "", handled = false;
       if (type === "school-wu") {
         const target = near[0];
         if (target) {
-          const dmg = Math.round(this.computeCombat(u, target) * 1.6);
+          const dmg = Math.round(this.computeCombat(u, target).dmg * 1.6);
           target.hp = Math.max(0, target.hp - dmg);
+          AudioSystem.sfx.swing(); AudioSystem.sfx.hit();
           msg = `${u.g.name}【${sk.n}】陷阵突击，斩敌 ${target.g.name} 部 ${dmg} 点！`;
           if (target.hp <= 0) this.routUnit(target);
         } else msg = `${u.g.name}【${sk.n}】未寻得近旁可突击的目标。`;
@@ -3697,34 +3758,36 @@
         const heal = Math.round(u.hpMax * 0.18); u.hp = Math.min(u.hpMax, u.hp + heal);
         msg = `${u.g.name}【${sk.n}】游走整军，自部兵力回复 ${heal}！`;
       } else if (type === "school-mei") {
-        if (u.side === "my") this.myMorale = Math.min(100, this.myMorale + 8); else this.foeMorale = Math.min(100, this.foeMorale + 8);
+        allies.forEach(a => this.gainMorale(a, 8));
         msg = `${u.g.name}【${sk.n}】振臂高呼，全军士气 +8！`;
       } else if (type === "school-zheng") {
         const heal = Math.round(u.hpMax * 0.15); u.hp = Math.min(u.hpMax, u.hp + heal);
         msg = `${u.g.name}【${sk.n}】调度粮秣，自部兵力回复 ${heal}！`;
       } else if (type === "awe" || type === "discord" || type === "roar") {
-        if (u.side === "my") this.foeMorale = Math.max(0, this.foeMorale - 10); else this.myMorale = Math.max(0, this.myMorale - 10);
+        enemies.forEach(e => this.dropMorale(e, 10));
         msg = `⭐ ${u.g.name}【${sk.n}】威慑当面，敌军士气 -10！`;
       } else if (type === "infiltrate") {
         const target = enemies[randInt(0, enemies.length - 1)];
         if (target) {
           const dmg = randInt(700, 1200);
           target.hp = Math.max(0, target.hp - dmg);
+          AudioSystem.sfx.swing(); AudioSystem.sfx.hit();
           msg = `⭐ ${u.g.name}【${sk.n}】潜行突袭，${target.g.name} 部折损 ${dmg}！`;
           if (target.hp <= 0) this.routUnit(target);
         } else msg = `⭐ ${u.g.name}【${sk.n}】敌军已无可袭之部。`;
       } else if (type === "dualblade") {
         const target = near[0];
-        if (target) { this.resolveAttack(u, target); msg = `⭐ ${u.g.name}【${sk.n}】技势不衰，连番猛击！`; }
+        if (target) { this.log(`⭐ ${u.g.name}【${sk.n}】技势不衰，连番猛击！`); await this.resolveAttack(u, target); handled = true; }
         else msg = `${u.g.name}【${sk.n}】附近无可连击的目标。`;
       } else if (type === "tempo") {
         const ally = allies.find(a => a !== u && a.acted && this.manhattan(u, a) <= 1);
         if (ally) { ally.acted = false; msg = `${u.g.name}【${sk.n}】临阵调度，${ally.g.name} 获得额外行动！`; }
         else msg = `${u.g.name}【${sk.n}】附近无已行动的友军可供调度。`;
       }
-      if (msg) this.log("🌟 " + msg);
+      if (msg && !handled) this.log("🌟 " + msg);
       u.skCd = u.skCdMax;
       u.acted = true;
+      this.busy = false;
       this.afterAction();
     },
     // 军令：斥候探阵（揭示敌阵形）/ 擂鼓（全军士气+8）/ 火攻（须山道地形或军中有精通天时者，直接烧一路敌军）
@@ -3736,7 +3799,7 @@
         toast(`🕵️ 斥候回报：敌军摆的是${this.FORMS[this.foeForm].n}之阵！`);
         this.log(`🕵️ 斥候探明敌阵：${this.FORMS[this.foeForm].n}（${this.FORMS[this.foeForm].desc}）`);
       } else if (kind === "drum") {
-        this.myOrders--; this.myMorale = Math.min(100, this.myMorale + 8);
+        this.myOrders--; this.myUnits.filter(u => u.alive).forEach(u => this.gainMorale(u, 8));
         this.log(`🥁 擂鼓助威！我军士气 +8（军令余 ${this.myOrders}）`);
       } else if (kind === "fire") {
         this.orderMode = this.orderMode === "fire" ? null : "fire";
@@ -3751,6 +3814,7 @@
       this.myOrders--; this.orderMode = null;
       const dmg = randInt(400, 800) * (master ? 2 : 1);
       target.hp = Math.max(0, target.hp - dmg);
+      AudioSystem.sfx.hit();
       this.log(`🔥 火攻！${master ? "⭐ 借东风，风向骤转、火势倍增——" : ""}${target.g.name} 部折损 ${dmg}（军令余 ${this.myOrders}）！`);
       if (target.hp <= 0) this.routUnit(target);
       if (!this.checkBattleEnd()) this.renderBattle();
@@ -3819,7 +3883,7 @@
       // 敌军军令 AI：小概率擂鼓提振士气，或对山道/己方通晓天时者不限地形的我军单位施以火攻
       if (this.foeOrders > 0 && Math.random() < 0.4) {
         if (Math.random() < 0.5) {
-          this.foeOrders--; this.foeMorale = Math.min(100, this.foeMorale + 8);
+          this.foeOrders--; this.foeUnits.filter(u => u.alive).forEach(u => this.gainMorale(u, 8));
           this.log(`🥁 敌阵擂鼓，敌军士气 +8（敌令余 ${this.foeOrders}）`);
         } else {
           const master = this.armyHasFiremaster("foe");
@@ -3829,6 +3893,7 @@
             const t = targets[randInt(0, targets.length - 1)];
             const dmg = randInt(400, 800) * (master ? 2 : 1);
             t.hp = Math.max(0, t.hp - dmg);
+            AudioSystem.sfx.hit();
             this.log(`🔥 敌军火攻！${t.g.name} 部折损 ${dmg}（敌令余 ${this.foeOrders}）！`);
             if (t.hp <= 0) this.routUnit(t);
             if (this.checkBattleEnd()) return;
@@ -3851,21 +3916,21 @@
       if (!enemies.length) return;
       // 冷却完毕的将魂战法：约四成概率优先使用，而非单纯移动攻击
       if (u.skActive && u.skCd <= 0 && Math.random() < 0.4) {
-        this.useActiveSkill(u);
-        await this.uiPause();
+        await this.useActiveSkill(u);
+        await this.uiPause(150);
         return;
       }
       const range = u.ranged ? 2 : 1;
-      // 集火：可斩杀目标优先挑血量最低者；找不到必杀目标时，移动后攻击也优先伤害更高/更容易斩杀的目标
+      // 集火：可斩杀目标优先挑血量最低者；找不到必杀目标时，移动后攻击也优先伤害更高/更容易斩杀（含夹击加成）的目标
       let target = enemies.filter(e => this.manhattan(u, e) <= range).sort((a, b) => a.hp - b.hp)
-        .find(e => this.computeCombat(u, e) >= e.hp);
+        .find(e => this.computeCombat(u, e).dmg >= e.hp);
       if (!target) {
         const reach = this.reachable(u);
         let bestMove = null, bestTarget = null, bestScore = -1;
         for (const [r, c] of reach) {
           const near = enemies.filter(e => Math.abs(e.r - r) + Math.abs(e.c - c) <= range);
           for (const e of near) {
-            const dmg = this.computeCombatAt(u, e, r, c);
+            const dmg = this.computeCombatAt(u, e, r, c).dmg;
             const score = dmg + (dmg >= e.hp ? 1000 : 0) - e.hp * 0.001;
             if (score > bestScore) { bestScore = score; bestMove = [r, c]; bestTarget = e; }
           }
@@ -3883,9 +3948,8 @@
           return;
         }
       }
-      this.resolveAttack(u, target);
+      await this.resolveAttack(u, target);
       u.acted = true;
-      await this.uiPause();
       this.renderBattle();
     },
 
@@ -3902,8 +3966,8 @@
     },
     endTurnCycle() {
       this.formTurnsLeft = Math.max(0, this.formTurnsLeft - 1);
-      if (this.myForm === "goose" && this.formTurnsLeft > 0) this.foeMorale = Math.max(0, this.foeMorale - this.FORMS.goose.moraleDrain);
-      if (this.foeForm === "goose" && this.formTurnsLeft > 0) this.myMorale = Math.max(0, this.myMorale - this.FORMS.goose.moraleDrain);
+      if (this.myForm === "goose" && this.formTurnsLeft > 0) this.foeUnits.forEach(u => this.dropMorale(u, this.FORMS.goose.moraleDrain));
+      if (this.foeForm === "goose" && this.formTurnsLeft > 0) this.myUnits.forEach(u => this.dropMorale(u, this.FORMS.goose.moraleDrain));
       [...this.myUnits, ...this.foeUnits].forEach(u => {
         if (!u.alive) return;
         if (u.side === "my" && u.r === this.myCamp.r && u.c === this.myCamp.c) u.hp = Math.min(u.hpMax, u.hp + Math.round(u.hpMax * 0.08));
@@ -3922,9 +3986,11 @@
       this.log(`—— 第 ${this.turnN} 回合 ——`);
       this.renderBattle();
     },
+    // 胜负判定：一方全部武将皆已溃退（兵力或士气归零）才算落败——单场单挑或单一部的溃散
+    // 至多只是"折损一部"，不会像旧版团队共享士气那样被一次意外拖累判定整场大捷/大败
     checkBattleEnd() {
-      if (this.myMorale <= 0 || this.totalHp("my") <= 0) { this.finish(false, "我军士气崩溃、全线溃败"); return true; }
-      if (this.foeMorale <= 0 || this.totalHp("foe") <= 0) { this.finish(true, "敌军士气崩溃、全线溃败"); return true; }
+      if (!this.myUnits.some(u => u.alive)) { this.finish(false, "我军全部溃退、全线崩溃"); return true; }
+      if (!this.foeUnits.some(u => u.alive)) { this.finish(true, "敌军全部溃退、全线崩溃"); return true; }
       return false;
     },
     finish(won, reason) {
@@ -3932,8 +3998,8 @@
       openOverlay(`<div class="result-card">
         <h1>${won ? "🏆 野战大捷" : "💀 兵败如山"}</h1>
         <div class="wdesc">${reason}<br><br>
-          💀 阵亡：我方 ${this.myUnits.filter(u => !u.alive).length} 将 · 敌方 ${this.foeUnits.filter(u => !u.alive).length} 将<br>
-          💪 士气：我 ${Math.round(this.myMorale)} · 敌 ${Math.round(this.foeMorale)}<br>
+          💀 阵亡：我方 ${this.myUnits.filter(u => !u.alive).length}/${this.myUnits.length} 将 · 敌方 ${this.foeUnits.filter(u => !u.alive).length}/${this.foeUnits.length} 将<br>
+          💪 均士气：我 ${this.avgMorale("my")} · 敌 ${this.avgMorale("foe")}<br>
           ⚔️ 鏖战 ${this.turnN} 回合</div>
         <div class="btns">
           <button class="btn-primary" id="fg-again">再战一场</button>
@@ -3957,12 +4023,15 @@
           let token = "";
           if (u) {
             const pct = Math.max(0, u.hp / u.hpMax);
+            const moralePct = Math.max(0, u.morale / 100);
             const sk = u.skActive ? Skill.of(u.g) : null;
             const skBadge = sk ? `<span class="fg-skbadge ${u.skCd > 0 ? "cd" : ""}" title="${sk.n}${u.skCd > 0 ? `（冷却 ${u.skCd}）` : "（可用）"}">${sk.icon}</span>` : "";
-            token = `<div class="fg-unit ${u.side} ${this.phase === "battle" && u.acted ? "acted" : ""}" title="${u.g.name}">
-              <span class="fg-av">${avatarChar(u.g.name)}</span>
+            const tip = `${u.g.name}　兵力 ${Math.max(0, Math.round(u.hp))}/${u.hpMax}　士气 ${Math.round(u.morale)}`;
+            token = `<div class="fg-unit ${u.side} ${this.phase === "battle" && u.acted ? "acted" : ""}" title="${tip}">
+              <span class="fg-name">${u.g.name}</span>
               ${skBadge}
               <span class="fg-hpbar"><i style="width:${pct * 100}%;background:${hpColor(pct)}"></i></span>
+              <span class="fg-morbar"><i style="width:${moralePct * 100}%;background:${hpColor(moralePct)}"></i></span>
             </div>`;
           }
           html += `<div class="${cls}" data-r="${r}" data-c="${c}">${token}</div>`;
@@ -4018,31 +4087,31 @@
         const hasTargets = enemySet.size > 0;
         const sk = u.skActive ? Skill.of(u.g) : null;
         actionBar = `<div class="fg-actionbar">
-          <span>已选 <b>${u.g.name}</b>（体力 ${Math.max(0, Math.round(u.hp))}/${u.hpMax}）</span>
+          <span>已选 <b>${u.g.name}</b>　兵${Math.max(0, Math.round(u.hp))}/${u.hpMax}　气${Math.round(u.morale)}</span>
           ${hasTargets ? `<button class="fb-ord ${this.actionMode === "attack" ? "active" : ""}" id="fg-mode-atk">🗡️ 攻击</button>
-          <button class="fb-ord ${this.actionMode === "challenge" ? "active" : ""}" id="fg-mode-chg">🤺 挑发</button>`
+          <button class="fb-ord ${this.actionMode === "challenge" ? "active" : ""}" id="fg-mode-chg">🤺 单挑</button>`
             : `<span class="dim">附近无目标，仅可待命</span>`}
           ${sk ? (u.skCd <= 0 ? `<button class="fb-ord" id="fg-skill-btn">🌟 ${sk.n}</button>` : `<span class="dim">🌟 ${sk.n}（冷却 ${u.skCd}）</span>`) : ""}
           <button class="fb-ord" id="fg-standdown">🛡️ 待命${u.moved ? "结束" : "（+15%防）"}</button>
         </div>`;
       }
       const orderToolbar = `<div class="fb-orders">
-        <span class="fb-ord-left">军令 <b>${this.myOrders}</b> · 敌令 <b>${this.foeOrders}</b></span>
+        <span class="fb-ord-left">军令 <b>${this.myOrders}</b>·敌令 <b>${this.foeOrders}</b></span>
         ${!this.foeFormKnown ? `<button class="fb-ord" id="fg-scout2" ${this.myOrders > 0 ? "" : "disabled"}>🕵️ 斥候</button>` : ""}
-        <button class="fb-ord" id="fg-drum" ${this.myOrders > 0 ? "" : "disabled"}>🥁 擂鼓（+8士气）</button>
+        <button class="fb-ord" id="fg-drum" ${this.myOrders > 0 ? "" : "disabled"}>🥁 擂鼓</button>
         <button class="fb-ord ${this.orderMode === "fire" ? "active" : ""}" id="fg-fire" ${this.myOrders > 0 ? "" : "disabled"} title="须山道地形，或军中有精通天时者">🔥 火攻</button>
-        <button class="fb-ord ctrl" id="fg-endturn" ${this.turnSide === "my" ? "" : "disabled"}>⏭ 结束我方回合</button>
+        <button class="fb-ord ctrl" id="fg-endturn" ${this.turnSide === "my" ? "" : "disabled"}>⏭ 结束回合</button>
       </div>`;
       const root = $("#fg-content");
       root.innerHTML = `
-        <div class="fb-banner">${this.turnSide === "my" ? "🟢 我方回合" : "🔴 敌方回合"} · 第 ${this.turnN} 回合${this.formTurnsLeft > 0 ? `（阵形加成剩 ${this.formTurnsLeft} 回合）` : ""}${this.orderMode === "fire" ? "· 请点选要火攻的敌方单位" : ""}
-          <div class="fb-morales"><div class="fb-mor my"><span>我军士气</span><div class="fb-mor-bar"><i style="width:${this.myMorale}%;background:${hpColor(this.myMorale / 100)}"></i></div><b>${Math.round(this.myMorale)}</b></div>
-          <div class="fb-mor foe"><b>${Math.round(this.foeMorale)}</b><div class="fb-mor-bar foe"><i style="width:${this.foeMorale}%;background:${hpColor(this.foeMorale / 100)}"></i></div><span>敌军士气</span></div></div>
+        <div class="fb-banner fg-banner-compact">${this.turnSide === "my" ? "🟢 我方回合" : "🔴 敌方回合"} · 第 ${this.turnN} 回合${this.formTurnsLeft > 0 ? `（阵形+${this.formTurnsLeft}）` : ""}
+          <span class="fg-avgmor">均气 我${this.avgMorale("my")}·敌${this.avgMorale("foe")}</span>
+          ${this.orderMode === "fire" ? "<b>· 请点选要火攻的敌方单位</b>" : ""}
         </div>
         <div class="fg-board" style="grid-template-columns:repeat(${this.COLS},1fr)">${this.boardCellsHtml({ reachSet, enemySet })}</div>
         ${actionBar}
         ${orderToolbar}
-        <div class="fb-log" id="fg-log">${(this.logLines || []).join("")}</div>`;
+        <div class="fb-log fg-log-compact" id="fg-log">${(this.logLines || []).join("")}</div>`;
       $$(".fg-cell", root).forEach(cell => cell.onclick = () => this.onCellClick(+cell.dataset.r, +cell.dataset.c));
       const endBtn = $("#fg-endturn", root); if (endBtn) endBtn.onclick = () => this.endMyTurn();
       const sd = $("#fg-standdown", root); if (sd) sd.onclick = () => this.standDown();
