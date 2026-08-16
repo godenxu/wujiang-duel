@@ -1464,7 +1464,9 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
    第三行——"武将数+均气"仍在最外侧，中间与第二行色条中轴对齐处摆双方军令小旗，
    我方旗子向左展开、敌方向右展开，两侧旗子镜像相对而立 */
 .fg-vsbar { display: flex; flex-direction: column; gap: 3px; font-size: 12px; cursor: pointer; }
-.fg-vsbar-row1 { display: flex; align-items: baseline; gap: 6px; }
+/* row1 的 gap 加大：这是两侧兵力数字之间唯一的间距来源（两侧军名各自贴外沿，数字各自贴内沿），
+   加大后数字不再紧贴中线 */
+.fg-vsbar-row1 { display: flex; align-items: baseline; gap: 24px; }
 .fg-vsbar-half-row { flex: 1 1 50%; min-width: 0; display: flex; align-items: baseline; justify-content: space-between; gap: 4px; }
 .fg-vsbar-half-row b { font-size: 11px; opacity: .8; font-weight: 700; white-space: nowrap; }
 .fg-vsbar-num { font-weight: 900; white-space: nowrap; }
@@ -1477,16 +1479,16 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 .fg-vsbar-mid { flex: 0 0 auto; width: 26px; text-align: center; font-size: 9.5px; font-weight: 800; opacity: .75; }
 .fg-vsbar-row3 { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .fg-vsbar-stat { font-size: 13.5px; font-weight: 900; color: var(--cn-gold); white-space: nowrap; flex: 0 0 auto; }
-.fg-vsbar-flagzone { flex: 1; min-width: 0; display: flex; justify-content: center; align-items: center; }
+.fg-vsbar-flagzone { flex: 1; min-width: 0; display: flex; justify-content: center; align-items: center; gap: 16px; }
 /* 军令改画小旗：竿+三角旗，金黄色，数量即军令余量；我方旗组 row-reverse 靠中线一侧堆起、向左延展，
-   敌方旗组正常方向靠中线一侧堆起、向右延展，两组自然在中轴处相接 */
-.fg-flags { display: flex; flex-wrap: wrap-reverse; gap: 1.5px; max-width: 42%; }
+   敌方旗组正常方向靠中线一侧堆起、向右延展；两组之间留一道 gap（见上），不再紧贴中线互碰 */
+.fg-flags { display: flex; flex-wrap: wrap-reverse; gap: 2px; max-width: 40%; }
 .fg-flags.my { flex-direction: row-reverse; }
-.fg-flag-icon { display: inline-block; position: relative; width: 10px; height: 11px; flex: 0 0 auto; }
-.fg-flag-icon::before { content: ""; position: absolute; left: 0; top: 0; width: 1px; height: 11px; background: #8a7442; }
+.fg-flag-icon { display: inline-block; position: relative; width: 12px; height: 13px; flex: 0 0 auto; }
+.fg-flag-icon::before { content: ""; position: absolute; left: 0; top: 0; width: 1.5px; height: 13px; background: #8a7442; }
 .fg-flag-icon::after {
-  content: ""; position: absolute; left: 1px; top: 0; width: 0; height: 0;
-  border-style: solid; border-width: 3.5px 0 3.5px 7px; border-color: transparent transparent transparent var(--cn-gold);
+  content: ""; position: absolute; left: 1.5px; top: 0; width: 0; height: 0;
+  border-style: solid; border-width: 4px 0 4px 8px; border-color: transparent transparent transparent var(--cn-gold);
 }
 /* 敌方旗子水平镜像，朝向与我方相反——两军旗组隔中线相对而立 */
 .fg-flags.foe .fg-flag-icon { transform: scaleX(-1); }
@@ -1505,16 +1507,17 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 .fg-md-head { display: flex; justify-content: space-between; font-weight: 800; color: var(--cn-gold); opacity: .9; margin-bottom: 4px; }
 .fg-md-hint { font-weight: 400; opacity: .7; font-size: 11px; }
 /* 姓名/阵形图标/将魂名字数不定、放大字号后一行塞不下，改两行显示：
-   第一行姓名+阵形+将魂名各自完整不截断；第二行兵力/士气/攻防三项统一 gap，间距看起来一致 */
+   第一行姓名+兵力+阵形图标——兵力紧跟在姓名旁、落在行中间，不再垫到姓名下面单独一行；
+   第二行将魂名+士气+攻防三项，两行都用 justify-content:space-between 三栏均匀分布，间距看起来一致 */
 .fg-md-row { padding: 5px 0; opacity: .95; border-bottom: 1px solid rgba(255,255,255,.06); }
 .fg-md-row:last-child { border-bottom: none; }
 .fg-md-row.dead { opacity: .45; text-decoration: line-through; }
-.fg-md-line1 { display: flex; align-items: baseline; gap: 6px; margin-bottom: 2px; }
-.fg-md-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+.fg-md-line1 { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; margin-bottom: 2px; }
+.fg-md-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 38%; flex: 0 1 auto; }
+.fg-md-hp { font-weight: 900; color: var(--cn-gold); white-space: nowrap; flex: 0 0 auto; }
 .fg-md-form { flex: 0 0 auto; font-size: .85em; }
-.fg-md-soul { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .85; font-size: .88em; color: var(--cn-gold); }
-.fg-md-line2 { display: flex; gap: 10px; font-size: .92em; opacity: .9; white-space: nowrap; }
-.fg-md-hp { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.fg-md-line2 { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; font-size: .92em; opacity: .9; white-space: nowrap; }
+.fg-md-soul { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46%; opacity: .85; }
 .fg-board-wrap {
   position: relative; width: 100%; height: 100%;
   flex: 1 1 auto; min-height: 0;

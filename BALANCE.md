@@ -1752,3 +1752,30 @@ softCap = 55
 十六期取消的 30 回合硬顶不再无限期地"打到分出胜负为止"，本轮改为 100 回合软顶：`endTurnCycle()` 里在常规胜负判定（全军溃退/大营被围满 3 回合）之后、`turnN` 自增之前，检查若已达到第 100 回合，直接按当前双方存兵总量（`totalHp`）多寡判胜负，兵力恰好相同时以双方存活单位的总士气作为次级判据，避免鏖战无止境地拖下去。
 
 **验证**：`node --check`/CSS 大括号配平复核全过；Playwright 覆盖：10v10 满编详情浮层截图核验两栏均无滚动条、姓名/将魂名/数值均完整不截断；军令提示悬浮期间棋盘区域 `getBoundingClientRect().height` 前后不变、`.fg-order-float` 确实挂在 `#fg-board-wrap` 下且不在 `.fg-zoom-layer` 内；连写 6 条长战报后 `#fg-log` 高度仍精确为 `68.25px`、逐条 `getBoundingClientRect().height` 均 ≤ 20px（单行未折行）、`text-align:center` 生效；VS 条截图核验第一行军名贴外沿数字贴中线、第三行"武将N·气N"与镜像旗组布局；`calcOrderRegen`/`calcOrders` 数值核验减半关系（`Math.floor(base/2)`，至少 1）；`aiUseOrder()` 在人为制造"我方有重伤部众"场景下断言优先选择医疗营救；人为摆位令两个敌方单位同时贴身一个目标后调用 `aiActUnit`，核验 `eligibleFlankers` 返回非空、且两个敌方单位的 `acted` 均被置为 `true`（确认走的是合力围攻而非单打独斗）；人为设定 `turnN=100` 且双方兵力悬殊后调用 `endTurnCycle()`，核验 `finish()` 被正确调用且 `won` 与兵力多的一方一致；15 回合 AI-vs-AI 连续推进压力测试全程无 `NaN`、无控制台报错、军令池正确封顶于 10。回归确认旧版「野战演武·经典版」与边境战事内部调用不受影响。
+
+## 六十六、野战演武四项体验反馈：详情浮层兵力归位、VS条留白、精简战报区域、正式接入边境战与攻城战（第六十四轮）
+
+### 一、详情浮层兵力数据移到姓名旁、行中间
+
+`matchupDetailInner()` 的两行布局重新分配：第一行姓名+兵力+阵形图标（`justify-content:space-between` 三栏分布，兵力自然落在姓名与阵形图标之间、行的中段），不再垫到姓名下面单独一行；第二行将魂名+士气+攻防。姓名一眼就能对上自己的兵力数字，不必再往下多看一行。
+
+### 二、VS条数字/旗帜间距加大、旗子再放大一档
+
+`.fg-vsbar-row1`（两侧军名+兵力数字所在行）的 `gap` 由 6px 提到 24px——这个 gap 正是两侧兵力数字之间唯一的间距来源（军名各自贴外沿、数字各自贴内沿），加大后数字不再紧贴中线；`.fg-vsbar-flagzone` 新增 `gap:16px`，让我方/敌方两组军令旗不再在中轴处直接相碰；旗子本身 10×11px 再放大到 12×13px。
+
+### 三、移除阵形相克加成倒计时提示，进一步压缩战报区域
+
+`hintLineHtml()` 去掉 `formTurnsLeft` 那一条文案——阵形相克这个玩法本身留待以后再打磨，眼下的提示语几乎每局开局都要显示满 3 回合，长期占着战报区域上方一整行。摘掉之后，`.fg-area-matchup` 在没有大本营围城预警时会像设计之初那样自动收缩为 0 高度，省下的空间实打实地让给战场地图；大本营围城预警（进攻/防守两条）保留。
+
+### 四、GridBattle 正式接入，取代 FieldBattle 成为边境战事/攻城战的战斗界面
+
+这是本轮工作量最大的一项：此前"野战演武·棋盘对垒"仅作小游戏自由试玩入口，边境战事与随后的攻城战仍固定走旧版「野战演武·经典版」（`FieldBattle`）的五线推兵引擎——`GridBattle` 缺一套与 `FieldBattle.beginExternal` 对等的委外接口。本轮补齐：
+
+- 新增 `GridBattle.beginExternal(myRoster, foeRoster, heroSide, opts)`，签名/`opts`（`rpg`/`observe`/`troopScale`/`onDone`）与旧版完全对齐，`open()` 也补上 `rpg`/`external`/`troopScale` 的重置，避免残留上一场委外战场的状态。
+- 城池驻军兵力覆盖：`_setupCommon()` 按 `troopScale.mine/foe` 与「统帅推算的自然兵力」之比换算缩放系数，`makeUnit(g, side, form, scale)` 新增 `scale` 参数按此系数缩放每部兵力上限，未传时维持原样（小游戏自由试玩不受影响）。
+- 全自动推演（`observe:true`，主角未被抽中亲历）：新增 `autoPlayMyTurn()`/`aiUseOrderMy()`，结构上与既有的 `runFoeTurn()`/`aiUseOrder()` 完全对称、只是主体换成我方；`aiActUnit(u)` 原本写死"我方=玩家、大本营=固定 my/foeCamp"的判断全部改用 `u.side` 动态判定敌我与己方大营，使其能双向驱动任意一侧——`endTurnCycle()`/`_setupCommon()` 首尾相扣，跑通"开战即全自动、直到分出胜负"的无人值守闭环，全程无需一次点击。
+- `finish()` 新增 `if (this.external) { this.finishExternal(won, reason); return; }` 分支，`finishExternal()` 比照旧版 `FieldBattle.finishExternal` 的历战成长（`Growth.battle`）逻辑，折算为调用方约定的结果对象（`playerWon`/`mySurvivors`/`foeSurvivors`/`kills`/`myTroopsLeft`/`foeTroopsLeft`，`mySurvivors`/`foeSurvivors` 就是原样的武将对象引用）后回调 `onDone`，不再弹野战演武自身的战果卡。
+- 退出键补上 `GridBattle.rpg` 判断——委外流程发起时退出应回到天下地图（`goHome()`），不再固定直接回首页，与旧版 `FieldBattle` 同一套规则。
+- `MapUI.resolveBorderWar`/`resolveSiege` 两处 `FieldBattle.beginExternal(...)` 全部改为 `GridBattle.beginExternal(...)`，调用方式与参数不变——「野战演武·经典版」本身原样保留、继续作为小游戏合集的独立试玩入口，只是不再是边境战事/攻城战内部实际调用的引擎。
+
+**验证**：`node --check`/CSS 大括号配平复核全过；Playwright 覆盖：`beginExternal` 主角亲历路径（`observe:false`）——调用后 `phase` 停在 `"deploy"`（等待手动排兵）、`rpg`/`external` 标记正确、`#screen-fieldgrid` 正确激活；`troopScale` 缩放核验——传入 `{mine:30000, foe:20000}` 后 `myUnits`/`foeUnits` 的 `hpMax` 总和精确落在目标值附近（≤50 误差，来自四舍五入累积）；全自动推演（`observe:true`）端到端跑通一整场真实战斗（5v5，`setTimeout` 延迟压缩到 ≤2ms 加速回放但不改变任何判定逻辑），全程无一次点击、约 15.5 秒真实耗时内跑完并正确触发 `onDone`，返回的结果对象字段/类型/数值全部符合约定契约（`mySurvivors` 为完整武将对象数组、`kills` 与 `foeSurvivors` 长度吻合、`myTroopsLeft`/`foeTroopsLeft` 与终局兵力吻合）；15 回合 AI-vs-AI 压力测试确认 `aiActUnit` 泛化重构后双方行为不受影响、无 `NaN`/控制台报错。回归确认旧版「野战演武·经典版」小游戏自由试玩入口（`FieldBattle.open()`）不受影响，仍按原引擎运行。

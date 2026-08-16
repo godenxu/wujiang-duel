@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608162006";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608162145";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -162,10 +162,12 @@
       if (rpg) goHome(); else showScreen("home");
       return;
     }
-    // 野战演武·棋盘对垒：目前仅作小游戏自由试玩入口，退出直接中止回首页
+    // 野战演武·棋盘对垒：现已接入边境战事/攻城战作为战斗界面——从小游戏自由试玩进入时退出中止整场回首页，
+    // 从边境战事等角色扮演流程发起时（rpg 标记为真）回到天下地图，与旧版 FieldBattle 同一套规则
     if ($("#screen-fieldgrid").classList.contains("active")) {
+      const rpg = GridBattle.rpg;
       GridBattle.abort();
-      showScreen("home");
+      if (rpg) goHome(); else showScreen("home");
       return;
     }
     // 阵营大战/组队大战/国战/世界杯：从「小游戏」自由试玩进入时退出回首页；
@@ -2110,8 +2112,8 @@
       this.renderBoard();
       const cnAlive = this.cn.filter(u => u.alive).length, jpAlive = this.jp.filter(u => u.alive).length;
       const playerWon = this.playerSide === "cn" ? cnAlive > 0 : jpAlive > 0;
-      // 历战成长：战役内的组队大战（如遭遇战、武将大会等；边境战事第三十九轮起改走野战演武，
-      // 其历战成长见 FieldBattle.finishExternal），参战真实武将胜负各有小概率精进
+      // 历战成长：战役内的组队大战（如遭遇战、武将大会等；边境战事/攻城战现改走野战演武·棋盘对垒，
+      // 其历战成长见 GridBattle.finishExternal），参战真实武将胜负各有小概率精进
       if (this.rpg && typeof Campaign !== "undefined") {
         const gm = Campaign.mapState();
         if (gm) {
@@ -3435,9 +3437,27 @@
     open() {
       this.gen++;
       this.side = "cn";
+      this.rpg = false; this.external = null; this.troopScale = null;
       GridZoom.scale = 1; GridZoom.x = 0; GridZoom.y = 0;
       const draft = s => { const p = DB.bySide(s).slice(); shuffle(p); return p.slice(0, 10).map(clone); };
       this.mine = draft("cn"); this.foes = draft("jp");
+      this._setupCommon();
+    },
+    // 供角色扮演·边境战事/攻城战调用：以外部已构建好的双方阵容（含城墙/守将等加成）开局，
+    // 取代旧版 FieldBattle 成为这两处的战斗界面；opts.observe 为真（主角未被抽中亲历）时全程自动
+    // 推演双方，无需任何点击；战罢通过 opts.onDone 回调组队大战兼容的结果对象
+    // （playerWon/mySurvivors/foeSurvivors/kills/myTroopsLeft/foeTroopsLeft），供调用方沿用既有结算
+    beginExternal(myRoster, foeRoster, heroSide, opts = {}) {
+      this.gen++;
+      this.side = heroSide;
+      this.rpg = !!opts.rpg;
+      this.external = { auto: !!opts.observe, onDone: opts.onDone };
+      // 城池驻军覆盖：委外战场按各自实际出阵兵力与「按统帅推算的自然兵力」之比换算缩放系数，
+      // 使接战兵力真正取决于所在城池的驻军存量；不传则维持原有纯统帅推算（如小游戏自由试玩）
+      this.troopScale = opts.troopScale || null;
+      GridZoom.scale = 1; GridZoom.x = 0; GridZoom.y = 0;
+      this.mine = myRoster.slice(0, 10);
+      this.foes = foeRoster.slice(0, 10);
       this._setupCommon();
     },
     controllable(g) {
@@ -3476,8 +3496,9 @@
     },
     // 将魂冷却（回合制换算）：统帅越高冷却越短，2~4 回合宽幅（design 6.2）
     warCD(g) { return Math.max(2, Math.min(4, Math.round((14 - ((g.tong || 0) - 40) / 7) / 3))); },
-    makeUnit(g, side, form) {
-      const hpMax = Math.max(100, Math.round(g.tong * 100));
+    // scale：委外战场（边境战/攻城战）按城池驻军换算的兵力缩放系数，默认 1（小游戏自由试玩/未指定时维持纯统帅推算）
+    makeUnit(g, side, form, scale = 1) {
+      const hpMax = Math.max(100, Math.round(g.tong * 100 * scale));
       const skType = Skill.of(g).type;
       return {
         uid: g.side + "-" + g.id + "-" + Math.random().toString(36).slice(2, 7),
@@ -3536,9 +3557,15 @@
       const { tiles, myCamp, foeCamp } = this.generateTerrain();
       this.tiles = tiles; this.myCamp = myCamp; this.foeCamp = foeCamp;
       const fk = Object.keys(this.FORMS);
+      // 城池驻军覆盖（委外战场专属）：按各自实际出阵兵力与「按统帅推算的自然兵力」之比换算缩放系数，
+      // 未传 troopScale（小游戏自由试玩）时两侧系数皆为 1，行为与此前完全一致
+      const myNatural = this.mine.reduce((s, g) => s + g.tong * 100, 0) || 1;
+      const foeNatural = this.foes.reduce((s, g) => s + g.tong * 100, 0) || 1;
+      this.myScale = this.troopScale ? this.troopScale.mine / myNatural : 1;
+      this.foeScale = this.troopScale ? this.troopScale.foe / foeNatural : 1;
       // 阵形逐将独立：我方默认全给「锥形」，部署页可逐将点选切换；敌方随机各配一种，制造混编阵容
-      this.myUnits = this.mine.map(g => this.makeUnit(g, "my", "cone"));
-      this.foeUnits = this.foes.map(g => this.makeUnit(g, "foe", fk[randInt(0, fk.length - 1)]));
+      this.myUnits = this.mine.map(g => this.makeUnit(g, "my", "cone", this.myScale));
+      this.foeUnits = this.foes.map(g => this.makeUnit(g, "foe", fk[randInt(0, fk.length - 1)], this.foeScale));
       this.placeFormation(this.myUnits, "my");
       this.placeFormation(this.foeUnits, "foe");
       this.formTurnsLeft = 3;
@@ -3550,7 +3577,13 @@
       this.myCampSiege = 0; this.foeCampSiege = 0;   // 大本营围城计数：连续 3 回合被占领即视为攻破
       this.busy = false;
       showScreen("fieldgrid");
-      this.renderDeploy();
+      // 委外战场且主角未被抽中亲历：跳过排兵布阵画面/点将出阵等一切手动确认，直接开战并自动推演双方
+      if (this.external && this.external.auto) {
+        this.startBattle();
+        setTimeout(() => this.autoPlayMyTurn(), 400);
+      } else {
+        this.renderDeploy();
+      }
     },
     // 全军统帅+智力均值折算的基准值（约 2~6 道）：开战时的起始军令池直接取这个数；
     // 军令不再是"每回合推倒重算"，而是上限 10 道的累积池
@@ -4149,8 +4182,72 @@
       if (this.gen !== myGen) return;
       this.endTurnCycle();
     },
+    // 我方军令 AI：仅供委外战场全自动推演（主角未亲历，见 beginExternal 的 observe 参数）调用，
+    // 与 aiUseOrder（敌方专用）逻辑完全对称，只是主体换成我方——按局势优先级挑招，不写死角色
+    async aiUseOrderMy() {
+      if (this.myOrders <= 0) return false;
+      const hurtAlly = this.myUnits.filter(u => u.alive && u.hp < u.hpMax * 0.55).sort((a, b) => a.hp / a.hpMax - b.hp / b.hpMax)[0];
+      const master = this.armyHasFiremaster("my");
+      const fireTargets = this.foeUnits.filter(u => u.alive && (this.tiles[u.r][u.c] === "hill" || master));
+      const avgMor = this.avgMorale("my");
+      const strongestFoe = this.foeUnits.filter(u => u.alive && !(u.feintTurns > 0)).sort((a, b) => b.atk - a.atk)[0];
+      if (hurtAlly && Math.random() < 0.85) {
+        this.myOrders--;
+        const heal = Math.round(hurtAlly.hpMax * 0.14);
+        hurtAlly.hp = Math.min(hurtAlly.hpMax, hurtAlly.hp + heal);
+        this.log(`🩹 我军医疗营救，${hurtAlly.g.name} 部兵力回复 ${heal}（军令余 ${this.myOrders}）！`);
+        await this.playHealFx(hurtAlly, heal);
+      } else if (fireTargets.length && Math.random() < 0.65) {
+        this.myOrders--;
+        const t = fireTargets.sort((a, b) => b.hp - a.hp)[0];
+        const dmg = randInt(400, 800) * (master ? 2 : 1);
+        t.hp = Math.max(0, t.hp - dmg);
+        this.log(`🔥 我军火攻！${t.g.name} 部折损 ${dmg}（军令余 ${this.myOrders}）！`);
+        await this.playFireFx(t, dmg);
+        if (t.hp <= 0) this.routUnit(t);
+        if (this.checkBattleEnd()) return true;
+      } else if (avgMor < 35) {
+        this.myOrders--;
+        this.myUnits.filter(u => u.alive).forEach(u => this.gainMorale(u, 8));
+        this.log(`🥁 我阵擂鼓，我军士气 +8（军令余 ${this.myOrders}）`);
+      } else if (strongestFoe && Math.random() < 0.55) {
+        this.myOrders--;
+        strongestFoe.feintTurns = 2; strongestFoe.feintMul = 0.8;
+        this.log(`🎭 我军疑兵佯攻，${strongestFoe.g.name} 部防御 -20%，持续 2 回合（军令余 ${this.myOrders}）！`);
+        await this.playFeintFx(strongestFoe);
+      } else {
+        this.myOrders--;
+        this.myUnits.filter(u => u.alive).forEach(u => this.gainMorale(u, 8));
+        this.log(`🥁 我阵擂鼓，我军士气 +8（军令余 ${this.myOrders}）`);
+      }
+      this.renderBattle();
+      return true;
+    },
+    // 我方回合全自动推演：仅委外战场 observe 模式下使用（主角未被抽中亲历，双方皆由 AI 接管），
+    // 与 endMyTurn+runFoeTurn 的正常玩家流程完全并行、结构对称，跑完即调用既有 endMyTurn() 交回敌方回合
+    async autoPlayMyTurn() {
+      const myGen = this.gen;
+      let orderUses = 0;
+      while (this.myOrders > 0 && orderUses < 2 && Math.random() < (orderUses === 0 ? 0.75 : 0.4)) {
+        await this.aiUseOrderMy();
+        orderUses++;
+        if (this.gen !== myGen) return;
+        if (this.checkBattleEnd()) return;
+      }
+      for (const u of this.myUnits) {
+        if (this.gen !== myGen) return;
+        if (!u.alive) continue;
+        await this.aiActUnit(u);
+        if (this.gen !== myGen) return;
+        if (this.checkBattleEnd()) return;
+      }
+      if (this.gen !== myGen) return;
+      this.endMyTurn();
+    },
+    // 侧别无关的通用 AI：既供敌方回合（runFoeTurn）调用，也供外部委外战场全自动推演时
+    // 驱动我方（autoPlayMyTurn，主角未亲历时）调用——按 u.side 自行判定敌我，不再写死"我方=玩家"
     async aiActUnit(u) {
-      const enemies = this.myUnits.filter(e => e.alive);
+      const enemies = (u.side === "foe" ? this.myUnits : this.foeUnits).filter(e => e.alive);
       if (!enemies.length) return;
       // 冷却完毕的将魂战法：约四成概率优先使用，而非单纯移动攻击
       if (u.skActive && u.skCd <= 0 && Math.random() < 0.4) {
@@ -4178,13 +4275,16 @@
           u.moved = true; target = bestTarget;
         } else {
           const lowHp = u.hp < u.hpMax * 0.25;
-          // 大本营策略：己方大营（foeCamp）已被围困或有敌军逼近时优先回防；否则在没有迫切战斗任务时
-          // 有三成概率主动向对方大本营（myCamp）进军，伺机围城——不再只会一味扑向最近的敌军
-          const campThreatened = this.foeCampSiege > 0 || enemies.some(e => this.manhattan(e, this.foeCamp) <= 2);
+          // 大本营策略：己方大营已被围困或有敌军逼近时优先回防；否则在没有迫切战斗任务时
+          // 有三成概率主动向对方大本营进军，伺机围城——不再只会一味扑向最近的敌军
+          const ownCamp = u.side === "foe" ? this.foeCamp : this.myCamp;
+          const enemyCamp = u.side === "foe" ? this.myCamp : this.foeCamp;
+          const ownCampSiege = u.side === "foe" ? this.foeCampSiege : this.myCampSiege;
+          const campThreatened = ownCampSiege > 0 || enemies.some(e => this.manhattan(e, ownCamp) <= 2);
           let dest;
-          if (lowHp) dest = this.foeCamp;
-          else if (campThreatened && this.manhattan(u, this.foeCamp) <= 5) dest = this.foeCamp;
-          else if (Math.random() < 0.3) dest = this.myCamp;
+          if (lowHp) dest = ownCamp;
+          else if (campThreatened && this.manhattan(u, ownCamp) <= 5) dest = ownCamp;
+          else if (Math.random() < 0.3) dest = enemyCamp;
           else dest = this.nearestEnemyPos(u, enemies);
           const best = reach.slice().sort((a, b) =>
             (Math.abs(a[0] - dest.r) + Math.abs(a[1] - dest.c)) - (Math.abs(b[0] - dest.r) + Math.abs(b[1] - dest.c)))[0];
@@ -4268,6 +4368,9 @@
       this.foeUnits.forEach(u => { u.acted = false; });
       this.log(`—— 第 ${this.turnN} 回合 ——`);
       this.renderBattle();
+      // 委外战场全自动推演（主角未亲历）：敌方回合刚结束、回到我方回合时，接着自动跑我方这一轮，
+      // 不必等玩家点击——与 endMyTurn 里"我方跑完自动接敌方回合"首尾相扣，串成完整的无人值守循环
+      if (this.external && this.external.auto && this.phase === "battle") setTimeout(() => this.autoPlayMyTurn(), 400);
     },
     // 胜负判定：一方全部武将皆已溃退（兵力或士气归零）才算落败——单场单挑或单一部的溃散
     // 至多只是"折损一部"，不会像旧版团队共享士气那样被一次意外拖累判定整场大捷/大败
@@ -4280,6 +4383,9 @@
     // 而不是三行数字——kills/dmgDealt 由 resolveAttack/useActiveSkill/tryFireAttack 全程累加
     finish(won, reason) {
       this.phase = "done";
+      // 委外战场（边境战/攻城战）：不展示野战演武自身的战果卡，折算为调用方约定的结果对象后回调，
+      // 由调用方（MapUI.resolveBorderWar/resolveSiege）沿用既有的经验/金币/夺城结算流程
+      if (this.external) { this.finishExternal(won, reason); return; }
       const fallenMy = this.myUnits.filter(u => !u.alive).map(u => u.g.name);
       const fallenFoe = this.foeUnits.filter(u => !u.alive).map(u => u.g.name);
       const mvp = [...this.myUnits, ...this.foeUnits]
@@ -4305,6 +4411,31 @@
         </div></div>`, { modal: true });
       $("#fg-again").onclick = () => { closeOverlay(); this.open(); };
       $("#fg-home").onclick = () => { closeOverlay(); this.abort(); showScreen("home"); };
+    },
+    // 委外战场终局：历战成长与旧版 FieldBattle.finishExternal 同一套逻辑（双方真实参战武将各有小概率
+    // 六维精进），随后折算为调用方约定的结果对象（mySurvivors/foeSurvivors 就是原样的武将对象引用，
+    // 不是战场内部的 unit 包装，调用方无需关心网格战场的内部数据结构）
+    finishExternal(won, reason) {
+      if (typeof Campaign !== "undefined") {
+        const gm = Campaign.mapState();
+        if (gm) {
+          let grew = 0;
+          this.mine.forEach(g => { if (g.id != null && g.id >= 0 && Growth.battle(gm, g, won)) grew++; });
+          this.foes.forEach(g => { if (g.id != null && g.id >= 0 && Growth.battle(gm, g, !won)) grew++; });
+          if (grew) this.log(`📈 历战磨砺：${grew} 位武将六维有所精进`);
+        }
+      }
+      const res = {
+        playerWon: won,
+        mySurvivors: this.myUnits.filter(u => u.alive).map(u => u.g),
+        foeSurvivors: this.foeUnits.filter(u => u.alive).map(u => u.g),
+        kills: this.foeUnits.filter(u => !u.alive).length,
+        myTroopsLeft: Math.max(0, Math.round(this.totalHp("my"))),
+        foeTroopsLeft: Math.max(0, Math.round(this.totalHp("foe"))),
+      };
+      const onDone = this.external.onDone;
+      this.external = null;
+      if (onDone) onDone(res);
     },
 
     /* ---------- 渲染 ---------- */
@@ -4429,10 +4560,10 @@
         </div>
       </div>`;
     },
-    // 阵形加成倒计时/火攻选目标提示——仅在有内容时才占位，平时这一区域高度为 0
+    // 大本营围城提示——仅在有内容时才占位，平时这一区域高度为 0；阵形相克加成倒计时不再展示
+    // （阵形相克这个功能本身留待以后再打磨，眼下先把这一行区域腾出来，压缩战报区域、多留给战场地图）
     hintLineHtml() {
       const bits = [];
-      if (this.formTurnsLeft > 0) bits.push(`阵形相克加成剩 ${this.formTurnsLeft} 回合`);
       if (this.myCampSiege > 0) bits.push(`⚠️ 我方大营已被围 ${this.myCampSiege}/3 回合`);
       if (this.foeCampSiege > 0) bits.push(`🔥 已围困敌方大营 ${this.foeCampSiege}/3 回合`);
       if (!bits.length) return "";
@@ -4448,18 +4579,19 @@
     },
     // 逐将对比明细的行/列构建，供 showMatchupOverlay() 弹层复用
     matchupDetailInner() {
-      // 字段太多塞不进一行还要放大字号，改为每将两行：第一行姓名+阵形+将魂名（三者都需要完整显示，
-      // 不再挤压截断），第二行兵力/士气/攻防三项数值，行内统一 gap 让间距看起来一致
+      // 字段太多塞不进一行还要放大字号，改为每将两行：第一行姓名+兵力（兵力放在姓名旁的行中间，
+      // 不再单独垫到姓名下面一行去，姓名与兵力数据一眼就能对上号）+阵形图标；
+      // 第二行将魂名+士气+攻防三项数值，行内统一 gap 让间距看起来一致
       const row = u => {
         const sk = Skill.of(u.g);
         return `<div class="fg-md-row${u.alive ? "" : " dead"}">
         <div class="fg-md-line1">
           <span class="fg-md-name">${u.g.name}</span>
+          <span class="fg-md-hp">${u.alive ? Math.max(0, Math.round(u.hp)).toLocaleString() : "阵亡"}${u.alive ? "/" + u.hpMax.toLocaleString() : ""}</span>
           <span class="fg-md-form">${this.FORMS[u.form].icon}</span>
-          <span class="fg-md-soul">${sk ? sk.n : "-"}</span>
         </div>
         <div class="fg-md-line2">
-          <span class="fg-md-hp">${u.alive ? Math.max(0, Math.round(u.hp)).toLocaleString() : "阵亡"}${u.alive ? "/" + u.hpMax.toLocaleString() : ""}</span>
+          <span class="fg-md-soul">${sk ? sk.n : "-"}</span>
           <span class="fg-md-mor">${u.alive ? "气" + Math.round(u.morale) : "-"}</span>
           <span class="fg-md-ad">${Math.round(u.atk)}/${Math.round(u.def)}</span>
         </div>
@@ -11369,7 +11501,7 @@
       const foeRoster = heroCity === a ? rosterB : rosterA;
       const heroIn = !!heroCity && myRoster.some(g => g.id === -1);
 
-      FieldBattle.beginExternal(myRoster, foeRoster, heroCountry, {
+      GridBattle.beginExternal(myRoster, foeRoster, heroCountry, {
         rpg: true,             // 返回键归属战役层（回天下地图而非首页）
         observe: !heroIn,      // 主角未被抽中：全自动推演，无需任何点击
         troopScale: { mine: heroCity === a ? heroCommit : foeCommit, foe: heroCity === a ? foeCommit : heroCommit },
@@ -11435,7 +11567,7 @@
       const foeTroops = attackerIsMine ? defenderTroops : attackerTroops;
 
       toast(`⚔️ 野战得胜，${attackerName}大军直逼${cityName(targetCity)}城下，攻城战一触即发！`);
-      FieldBattle.beginExternal(myRoster, foeRoster, heroCountry, {
+      GridBattle.beginExternal(myRoster, foeRoster, heroCountry, {
         rpg: true,
         observe: !heroFought,   // 主角只有随野战得胜之军才继续亲征攻城，否则全自动推演
         troopScale: { mine: myTroops, foe: foeTroops },
