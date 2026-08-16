@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608160330";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608160530";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -3471,7 +3471,7 @@
     },
     // 将魂冷却（回合制换算）：统帅越高冷却越短，2~4 回合宽幅（design 6.2）
     warCD(g) { return Math.max(2, Math.min(4, Math.round((14 - ((g.tong || 0) - 40) / 7) / 3))); },
-    makeUnit(g, side) {
+    makeUnit(g, side, form) {
       const hpMax = Math.max(100, Math.round(g.tong * 100));
       const skType = Skill.of(g).type;
       return {
@@ -3479,6 +3479,7 @@
         g, side, r: 0, c: 0,
         hp: hpMax, hpMax,           // 兵力（非"体力"——沿用武将六维数值，但战场语境下代表其所辖部众）
         morale: 50,                 // 士气：每员武将独立维护，不再是全队共享的单一数值
+        form: form || "cone",       // 阵形改为逐将独立（非全军统一），决定该部的攻防乘区与相克
         atk: g.wu * 0.65 + g.tong * 0.35,
         def: g.tong * 0.65 + g.wu * 0.35,
         moveMax: Math.max(3, Math.min(5, Math.round(g.tong / 28))),
@@ -3509,9 +3510,9 @@
       const arr = side === "my" ? this.myUnits : this.foeUnits;
       return arr.some(u => u.alive && Skill.of(u.g).type === "firemaster");
     },
-    // 阵形只决定初始站位形状（一将一格），加成效果为全队平坦乘区（见 computeCombat），
-    // 具体逐格位置加成留待后续分期打磨（design 2.4）
-    placeFormation(units, side, form) {
+    // 部署站位形状：阵形已改为逐将独立属性（design 2.4 修订），不再驱动全军统一的站位造型，
+    // 这里只负责把十员武将按战力由强到弱、由中路向两翼铺开地摆进己方两行部署区
+    placeFormation(units, side) {
       const rows = side === "my" ? [this.ROWS - 2, this.ROWS - 1] : [0, 1];
       const mid = Math.floor(this.COLS / 2);
       const order = [];
@@ -3520,33 +3521,25 @@
         if (d > 0 && mid + d < this.COLS) order.push(mid + d);
       }
       const cells = [];
-      if (form === "crane") {
-        order.slice().sort((a, b) => Math.abs(b - mid) - Math.abs(a - mid)).forEach(c => rows.forEach(r => cells.push([r, c])));
-      } else if (form === "round") {
-        order.slice(0, 6).forEach(c => rows.forEach(r => cells.push([r, c])));
-      } else if (form === "goose") {
-        order.forEach((c, i) => cells.push([rows[i % 2], c]));
-      } else {
-        order.forEach(c => rows.forEach(r => cells.push([r, c])));
-      }
+      order.forEach(c => rows.forEach(r => cells.push([r, c])));
       const sorted = units.slice().sort((a, b) => (b.g.wu + b.g.tong) - (a.g.wu + a.g.tong));
       sorted.forEach((u, i) => { const cell = cells[i]; if (cell) { u.r = cell[0]; u.c = cell[1]; } });
     },
     _setupCommon() {
       this.phase = "deploy";
-      this.myForm = "cone";
-      const fk = Object.keys(this.FORMS); this.foeForm = fk[randInt(0, fk.length - 1)];
       const { tiles, myCamp, foeCamp } = this.generateTerrain();
       this.tiles = tiles; this.myCamp = myCamp; this.foeCamp = foeCamp;
-      this.myUnits = this.mine.map(g => this.makeUnit(g, "my"));
-      this.foeUnits = this.foes.map(g => this.makeUnit(g, "foe"));
-      this.placeFormation(this.myUnits, "my", this.myForm);
-      this.placeFormation(this.foeUnits, "foe", this.foeForm);
+      const fk = Object.keys(this.FORMS);
+      // 阵形逐将独立：我方默认全给「锥形」，部署页可逐将点选切换；敌方随机各配一种，制造混编阵容
+      this.myUnits = this.mine.map(g => this.makeUnit(g, "my", "cone"));
+      this.foeUnits = this.foes.map(g => this.makeUnit(g, "foe", fk[randInt(0, fk.length - 1)]));
+      this.placeFormation(this.myUnits, "my");
+      this.placeFormation(this.foeUnits, "foe");
       this.formTurnsLeft = 3;
       this.turnSide = "my"; this.turnN = 1;
       this.logLines = [];
       this.myOrders = this.calcOrders(this.mine); this.foeOrders = this.calcOrders(this.foes);
-      this.foeFormKnown = false; this.orderMode = null;
+      this.orderMode = null;
       this.selectedUnit = null; this.selPhase = null; this.actionMode = "attack"; this.deploySel = null;
       this.busy = false;
       showScreen("fieldgrid");
@@ -3576,10 +3569,11 @@
       if (u.morale <= 0) this.routUnit(u, "士气涣散、军心崩溃");
     },
     gainMorale(u, amt) { if (u.alive) u.morale = Math.min(100, u.morale + amt); },
-    reachable(unit) {
+    // 共用 BFS：同时算出可达格代价表与来路（parent），reachable()/findPath() 各取所需
+    _bfsReach(unit) {
       const cost = { [unit.r + "," + unit.c]: 0 };
+      const parent = {};
       const queue = [[unit.r, unit.c, 0]];
-      const result = [];
       while (queue.length) {
         const [r, c, cc] = queue.shift();
         for (const [dr, dc] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
@@ -3592,40 +3586,64 @@
           if (occ && occ !== unit) continue;
           const key = nr + "," + nc;
           if (cost[key] !== undefined && cost[key] <= nCost) continue;
-          cost[key] = nCost;
-          result.push([nr, nc]);
+          cost[key] = nCost; parent[key] = r + "," + c;
           queue.push([nr, nc, nCost]);
         }
       }
-      return result;
+      return { cost, parent };
+    },
+    reachable(unit) {
+      const { cost } = this._bfsReach(unit);
+      const startKey = unit.r + "," + unit.c;
+      return Object.keys(cost).filter(k => k !== startKey).map(k => k.split(",").map(Number));
+    },
+    // 逐格路径（供 AI 移动演出用）：找不到可达路径时返回 null
+    findPath(unit, tr, tc) {
+      const { cost, parent } = this._bfsReach(unit);
+      const startKey = unit.r + "," + unit.c, destKey = tr + "," + tc;
+      if (destKey === startKey || cost[destKey] === undefined) return null;
+      const path = [];
+      let cur = destKey;
+      while (cur !== startKey) {
+        const [r, c] = cur.split(",").map(Number);
+        path.unshift([r, c]);
+        cur = parent[cur];
+      }
+      return path;
+    },
+    // AI 移动改为逐格挪动而非瞬移，玩家才看得清走位过程；每步之间短暂停顿并重绘
+    async animateMove(unit, path) {
+      if (!path || !path.length) return;
+      for (const [r, c] of path) {
+        unit.r = r; unit.c = c;
+        this.renderBattle();
+        await this.uiPause(110);
+      }
     },
 
     /* ---------- 战斗结算 ---------- */
-    // 夹击：守方相邻格（除攻方本身外）另有攻方同袍存活，每员再 +25% 伤害，封顶两员 +50%——
-    // 由此产生"结阵靠拢多面围攻、散阵单打独斗吃亏"的走位策略
-    flankerCount(att, def) {
-      const allies = att.side === "my" ? this.myUnits : this.foeUnits;
-      return allies.filter(a => a !== att && a.alive && this.manhattan(a, def) === 1).length;
+    // 夹击不再是几何上自动判定，而是玩家在行动前的明确抉择：选「单独攻击」只有本部出手，
+    // 选「夹击」则把所有仍未行动、且已贴在目标相邻格的同袍一并拉入这次围攻（见 resolveCoordinatedAttack）
+    eligibleFlankers(unit, target) {
+      const allies = unit.side === "my" ? this.myUnits : this.foeUnits;
+      return allies.filter(a => a !== unit && a.alive && !a.acted && this.manhattan(a, target) === 1);
     },
-    computeCombat(att, def) {
+    computeCombat(att, def, flankers = 0) {
       const defTerr = this.TERRAINS[this.tiles[def.r][def.c]];
-      const formBonus = (side, kind) => {
+      const formBonus = (u, kind) => {
         if (this.formTurnsLeft <= 0) return 1;
-        const f = this.FORMS[side === "my" ? this.myForm : this.foeForm];
+        const f = this.FORMS[u.form];
         return (kind === "atk" && f.atkMul) || (kind === "def" && f.defMul) || 1;
       };
-      const beatBonus = side => {
+      const beatBonus = () => {
         if (this.formTurnsLeft <= 0) return 1;
-        const aForm = side === "my" ? this.myForm : this.foeForm;
-        const dForm = side === "my" ? this.foeForm : this.myForm;
-        return this.FORM_BEATS[aForm] === dForm ? 1.1 : 1;
+        return this.FORM_BEATS[att.form] === def.form ? 1.1 : 1;
       };
       // 士气不再是全队共享的单一数值：以攻方自身士气决定其发挥
       const moraleMul = 0.7 + att.morale / 100 * 0.6;
-      let dmg = 220 * (att.atk * this.skillAtkMul(att) * formBonus(att.side, "atk") * beatBonus(att.side) * moraleMul)
-        / Math.max(1, def.def * this.skillDefMul(def) * defTerr.defMul * formBonus(def.side, "def"))
+      let dmg = 220 * (att.atk * this.skillAtkMul(att) * formBonus(att, "atk") * beatBonus() * moraleMul)
+        / Math.max(1, def.def * this.skillDefMul(def) * defTerr.defMul * formBonus(def, "def"))
         * (0.85 + Math.random() * 0.3);
-      const flankers = this.flankerCount(att, def);
       if (flankers > 0) dmg *= 1 + Math.min(2, flankers) * 0.25;
       if (def.standDef) dmg *= 0.85;
       // 暴击：由攻方「魅力」决定（与单挑同一套公式），中则伤害 ×1.7
@@ -3633,10 +3651,10 @@
       if (Math.random() < Math.min(0.6, (att.g.mei || 0) / 280)) { dmg *= 1.7; crit = true; }
       return { dmg: Math.max(1, Math.round(dmg)), crit, flankers };
     },
-    computeCombatAt(att, def, r, c) {
+    computeCombatAt(att, def, r, c, flankers = 0) {
       const sr = att.r, sc = att.c;
       att.r = r; att.c = c;
-      const res = this.computeCombat(att, def);
+      const res = this.computeCombat(att, def, flankers);
       att.r = sr; att.c = sc;
       return res;
     },
@@ -3664,20 +3682,30 @@
       if (defCell) defCell.classList.remove("fg-hit-flash");
       const board2 = root && root.querySelector(".fg-board"); if (board2) board2.classList.remove("fg-screenflash");
     },
-    async resolveAttack(att, def) {
+    async resolveAttack(att, def, flankers = 0) {
       if (this.TERRAINS[this.tiles[att.r][att.c]].noAtk) { toast("半渡之际，不可出战！"); return; }
-      const res = this.computeCombat(att, def);
+      const res = this.computeCombat(att, def, flankers);
       def.hp = Math.max(0, def.hp - res.dmg);
-      this.log(`⚔️ ${att.g.name} 攻击 ${def.g.name}${res.flankers ? "（夹击）" : ""}，造成 ${res.dmg} 点伤害${res.crit ? " 💥暴击！" : ""}${def.hp <= 0 ? "，一举击溃！" : ""}`);
+      this.log(`⚔️ ${att.g.name} 攻击 ${def.g.name}${flankers ? "（夹击）" : ""}，造成 ${res.dmg} 点伤害${res.crit ? " 💥暴击！" : ""}${def.hp <= 0 ? "，一举击溃！" : ""}`);
       await this.playAttackFx(att, def, res);
       if (def.hp <= 0) this.routUnit(def);
       if (def.hp > 0 && !att.ranged && !this.TERRAINS[this.tiles[def.r][def.c]].noAtk) {
-        const cres = this.computeCombat(def, att);
+        const cres = this.computeCombat(def, att, 0);
         const counterDmg = Math.round(cres.dmg * 0.5);
         att.hp = Math.max(0, att.hp - counterDmg);
         this.log(`↩️ ${def.g.name} 奋力反击${cres.crit ? " 💥暴击" : ""}，造成 ${counterDmg} 点伤害${att.hp <= 0 ? "，反遭击溃！" : ""}`);
         await this.playAttackFx(def, att, { dmg: counterDmg, crit: cres.crit });
         if (att.hp <= 0) this.routUnit(att);
+      }
+    },
+    // 夹击：主攻手 + 所有已就位（相邻目标、未行动）的同袍依次出手，各自独立结算伤害/反击，
+    // 每人都播一遍完整的攻击演出，让"围攻"这件事真正在画面上看得见——目标半途溃败即中止后续出手
+    async resolveCoordinatedAttack(attackers, def) {
+      for (const att of attackers) {
+        if (!def.alive || !att.alive) continue;
+        const flankers = attackers.filter(a => a !== att && a.alive).length;
+        await this.resolveAttack(att, def, flankers);
+        att.acted = true;
       }
     },
     // 溃退：兵力或士气（见 dropMorale）任一见底皆触发，两者互为独立判定；殃及己方同袍士气小幅下滑、
@@ -3697,8 +3725,13 @@
       if (!att || this.busy) return;
       if (this.actionMode === "challenge") return this.challenge(att, def);
       this.busy = true;
-      await this.resolveAttack(att, def);
-      att.acted = true;
+      if (this.actionMode === "flank") {
+        const joiners = this.eligibleFlankers(att, def);
+        await this.resolveCoordinatedAttack([att, ...joiners], def);
+      } else {
+        await this.resolveAttack(att, def, 0);
+        att.acted = true;
+      }
       this.busy = false;
       this.afterAction();
     },
@@ -3790,15 +3823,11 @@
       this.busy = false;
       this.afterAction();
     },
-    // 军令：斥候探阵（揭示敌阵形）/ 擂鼓（全军士气+8）/ 火攻（须山道地形或军中有精通天时者，直接烧一路敌军）
+    // 军令：擂鼓（全军士气各+8）/ 火攻（须山道地形或军中有精通天时者，直接烧一路敌军）——
+    // 「斥候探阵」随阵形改为逐将独立、且棋子上直接标出阵形图标后失去意义，本轮起移除
     useOrder(kind) {
       if (this.myOrders <= 0) { toast("军令已用尽！"); return; }
-      if (kind === "scout") {
-        if (this.foeFormKnown) return;
-        this.myOrders--; this.foeFormKnown = true;
-        toast(`🕵️ 斥候回报：敌军摆的是${this.FORMS[this.foeForm].n}之阵！`);
-        this.log(`🕵️ 斥候探明敌阵：${this.FORMS[this.foeForm].n}（${this.FORMS[this.foeForm].desc}）`);
-      } else if (kind === "drum") {
+      if (kind === "drum") {
         this.myOrders--; this.myUnits.filter(u => u.alive).forEach(u => this.gainMorale(u, 8));
         this.log(`🥁 擂鼓助威！我军士气 +8（军令余 ${this.myOrders}）`);
       } else if (kind === "fire") {
@@ -3935,15 +3964,17 @@
             if (score > bestScore) { bestScore = score; bestMove = [r, c]; bestTarget = e; }
           }
         }
-        if (bestMove) { u.r = bestMove[0]; u.c = bestMove[1]; u.moved = true; target = bestTarget; }
-        else {
+        if (bestMove) {
+          await this.animateMove(u, this.findPath(u, bestMove[0], bestMove[1]) || [bestMove]);
+          u.moved = true; target = bestTarget;
+        } else {
           const lowHp = u.hp < u.hpMax * 0.25;
           const dest = lowHp ? this.foeCamp : this.nearestEnemyPos(u, enemies);
           const best = reach.slice().sort((a, b) =>
             (Math.abs(a[0] - dest.r) + Math.abs(a[1] - dest.c)) - (Math.abs(b[0] - dest.r) + Math.abs(b[1] - dest.c)))[0];
-          if (best) { u.r = best[0]; u.c = best[1]; }
+          if (best) await this.animateMove(u, this.findPath(u, best[0], best[1]) || [best]);
           u.acted = true;
-          await this.uiPause();
+          await this.uiPause(80);
           this.renderBattle();
           return;
         }
@@ -3959,15 +3990,19 @@
       this.turnSide = "my"; this.turnN = 1;
       this.myOrders = this.calcOrders(this.mine); this.foeOrders = this.calcOrders(this.foes);
       this.myUnits.forEach(u => { u.acted = false; });
-      const beat = this.FORM_BEATS[this.myForm] === this.foeForm ? "——我阵克敌，前三回合攻击再 +10%！"
-        : this.FORM_BEATS[this.foeForm] === this.myForm ? "——敌阵克我，前三回合小心应对！" : "";
-      this.log(`🥁 两军对圆！我方${this.FORMS[this.myForm].n}阵 对 敌方${this.FORMS[this.foeForm].n}阵${beat}`);
+      this.log(`🥁 两军对圆！各部按己方阵形列阵——前 3 回合内阵形相克（锥克方圆·方圆克雁行·雁行克鹤翼·鹤翼克锥形）额外 +10% 攻击`);
       this.renderBattle();
     },
     endTurnCycle() {
       this.formTurnsLeft = Math.max(0, this.formTurnsLeft - 1);
-      if (this.myForm === "goose" && this.formTurnsLeft > 0) this.foeUnits.forEach(u => this.dropMorale(u, this.FORMS.goose.moraleDrain));
-      if (this.foeForm === "goose" && this.formTurnsLeft > 0) this.myUnits.forEach(u => this.dropMorale(u, this.FORMS.goose.moraleDrain));
+      // 雁行乱箭：改为逐将独立——持雁行阵者对身周 2 格内敌方单位各自蚀其士气
+      if (this.formTurnsLeft > 0) {
+        [...this.myUnits, ...this.foeUnits].forEach(u => {
+          if (!u.alive || u.form !== "goose") return;
+          const enemies = u.side === "my" ? this.foeUnits : this.myUnits;
+          enemies.filter(e => e.alive && this.manhattan(u, e) <= 2).forEach(e => this.dropMorale(e, this.FORMS.goose.moraleDrain));
+        });
+      }
       [...this.myUnits, ...this.foeUnits].forEach(u => {
         if (!u.alive) return;
         if (u.side === "my" && u.r === this.myCamp.r && u.c === this.myCamp.c) u.hp = Math.min(u.hpMax, u.hp + Math.round(u.hpMax * 0.08));
@@ -4026,13 +4061,19 @@
             const moralePct = Math.max(0, u.morale / 100);
             const sk = u.skActive ? Skill.of(u.g) : null;
             const skBadge = sk ? `<span class="fg-skbadge ${u.skCd > 0 ? "cd" : ""}" title="${sk.n}${u.skCd > 0 ? `（冷却 ${u.skCd}）` : "（可用）"}">${sk.icon}</span>` : "";
-            const tip = `${u.g.name}　兵力 ${Math.max(0, Math.round(u.hp))}/${u.hpMax}　士气 ${Math.round(u.morale)}`;
+            const form = this.FORMS[u.form];
+            const canCycleForm = this.phase === "deploy" && u.side === "my";
+            const formBadge = `<span class="fg-formbadge${canCycleForm ? " tap" : ""}" data-formcycle="1" title="${form.n}${canCycleForm ? "（点击切换阵形）" : ""}">${form.icon}</span>`;
+            const tip = `${u.g.name}　${form.n}　兵力 ${Math.max(0, Math.round(u.hp))}/${u.hpMax}　士气 ${Math.round(u.morale)}`;
             token = `<div class="fg-unit ${u.side} ${this.phase === "battle" && u.acted ? "acted" : ""}" title="${tip}">
+              ${formBadge}
               <span class="fg-name">${u.g.name}</span>
               ${skBadge}
               <span class="fg-hpbar"><i style="width:${pct * 100}%;background:${hpColor(pct)}"></i></span>
               <span class="fg-morbar"><i style="width:${moralePct * 100}%;background:${hpColor(moralePct)}"></i></span>
             </div>`;
+          } else {
+            token = `<span class="fg-terrain-icon">${this.TERRAINS[terr].icon}</span>`;
           }
           html += `<div class="${cls}" data-r="${r}" data-c="${c}">${token}</div>`;
         }
@@ -4044,23 +4085,21 @@
       const tplName = this.TERRAIN_TPL_NAME[this.terrainTpl];
       const root = $("#fg-content");
       root.innerHTML = `
-        <div class="section-hint">棋盘对垒：方格步阵，一将一格。选阵形定初始站位（前 3 回合生效），备好后擂鼓开战</div>
+        <div class="section-hint">棋盘对垒：方格步阵，一将一格。阵形按将而定——点棋子左上角图标可切换该将的阵形，备好后擂鼓开战</div>
         <div class="fb-banner">🗺️ 战场·${tplName} · 军令 <b>${this.myOrders}</b> 道</div>
         <div class="fg-legend">${Object.entries(this.TERRAINS).map(([k, t]) => `<span class="fg-legend-item"><i class="fg-t-${k}"></i>${t.icon}${t.n}</span>`).join("")}</div>
-        <div class="fb-sect">我方阵形</div>
-        <div class="fb-forms">${Object.entries(this.FORMS).map(([k, f]) =>
-          `<button class="fb-form ${k === this.myForm ? "active" : ""}" data-form="${k}">${f.icon} ${f.n}<small>${f.desc}</small></button>`).join("")}</div>
-        <div class="fb-sect">敌军阵形：${this.foeFormKnown
-          ? `<b>${this.FORMS[this.foeForm].icon} ${this.FORMS[this.foeForm].n}</b>（${this.FORMS[this.foeForm].desc}）`
-          : `旌旗蔽日看不真切 <button class="cup-go" id="fg-scout" ${this.myOrders > 0 ? "" : "disabled"} style="padding:4px 10px">🕵️ 斥候探阵（耗 1 军令）</button>`}</div>
-        <div class="fg-board" style="grid-template-columns:repeat(${this.COLS},1fr)">${this.boardCellsHtml()}</div>
+        <div class="fg-legend">${Object.entries(this.FORMS).map(([k, f]) => `<span class="fg-legend-item">${f.icon}${f.n}</span>`).join("")}</div>
+        <div class="fg-board-wrap"><div class="fg-board" style="grid-template-columns:repeat(${this.COLS},1fr)">${this.boardCellsHtml()}</div></div>
         <div class="section-hint">🚩 我营在下，🚩 敌营在上；点选我方武将再点空格可调整初始站位</div>
         <div class="cup-start-btns" style="margin-top:10px"><button class="cup-go primary" id="fg-go">🥁 擂鼓 · 两军对圆</button></div>`;
-      $$(".fb-form", root).forEach(b => b.onclick = () => { this.myForm = b.dataset.form; this.placeFormation(this.myUnits, "my", this.myForm); this.renderDeploy(); });
-      const scout = $("#fg-scout", root); if (scout) scout.onclick = () => this.useOrder("scout");
-      $$(".fg-cell", root).forEach(cell => cell.onclick = () => {
+      const formKeys = Object.keys(this.FORMS);
+      $$(".fg-cell", root).forEach(cell => cell.onclick = (e) => {
         const r = +cell.dataset.r, c = +cell.dataset.c;
         const u = this.unitAt(r, c);
+        if (e.target.closest(".fg-formbadge") && u && u.side === "my") {
+          u.form = formKeys[(formKeys.indexOf(u.form) + 1) % formKeys.length];
+          this.renderDeploy(); return;
+        }
         if (this.deploySel) {
           const sel = this.deploySel; this.deploySel = null;
           if (r >= this.ROWS - 2 && !u) { sel.r = r; sel.c = c; }
@@ -4082,22 +4121,31 @@
         this.foeUnits.filter(e => e.alive && this.manhattan(u, e) <= range && (this.actionMode !== "challenge" || this.manhattan(u, e) === 1))
           .forEach(e => enemySet.add(e.r + "," + e.c));
       }
-      let actionBar = "";
+      // 行动菜单改为浮在该武将棋子周围，而非固定贴在屏幕下方——玩家的注意力本就在棋盘上，不必来回扫视
+      let floatMenu = "";
       if (u && this.selPhase === "act") {
         const hasTargets = enemySet.size > 0;
         const sk = u.skActive ? Skill.of(u.g) : null;
-        actionBar = `<div class="fg-actionbar">
-          <span>已选 <b>${u.g.name}</b>　兵${Math.max(0, Math.round(u.hp))}/${u.hpMax}　气${Math.round(u.morale)}</span>
-          ${hasTargets ? `<button class="fb-ord ${this.actionMode === "attack" ? "active" : ""}" id="fg-mode-atk">🗡️ 攻击</button>
-          <button class="fb-ord ${this.actionMode === "challenge" ? "active" : ""}" id="fg-mode-chg">🤺 单挑</button>`
-            : `<span class="dim">附近无目标，仅可待命</span>`}
-          ${sk ? (u.skCd <= 0 ? `<button class="fb-ord" id="fg-skill-btn">🌟 ${sk.n}</button>` : `<span class="dim">🌟 ${sk.n}（冷却 ${u.skCd}）</span>`) : ""}
-          <button class="fb-ord" id="fg-standdown">🛡️ 待命${u.moved ? "结束" : "（+15%防）"}</button>
+        const anyFlank = hasTargets && this.foeUnits.some(e => enemySet.has(e.r + "," + e.c) && this.eligibleFlankers(u, e).length > 0);
+        const leftPct = (u.c + 0.5) / this.COLS * 100;
+        const below = u.r < this.ROWS - 2;
+        const topPct = below ? (u.r + 1.06) / this.ROWS * 100 : (u.r - 0.06) / this.ROWS * 100;
+        const anchorX = u.c < 2 ? "left" : (u.c > this.COLS - 3 ? "right" : "center");
+        floatMenu = `<div class="fg-radial ${anchorX} ${below ? "below" : "above"}" style="left:${leftPct}%;top:${topPct}%">
+          <div class="fg-radial-info">${u.g.name}　兵${Math.max(0, Math.round(u.hp))}/${u.hpMax}　气${Math.round(u.morale)}</div>
+          <div class="fg-radial-btns">
+            ${hasTargets ? `<button class="fg-rbtn ${this.actionMode === "attack" ? "active" : ""}" id="fg-mode-atk" title="单独攻击">🗡️</button>` : ""}
+            ${anyFlank ? `<button class="fg-rbtn ${this.actionMode === "flank" ? "active" : ""}" id="fg-mode-flank" title="夹击（拉上就位的同袍一起出手）">⚔️</button>` : ""}
+            ${hasTargets ? `<button class="fg-rbtn ${this.actionMode === "challenge" ? "active" : ""}" id="fg-mode-chg" title="单挑">🤺</button>` : ""}
+            ${sk ? (u.skCd <= 0 ? `<button class="fg-rbtn" id="fg-skill-btn" title="${sk.n}">🌟</button>` : `<span class="fg-rbtn dim" title="${sk.n}冷却${u.skCd}">🌟</span>`) : ""}
+            <button class="fg-rbtn" id="fg-standdown" title="待命${u.moved ? "" : "（+15%防）"}">🛡️</button>
+          </div>
+          ${!hasTargets ? `<div class="fg-radial-hint">附近无目标，仅可待命</div>` : ""}
         </div>`;
       }
+      const myTotalHp = this.totalHp("my"), foeTotalHp = this.totalHp("foe");
       const orderToolbar = `<div class="fb-orders">
         <span class="fb-ord-left">军令 <b>${this.myOrders}</b>·敌令 <b>${this.foeOrders}</b></span>
-        ${!this.foeFormKnown ? `<button class="fb-ord" id="fg-scout2" ${this.myOrders > 0 ? "" : "disabled"}>🕵️ 斥候</button>` : ""}
         <button class="fb-ord" id="fg-drum" ${this.myOrders > 0 ? "" : "disabled"}>🥁 擂鼓</button>
         <button class="fb-ord ${this.orderMode === "fire" ? "active" : ""}" id="fg-fire" ${this.myOrders > 0 ? "" : "disabled"} title="须山道地形，或军中有精通天时者">🔥 火攻</button>
         <button class="fb-ord ctrl" id="fg-endturn" ${this.turnSide === "my" ? "" : "disabled"}>⏭ 结束回合</button>
@@ -4105,20 +4153,19 @@
       const root = $("#fg-content");
       root.innerHTML = `
         <div class="fb-banner fg-banner-compact">${this.turnSide === "my" ? "🟢 我方回合" : "🔴 敌方回合"} · 第 ${this.turnN} 回合${this.formTurnsLeft > 0 ? `（阵形+${this.formTurnsLeft}）` : ""}
-          <span class="fg-avgmor">均气 我${this.avgMorale("my")}·敌${this.avgMorale("foe")}</span>
+          <span class="fg-avgmor">兵力 我${myTotalHp.toLocaleString()}·敌${foeTotalHp.toLocaleString()}　均气 我${this.avgMorale("my")}·敌${this.avgMorale("foe")}</span>
           ${this.orderMode === "fire" ? "<b>· 请点选要火攻的敌方单位</b>" : ""}
         </div>
-        <div class="fg-board" style="grid-template-columns:repeat(${this.COLS},1fr)">${this.boardCellsHtml({ reachSet, enemySet })}</div>
-        ${actionBar}
+        <div class="fg-board-wrap"><div class="fg-board" style="grid-template-columns:repeat(${this.COLS},1fr)">${this.boardCellsHtml({ reachSet, enemySet })}</div>${floatMenu}</div>
         ${orderToolbar}
         <div class="fb-log fg-log-compact" id="fg-log">${(this.logLines || []).join("")}</div>`;
       $$(".fg-cell", root).forEach(cell => cell.onclick = () => this.onCellClick(+cell.dataset.r, +cell.dataset.c));
       const endBtn = $("#fg-endturn", root); if (endBtn) endBtn.onclick = () => this.endMyTurn();
       const sd = $("#fg-standdown", root); if (sd) sd.onclick = () => this.standDown();
       const ma = $("#fg-mode-atk", root); if (ma) ma.onclick = () => { this.actionMode = "attack"; this.renderBattle(); };
+      const mf = $("#fg-mode-flank", root); if (mf) mf.onclick = () => { this.actionMode = "flank"; this.renderBattle(); };
       const mc = $("#fg-mode-chg", root); if (mc) mc.onclick = () => { this.actionMode = "challenge"; this.renderBattle(); };
       const skb = $("#fg-skill-btn", root); if (skb) skb.onclick = () => this.useActiveSkill(u);
-      const sc2 = $("#fg-scout2", root); if (sc2) sc2.onclick = () => this.useOrder("scout");
       const drum = $("#fg-drum", root); if (drum) drum.onclick = () => this.useOrder("drum");
       const fire = $("#fg-fire", root); if (fire) fire.onclick = () => this.useOrder("fire");
     },

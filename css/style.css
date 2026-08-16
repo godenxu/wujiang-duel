@@ -1447,23 +1447,34 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 }
 
 /* ---------- 野战演武 · 棋盘对垒（GridBattle）：方格棋盘、单位徽标、可达/可攻高亮 ----------
-   整体针对手机竖屏做了紧凑化：banner/军令条/日志的内边距与行高普遍收窄，棋盘按视口高度
-   （而非纯宽度）反推尺寸上限，避免一局下来要频繁上下滚动屏幕。 */
+   整体针对手机竖屏做了紧凑化：banner/军令条/日志的内边距与行高普遍收窄；棋盘尺寸取
+   "占满容器宽度/绝对像素上限/占满可视高度" 三者中最小值，宽屏折叠屏展开后棋盘会明显放大，
+   窄屏手机上仍按屏幕高度封顶，不会把其余控件挤出可视区。 */
 #screen-fieldgrid #fg-content { padding-bottom: 4px; }
+.fg-board-wrap {
+  position: relative; margin: 6px auto;
+  aspect-ratio: 12 / 9;
+  width: min(100%, 720px, 82vh);
+}
 .fg-board {
-  display: grid; gap: 1.5px;
+  display: grid; gap: 1.5px; width: 100%; height: 100%;
   background: rgba(0,0,0,.25); border: 1px solid rgba(212,175,55,.35); border-radius: 6px;
-  padding: 3px; margin: 6px auto; aspect-ratio: 12 / 9;
-  width: min(100%, 54vh); max-width: 100%;
+  padding: 3px; box-sizing: border-box;
 }
 .fg-cell {
   position: relative; border-radius: 2px; min-width: 0; min-height: 0; cursor: pointer;
+  overflow: hidden;
 }
-.fg-t-plain { background: #5f7f45; }
-.fg-t-hill  { background: #83693f; }
-.fg-t-river { background: #33607e; }
-.fg-t-road  { background: #ad9760; }
-.fg-t-camp  { background: #9c3d2a; }
+/* 地形纹理：底色之外叠一层渐变/纹样，外加半透明地形图标，空格上也能一眼看出地貌 */
+.fg-t-plain { background: repeating-linear-gradient(100deg, rgba(255,255,255,.05) 0 2px, transparent 2px 9px), linear-gradient(165deg, #6c8d4f, #557142); }
+.fg-t-hill  { background: radial-gradient(ellipse 70% 55% at 50% 62%, rgba(255,255,255,.16), transparent 70%), linear-gradient(165deg, #8f7650, #6d5735); }
+.fg-t-river { background: repeating-linear-gradient(100deg, rgba(255,255,255,.16) 0 3px, transparent 3px 11px), linear-gradient(165deg, #3a6c8c, #2a4f68); }
+.fg-t-road  { background: repeating-linear-gradient(0deg, rgba(0,0,0,.12) 0 3px, transparent 3px 11px), linear-gradient(165deg, #b8a066, #9c875395); }
+.fg-t-camp  { background: radial-gradient(circle at 50% 38%, rgba(255,214,140,.35), transparent 62%), linear-gradient(165deg, #a8452f, #7c2f1e); }
+.fg-terrain-icon {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 62%; opacity: .4; pointer-events: none; filter: drop-shadow(0 1px 1px rgba(0,0,0,.4));
+}
 .fg-cell.fg-reach::after {
   content: ""; position: absolute; inset: 8%; border-radius: 3px;
   background: rgba(90,160,255,.42); border: 1px solid rgba(140,190,255,.9);
@@ -1489,13 +1500,6 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 }
 .fg-hpbar, .fg-morbar { position: relative; width: 84%; height: 2.5px; background: rgba(0,0,0,.55); border-radius: 2px; overflow: hidden; margin-top: 1px; }
 .fg-hpbar i, .fg-morbar i { display: block; height: 100%; }
-.fg-actionbar {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-  background: rgba(0,0,0,.28); border: 1px solid rgba(212,175,55,.3);
-  border-radius: 8px; padding: 6px 9px; margin: 6px 0; font-size: 12.5px; color: var(--paper);
-}
-.fg-actionbar .dim { opacity: .65; }
-.fb-ord.active { background: linear-gradient(135deg, #f0d678, var(--accent)); color: #1a1410; border-color: transparent; }
 .fg-unit.acted { opacity: .5; filter: grayscale(.4); }
 .fg-skbadge {
   position: absolute; top: -3px; right: -3px; width: 13px; height: 13px; border-radius: 50%;
@@ -1503,9 +1507,40 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
   box-shadow: 0 1px 2px rgba(0,0,0,.6); z-index: 3;
 }
 .fg-skbadge.cd { background: #6a6255; color: rgba(255,255,255,.6); }
+/* 阵形徽标：与技能徽标对称摆在左上角，逐将独立而非全军一个选择 */
+.fg-formbadge {
+  position: absolute; top: -3px; left: -3px; width: 13px; height: 13px; border-radius: 50%;
+  background: rgba(20,16,10,.9); border: 1px solid rgba(212,175,55,.6); font-size: 8px;
+  line-height: 12px; text-align: center; box-shadow: 0 1px 2px rgba(0,0,0,.6); z-index: 3;
+}
+.fg-formbadge.tap { cursor: pointer; }
 .fg-legend { display: flex; flex-wrap: wrap; gap: 3px 10px; margin: 4px 0 6px; font-size: 11px; color: var(--paper); opacity: .85; }
 .fg-legend-item { display: inline-flex; align-items: center; gap: 4px; }
 .fg-legend-item i { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+/* 行动菜单：浮在选中武将棋子周围而非固定贴底，玩家不必来回扫视屏幕上下 */
+.fg-radial {
+  position: absolute; transform: translate(-50%, 0); z-index: 10;
+  background: rgba(10,8,4,.94); border: 1px solid rgba(212,175,55,.55); border-radius: 10px;
+  padding: 5px 7px; box-shadow: 0 4px 14px rgba(0,0,0,.55);
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  width: max-content; max-width: 90vw;
+}
+.fg-radial.left { transform: translate(-8%, 0); }
+.fg-radial.right { transform: translate(-92%, 0); }
+.fg-radial.above { transform: translate(-50%, -100%); }
+.fg-radial.above.left { transform: translate(-8%, -100%); }
+.fg-radial.above.right { transform: translate(-92%, -100%); }
+.fg-radial-info { font-size: 10.5px; color: var(--paper); white-space: nowrap; }
+.fg-radial-btns { display: flex; gap: 4px; }
+.fg-rbtn {
+  width: 30px; height: 30px; border-radius: 8px; border: 1px solid rgba(212,175,55,.4);
+  background: rgba(255,255,255,.07); color: var(--paper); font-size: 15px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; padding: 0;
+}
+.fg-rbtn.active { background: linear-gradient(135deg, #f0d678, var(--accent)); border-color: transparent; }
+.fg-rbtn.dim { opacity: .4; }
+.fg-radial-hint { font-size: 9.5px; opacity: .75; white-space: nowrap; }
+.fb-ord.active { background: linear-gradient(135deg, #f0d678, var(--accent)); color: #1a1410; border-color: transparent; }
 /* banner/军令条/日志：比旧版 FieldBattle 共用的 .fb-banner/.fb-orders/.fb-log 更紧凑一档 */
 .fg-banner-compact { padding: 6px 10px; font-size: 12.5px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .fg-avgmor { opacity: .8; font-size: 11.5px; }
