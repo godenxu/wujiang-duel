@@ -85,7 +85,8 @@
     cup: "assets/bgm/tactics.mp3",            // 世界杯（沿用战术曲）
     teamwar: "assets/bgm/tactics.mp3",        // 组队大战（沿用战术曲）
     field: "assets/bgm/tactics.mp3",          // 野战演武·经典版（沿用战术曲）
-    fieldgrid: "assets/bgm/tactics.mp3",      // 野战演武·棋盘对垒（沿用战术曲）
+    fieldgrid: "assets/bgm/war.mp3",          // 野战演武·棋盘对垒
+    map: "assets/bgm/strategy.mp3",           // 天下游历大地图
   };
   // 记录"上一次停留的主页面"（角色扮演主页 或 天下地图）：战斗/宝物库等子界面结算后
   // 借此判断该回到哪一层，而不是一律固定返回某一处
