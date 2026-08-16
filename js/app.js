@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608160530";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608161333";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -3408,6 +3408,7 @@
    *  第一期骨架：方格移动/交锋/阵形部署窗口/士气崩溃胜负 + 每回合「挑发」概率触发单挑
    *  （复用 startTeamDuel 引擎）；军令、将魂主动技能网格化、夺营判定留待后续分期。
    * ============================================================ */
+  const GridZoom = { scale: 1, x: 0, y: 0 };   // 棋盘双指缩放/拖动状态，跨 render() 持久，命名与 MapZoom 区分避免顶层 const 撞名
   const GridBattle = {
     gen: 0, phase: null,
     COLS: 12, ROWS: 9,
@@ -3431,6 +3432,7 @@
     open() {
       this.gen++;
       this.side = "cn";
+      GridZoom.scale = 1; GridZoom.x = 0; GridZoom.y = 0;
       const draft = s => { const p = DB.bySide(s).slice(); shuffle(p); return p.slice(0, 10).map(clone); };
       this.mine = draft("cn"); this.foes = draft("jp");
       this._setupCommon();
@@ -3725,6 +3727,9 @@
       if (!att || this.busy) return;
       if (this.actionMode === "challenge") return this.challenge(att, def);
       this.busy = true;
+      // 一旦出手就先把浮动菜单收起来，免得挡住紧接着播放的攻击/夹击动画
+      this.selectedUnit = null; this.selPhase = null;
+      this.renderBattle();
       if (this.actionMode === "flank") {
         const joiners = this.eligibleFlankers(att, def);
         await this.resolveCoordinatedAttack([att, ...joiners], def);
@@ -3741,6 +3746,8 @@
     async challenge(att, def) {
       if (this.busy) return;
       this.busy = true;
+      this.selectedUnit = null; this.selPhase = null;
+      this.renderBattle();
       const pAccept = Math.max(0.25, Math.min(0.85, 0.5 + (att.g.mei - def.g.zhi) / 200));
       if (Math.random() >= pAccept) {
         this.log(`🤺 ${att.g.name} 请战单挑，${def.g.name} 识破其意，按兵不动。`);
@@ -3773,6 +3780,8 @@
       const type = u.skActive;
       if (!type || this.busy) return;
       this.busy = true;
+      this.selectedUnit = null; this.selPhase = null;
+      this.renderBattle();
       const sk = Skill.of(u.g);
       const enemies = (u.side === "my" ? this.foeUnits : this.myUnits).filter(e => e.alive);
       const allies = (u.side === "my" ? this.myUnits : this.foeUnits).filter(e => e.alive);
@@ -3874,7 +3883,7 @@
       this.renderBattle();
     },
     onCellClick(r, c) {
-      if (this.turnSide !== "my") return;
+      if (this.turnSide !== "my" || this.busy) return;
       const u = this.unitAt(r, c);
       if (this.orderMode === "fire") {
         if (u && u.side === "foe") this.tryFireAttack(u);
@@ -3886,15 +3895,27 @@
       }
       if (this.selPhase === "move") {
         if (u === this.selectedUnit) { this.moveTo(r, c); return; }
-        if (u) { if (u.side === "my" && !u.acted) this.selectUnit(u); return; }
+        if (u) {
+          if (u.side === "my" && !u.acted) this.selectUnit(u);
+          else { this.selectedUnit = null; this.selPhase = null; this.renderBattle(); }
+          return;
+        }
         const ok = this.reachable(this.selectedUnit).some(([rr, cc]) => rr === r && cc === c);
-        if (ok) this.moveTo(r, c);
+        if (ok) { this.moveTo(r, c); return; }
+        // 点了棋盘上不可达的空格：视为放弃当前这步，退出选择（可另选一将行动）
+        this.selectedUnit = null; this.selPhase = null; this.renderBattle();
         return;
       }
-      if (this.selPhase === "act" && u && u.side === "foe") {
-        const range = this.selectedUnit.ranged ? 2 : 1;
-        const d = this.manhattan(this.selectedUnit, u);
-        if (d <= range && (this.actionMode !== "challenge" || d === 1)) this.doTargetAction(u);
+      if (this.selPhase === "act") {
+        if (u === this.selectedUnit) return;
+        if (u && u.side === "foe") {
+          const range = this.selectedUnit.ranged ? 2 : 1;
+          const d = this.manhattan(this.selectedUnit, u);
+          if (d <= range && (this.actionMode !== "challenge" || d === 1)) { this.doTargetAction(u); return; }
+        }
+        if (u && u.side === "my" && !u.acted) { this.selectUnit(u); return; }
+        // 点了非目标区域：退出当前行动选择
+        this.selectedUnit = null; this.selPhase = null; this.renderBattle();
       }
     },
     endMyTurn() {
@@ -4121,44 +4142,106 @@
         this.foeUnits.filter(e => e.alive && this.manhattan(u, e) <= range && (this.actionMode !== "challenge" || this.manhattan(u, e) === 1))
           .forEach(e => enemySet.add(e.r + "," + e.c));
       }
-      // 行动菜单改为浮在该武将棋子周围，而非固定贴在屏幕下方——玩家的注意力本就在棋盘上，不必来回扫视
+      // 行动菜单浮在该武将棋子正周围、按钮环形分布一圈，而非固定贴在屏幕下方
       let floatMenu = "";
       if (u && this.selPhase === "act") {
         const hasTargets = enemySet.size > 0;
         const sk = u.skActive ? Skill.of(u.g) : null;
         const anyFlank = hasTargets && this.foeUnits.some(e => enemySet.has(e.r + "," + e.c) && this.eligibleFlankers(u, e).length > 0);
-        const leftPct = (u.c + 0.5) / this.COLS * 100;
-        const below = u.r < this.ROWS - 2;
-        const topPct = below ? (u.r + 1.06) / this.ROWS * 100 : (u.r - 0.06) / this.ROWS * 100;
-        const anchorX = u.c < 2 ? "left" : (u.c > this.COLS - 3 ? "right" : "center");
-        floatMenu = `<div class="fg-radial ${anchorX} ${below ? "below" : "above"}" style="left:${leftPct}%;top:${topPct}%">
+        const leftPct = Math.min(90, Math.max(10, (u.c + 0.5) / this.COLS * 100));
+        const topPct = Math.min(86, Math.max(14, (u.r + 0.5) / this.ROWS * 100));
+        const btns = [];
+        if (hasTargets) btns.push({ id: "fg-mode-atk", cls: this.actionMode === "attack" ? "active" : "", title: "单独攻击", icon: "🗡️" });
+        if (anyFlank) btns.push({ id: "fg-mode-flank", cls: this.actionMode === "flank" ? "active" : "", title: "夹击（拉上就位的同袍一起出手）", icon: "⚔️" });
+        if (hasTargets) btns.push({ id: "fg-mode-chg", cls: this.actionMode === "challenge" ? "active" : "", title: "单挑", icon: "🤺" });
+        if (sk) btns.push(u.skCd <= 0
+          ? { id: "fg-skill-btn", cls: "", title: sk.n, icon: "🌟" }
+          : { id: "", cls: "dim", tag: "span", title: `${sk.n}冷却${u.skCd}`, icon: "🌟" });
+        btns.push({ id: "fg-standdown", cls: "", title: `待命${u.moved ? "" : "（+15%防）"}`, icon: "🛡️" });
+        const R = 48;
+        const btnsHtml = btns.map((b, i) => {
+          const ang = (-90 + i * (360 / btns.length)) * Math.PI / 180;
+          const dx = (Math.cos(ang) * R).toFixed(1), dy = (Math.sin(ang) * R).toFixed(1);
+          const tag = b.tag || "button";
+          return `<${tag} class="fg-rbtn ring ${b.cls}" ${b.id ? `id="${b.id}"` : ""} style="transform:translate(calc(-50% + ${dx}px),calc(-50% + ${dy}px))" title="${b.title}">${b.icon}</${tag}>`;
+        }).join("");
+        floatMenu = `<div class="fg-radial" style="left:${leftPct}%;top:${topPct}%">
           <div class="fg-radial-info">${u.g.name}　兵${Math.max(0, Math.round(u.hp))}/${u.hpMax}　气${Math.round(u.morale)}</div>
-          <div class="fg-radial-btns">
-            ${hasTargets ? `<button class="fg-rbtn ${this.actionMode === "attack" ? "active" : ""}" id="fg-mode-atk" title="单独攻击">🗡️</button>` : ""}
-            ${anyFlank ? `<button class="fg-rbtn ${this.actionMode === "flank" ? "active" : ""}" id="fg-mode-flank" title="夹击（拉上就位的同袍一起出手）">⚔️</button>` : ""}
-            ${hasTargets ? `<button class="fg-rbtn ${this.actionMode === "challenge" ? "active" : ""}" id="fg-mode-chg" title="单挑">🤺</button>` : ""}
-            ${sk ? (u.skCd <= 0 ? `<button class="fg-rbtn" id="fg-skill-btn" title="${sk.n}">🌟</button>` : `<span class="fg-rbtn dim" title="${sk.n}冷却${u.skCd}">🌟</span>`) : ""}
-            <button class="fg-rbtn" id="fg-standdown" title="待命${u.moved ? "" : "（+15%防）"}">🛡️</button>
-          </div>
+          ${btnsHtml}
           ${!hasTargets ? `<div class="fg-radial-hint">附近无目标，仅可待命</div>` : ""}
         </div>`;
       }
       const myTotalHp = this.totalHp("my"), foeTotalHp = this.totalHp("foe");
-      const orderToolbar = `<div class="fb-orders">
-        <span class="fb-ord-left">军令 <b>${this.myOrders}</b>·敌令 <b>${this.foeOrders}</b></span>
+      const myMax = this.myUnits.reduce((s, x) => s + x.hpMax, 0) || 1;
+      const foeMax = this.foeUnits.reduce((s, x) => s + x.hpMax, 0) || 1;
+      const myPct = Math.max(0, Math.min(100, myTotalHp / myMax * 100));
+      const foePct = Math.max(0, Math.min(100, foeTotalHp / foeMax * 100));
+      // VS 兵力条：两条从中线向外撑满，兵力越少、外沿越往中间方向收缩——一眼看出此消彼长
+      const vsbarHtml = `<div class="fg-vsbar">
+        <div class="fg-vsbar-side"><b>我军</b><span>${myTotalHp.toLocaleString()}</span></div>
+        <div class="fg-vsbar-track">
+          <div class="fg-vsbar-half my"><i style="width:${myPct}%"></i></div>
+          <div class="fg-vsbar-mid">VS</div>
+          <div class="fg-vsbar-half foe"><i style="width:${foePct}%"></i></div>
+        </div>
+        <div class="fg-vsbar-side"><b>敌军</b><span>${foeTotalHp.toLocaleString()}</span></div>
+      </div>`;
+      const myAlive = this.myUnits.filter(x => x.alive).length, foeAlive = this.foeUnits.filter(x => x.alive).length;
+      const matchupHtml = `<div class="fb-banner fg-banner-compact">${this.turnSide === "my" ? "🟢 我方回合" : "🔴 敌方回合"} · 第 ${this.turnN} 回合${this.formTurnsLeft > 0 ? `（阵形+${this.formTurnsLeft}）` : ""}
+          ${this.orderMode === "fire" ? "<b>· 请点选要火攻的敌方单位</b>" : ""}
+        </div>
+        <div class="fg-matchup">
+          <span>存活 我${myAlive}/${this.myUnits.length}・敌${foeAlive}/${this.foeUnits.length}</span>
+          <span>均气 我${this.avgMorale("my")}・敌${this.avgMorale("foe")}</span>
+          <span>军令 我${this.myOrders}・敌${this.foeOrders}</span>
+        </div>`;
+      // 底部只留一行军令按钮，靠右排列；「军令/敌令」数已并入上方对阵情况，这里不再重复
+      const orderToolbar = `<div class="fb-orders fg-orders-row">
         <button class="fb-ord" id="fg-drum" ${this.myOrders > 0 ? "" : "disabled"}>🥁 擂鼓</button>
         <button class="fb-ord ${this.orderMode === "fire" ? "active" : ""}" id="fg-fire" ${this.myOrders > 0 ? "" : "disabled"} title="须山道地形，或军中有精通天时者">🔥 火攻</button>
         <button class="fb-ord ctrl" id="fg-endturn" ${this.turnSide === "my" ? "" : "disabled"}>⏭ 结束回合</button>
       </div>`;
       const root = $("#fg-content");
       root.innerHTML = `
-        <div class="fb-banner fg-banner-compact">${this.turnSide === "my" ? "🟢 我方回合" : "🔴 敌方回合"} · 第 ${this.turnN} 回合${this.formTurnsLeft > 0 ? `（阵形+${this.formTurnsLeft}）` : ""}
-          <span class="fg-avgmor">兵力 我${myTotalHp.toLocaleString()}·敌${foeTotalHp.toLocaleString()}　均气 我${this.avgMorale("my")}·敌${this.avgMorale("foe")}</span>
-          ${this.orderMode === "fire" ? "<b>· 请点选要火攻的敌方单位</b>" : ""}
-        </div>
-        <div class="fg-board-wrap"><div class="fg-board" style="grid-template-columns:repeat(${this.COLS},1fr)">${this.boardCellsHtml({ reachSet, enemySet })}</div>${floatMenu}</div>
-        ${orderToolbar}
-        <div class="fb-log fg-log-compact" id="fg-log">${(this.logLines || []).join("")}</div>`;
+        <div class="fg-layout">
+          <div class="fg-area-vsbar">${vsbarHtml}</div>
+          <div class="fg-area-matchup">${matchupHtml}</div>
+          <div class="fg-area-log"><div class="fb-log fg-log-compact" id="fg-log">${(this.logLines || []).join("")}</div></div>
+          <div class="fg-area-board">
+            <div class="fg-board-wrap" id="fg-board-wrap">
+              <div class="fg-zoom-layer">
+                <div class="fg-board" style="grid-template-columns:repeat(${this.COLS},1fr)">${this.boardCellsHtml({ reachSet, enemySet })}</div>
+                ${floatMenu}
+              </div>
+              <div class="fg-zoom-ctl">
+                <button id="fg-zoom-in" type="button">＋</button>
+                <button id="fg-zoom-out" type="button">－</button>
+              </div>
+            </div>
+          </div>
+          <div class="fg-area-orders">${orderToolbar}</div>
+        </div>`;
+      const logEl = $("#fg-log", root); if (logEl) logEl.scrollTop = logEl.scrollHeight;
+      // 环形菜单贴着棋子摆，靠近棋盘边缘时可能溢出可视区——量出实际溢出量后原地平移拉回来
+      // 注：.fg-radial 自身是 0×0 的定位锚点，getBoundingClientRect 量不到绝对定位子元素撑出的范围，
+      // 必须逐个子元素（信息条/提示/环形按钮）取并集才是菜单的真实可见边界
+      const radialEl = $(".fg-radial", root);
+      if (radialEl && radialEl.children.length) {
+        const wrapEl = $("#fg-board-wrap", root);
+        const wrapRect = wrapEl.getBoundingClientRect();
+        let minL = Infinity, minT = Infinity, maxR = -Infinity, maxB = -Infinity;
+        Array.from(radialEl.children).forEach(el => {
+          const r = el.getBoundingClientRect();
+          minL = Math.min(minL, r.left); minT = Math.min(minT, r.top);
+          maxR = Math.max(maxR, r.right); maxB = Math.max(maxB, r.bottom);
+        });
+        let dx = 0, dy = 0;
+        if (minL < wrapRect.left) dx = wrapRect.left - minL + 4;
+        else if (maxR > wrapRect.right) dx = wrapRect.right - maxR - 4;
+        if (minT < wrapRect.top) dy = wrapRect.top - minT + 4;
+        else if (maxB > wrapRect.bottom) dy = wrapRect.bottom - maxB - 4;
+        if (dx || dy) { radialEl.style.left = (radialEl.offsetLeft + dx) + "px"; radialEl.style.top = (radialEl.offsetTop + dy) + "px"; }
+      }
       $$(".fg-cell", root).forEach(cell => cell.onclick = () => this.onCellClick(+cell.dataset.r, +cell.dataset.c));
       const endBtn = $("#fg-endturn", root); if (endBtn) endBtn.onclick = () => this.endMyTurn();
       const sd = $("#fg-standdown", root); if (sd) sd.onclick = () => this.standDown();
@@ -4168,12 +4251,96 @@
       const skb = $("#fg-skill-btn", root); if (skb) skb.onclick = () => this.useActiveSkill(u);
       const drum = $("#fg-drum", root); if (drum) drum.onclick = () => this.useOrder("drum");
       const fire = $("#fg-fire", root); if (fire) fire.onclick = () => this.useOrder("fire");
+      this.bindGridZoom($("#fg-board-wrap", root));
+      // 点击棋盘/浮动菜单以外的区域（顶部对比条、战报、空白处等）：视为放弃当前武将的行动选择
+      root.onclick = e => {
+        if (!this.selectedUnit || this.busy) return;
+        if (e.target.closest(".fg-cell") || e.target.closest(".fg-radial")) return;
+        this.selectedUnit = null; this.selPhase = null; this.renderBattle();
+      };
     },
+    // 棋盘双指缩放/拖动：与 MapUI.bindZoom 同一套手法（不用 setPointerCapture，理由见该函数注释），
+    // 缩放层同时包住棋盘格与浮动行动菜单，使菜单跟着棋盘一起缩放平移、始终贴在武将棋子旁
+    applyGridZoom(box) {
+      const layer = box.querySelector(".fg-zoom-layer");
+      if (layer) layer.style.transform = `translate(${GridZoom.x}px,${GridZoom.y}px) scale(${GridZoom.scale})`;
+    },
+    clampGridZoomState(box) {
+      GridZoom.scale = Math.min(3, Math.max(1, GridZoom.scale));
+      const rect = box.getBoundingClientRect();
+      const maxX = (GridZoom.scale - 1) * rect.width / 2 + 30;
+      const maxY = (GridZoom.scale - 1) * rect.height / 2 + 30;
+      GridZoom.x = Math.min(maxX, Math.max(-maxX, GridZoom.x));
+      GridZoom.y = Math.min(maxY, Math.max(-maxY, GridZoom.y));
+    },
+    bindGridZoom(box) {
+      if (!box) return;
+      this.applyGridZoom(box);
+      const pointers = new Map();
+      let dragging = false, moved = false, lastX = 0, lastY = 0, pinchDist = 0, pinchScale = 1;
+      const onMove = e => {
+        if (!pointers.has(e.pointerId)) return;
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pointers.size === 2) {
+          const pts = [...pointers.values()];
+          const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+          if (pinchDist > 0) { GridZoom.scale = pinchScale * dist / pinchDist; this.clampGridZoomState(box); this.applyGridZoom(box); }
+          return;
+        }
+        if (dragging) {
+          const dx = e.clientX - lastX, dy = e.clientY - lastY;
+          if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+          GridZoom.x += dx; GridZoom.y += dy;
+          lastX = e.clientX; lastY = e.clientY;
+          this.clampGridZoomState(box);
+          this.applyGridZoom(box);
+        }
+      };
+      const onUp = e => {
+        pointers.delete(e.pointerId);
+        if (pointers.size < 2) pinchDist = 0;
+        if (pointers.size === 0 && dragging) {
+          dragging = false;
+          if (moved) { box._justDragged = true; setTimeout(() => { box._justDragged = false; }, 60); }
+        }
+        if (pointers.size === 0) {
+          document.removeEventListener("pointermove", onMove);
+          document.removeEventListener("pointerup", onUp);
+          document.removeEventListener("pointercancel", onUp);
+        }
+      };
+      box.onpointerdown = e => {
+        if (e.target.closest(".fg-zoom-ctl")) return;
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        document.addEventListener("pointermove", onMove);
+        document.addEventListener("pointerup", onUp);
+        document.addEventListener("pointercancel", onUp);
+        if (pointers.size === 1) { dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY; }
+        else if (pointers.size === 2) {
+          dragging = false;
+          const pts = [...pointers.values()];
+          pinchDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+          pinchScale = GridZoom.scale;
+        }
+      };
+      box.onwheel = e => {
+        e.preventDefault();
+        GridZoom.scale += e.deltaY < 0 ? 0.15 : -0.15;
+        this.clampGridZoomState(box);
+        this.applyGridZoom(box);
+      };
+      box.addEventListener("click", e => { if (box._justDragged) { e.stopPropagation(); e.preventDefault(); } }, true);
+      const zoomStep = d => { GridZoom.scale += d; if (GridZoom.scale <= 1.001) { GridZoom.x = 0; GridZoom.y = 0; } this.clampGridZoomState(box); this.applyGridZoom(box); };
+      const inBtn = $("#fg-zoom-in"); if (inBtn) inBtn.onclick = () => zoomStep(0.4);
+      const outBtn = $("#fg-zoom-out"); if (outBtn) outBtn.onclick = () => zoomStep(-0.4);
+    },
+    // 最新一条放最下（而非旧版顶插），阅读顺序与聊天记录一致；每次写入顺带把日志滚到底部
     log(msg) {
       this.logLines = this.logLines || [];
-      this.logLines.unshift(`<div>${msg}</div>`);
-      if (this.logLines.length > 30) this.logLines.pop();
-      const el = $("#fg-log"); if (el) el.innerHTML = this.logLines.join("");
+      this.logLines.push(`<div>${msg}</div>`);
+      if (this.logLines.length > 30) this.logLines.shift();
+      const el = $("#fg-log");
+      if (el) { el.innerHTML = this.logLines.join(""); el.scrollTop = el.scrollHeight; }
     },
   };
   window.GridBattle = GridBattle;   // 导出到 window，便于自动化测试等外部脚本直接读取战场状态
