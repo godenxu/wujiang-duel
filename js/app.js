@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608161333";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608161438";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -56,6 +56,9 @@
   }
   function avatarChar(name) { return name[0]; }
   function hpColor(ratio) { return ratio > 0.5 ? "var(--hp-good)" : ratio > 0.22 ? "var(--hp-mid)" : "var(--hp-low)"; }
+  // 士气条改用独立配色（蓝紫调），与兵力条的绿黄红分开——两条本就代表不同数值，长度自然不同，
+  // 用不同色相直观提醒这是两码事，避免被误读成"同一种条却粗细/长度不一致"的样式 bug
+  function moraleColor(ratio) { return ratio > 0.5 ? "#4fc3f7" : ratio > 0.22 ? "#7e57c2" : "#5c4a8a"; }
 
   /* 六维评级：SS≥100 S≥95 A≥90 B≥80 C≥70 D≥60 E<60 */
   function rateLetter(v) {
@@ -3490,6 +3493,7 @@
         skActive: (Skill.ACTIVE_WAR_TYPES.has(skType) && skType !== "volley") ? skType : null,
         skCd: 0, skCdMax: this.warCD(g),
         alive: true, acted: false, moved: false, standDef: false,
+        kills: 0, dmgDealt: 0,      // 战绩统计，供终局战报评头功用
       };
     },
     // 被动将魂：融入攻防结算的乘区（design 6.1，网格化版）
@@ -3542,7 +3546,7 @@
       this.logLines = [];
       this.myOrders = this.calcOrders(this.mine); this.foeOrders = this.calcOrders(this.foes);
       this.orderMode = null;
-      this.selectedUnit = null; this.selPhase = null; this.actionMode = "attack"; this.deploySel = null;
+      this.selectedUnit = null; this.selPhase = null; this.actionMode = null; this.deploySel = null; this.matchupOpen = false;
       this.busy = false;
       showScreen("fieldgrid");
       this.renderDeploy();
@@ -3564,13 +3568,19 @@
       const arr = (side === "my" ? this.myUnits : this.foeUnits).filter(u => u.alive);
       return arr.length ? Math.round(arr.reduce((s, u) => s + u.morale, 0) / arr.length) : 0;
     },
-    // 士气增减的唯一入口：跌至 0 即视为该部气丧胆寒、不战自溃（与兵力耗尽同为"溃退"的两条独立触因）
+    // 士气增减的唯一入口：跌至 0 即视为该部气丧胆寒、不战自溃（与兵力耗尽同为"溃退"的两条独立触因）；
+    // 顺带同步该部士气条，覆盖军令/战法/溃退连锁等所有会改动士气的场景，不必逐处手动补刷新
     dropMorale(u, amt) {
       if (!u.alive) return;
       u.morale = Math.max(0, u.morale - amt);
+      if (this.phase === "battle") this.syncUnitDom(u);
       if (u.morale <= 0) this.routUnit(u, "士气涣散、军心崩溃");
     },
-    gainMorale(u, amt) { if (u.alive) u.morale = Math.min(100, u.morale + amt); },
+    gainMorale(u, amt) {
+      if (!u.alive) return;
+      u.morale = Math.min(100, u.morale + amt);
+      if (this.phase === "battle") this.syncUnitDom(u);
+    },
     // 共用 BFS：同时算出可达格代价表与来路（parent），reachable()/findPath() 各取所需
     _bfsReach(unit) {
       const cost = { [unit.r + "," + unit.c]: 0 };
@@ -3660,6 +3670,24 @@
       att.r = sr; att.c = sc;
       return res;
     },
+    // 单位兵力/士气条与顶部 VS 条/对阵情况的即时同步：命中瞬间直接改这几处 DOM 的行内样式/文字，
+    // 不等这一整轮攻击（含夹击的每一次出手）全部结束后才靠下一次整块 renderBattle 去刷新
+    syncUnitDom(u) {
+      const root = $("#fg-content");
+      const cell = root && root.querySelector(`.fg-cell[data-r="${u.r}"][data-c="${u.c}"]`);
+      if (!cell) return;
+      const hpI = cell.querySelector(".fg-hpbar i"), morI = cell.querySelector(".fg-morbar i"), unitEl = cell.querySelector(".fg-unit");
+      const pct = Math.max(0, u.hp / u.hpMax), moralePct = Math.max(0, u.morale / 100);
+      if (hpI) { hpI.style.width = (pct * 100) + "%"; hpI.style.background = hpColor(pct); }
+      if (morI) { morI.style.width = (moralePct * 100) + "%"; morI.style.background = moraleColor(moralePct); }
+      if (unitEl) unitEl.title = `${u.g.name}　${this.FORMS[u.form].n}　兵力 ${Math.max(0, Math.round(u.hp))}/${u.hpMax}　士气 ${Math.round(u.morale)}`;
+    },
+    syncTopBars() {
+      const root = $("#fg-content"); if (!root) return;
+      const vs = root.querySelector(".fg-area-vsbar"); if (vs) vs.innerHTML = this.vsbarHtml();
+      const mu = root.querySelector(".fg-area-matchup"); if (mu) mu.innerHTML = this.matchupAreaHtml();
+      this.bindMatchupToggle(root);
+    },
     // 攻击画面感：挥砍/受创闪动、暴击全屏微闪、伤害数字浮现于目标格，全程配以音效——先播完这段短促演出，
     // 再交回调用方去做真正的整块重绘（renderBattle），避免动画节点被同一帧的 innerHTML 重写瞬间冲掉
     async playAttackFx(att, def, res) {
@@ -3679,6 +3707,9 @@
         defCell.appendChild(num);
         setTimeout(() => num.remove(), 850);
       }
+      // 命中的这一刻就把兵力/士气条与顶部总量一并刷新，而不是等整套攻击（含夹击逐次出手）全部播完
+      this.syncUnitDom(def);
+      this.syncTopBars();
       await this.uiPause(280);
       if (attCell) attCell.classList.remove("fg-atk-anim");
       if (defCell) defCell.classList.remove("fg-hit-flash");
@@ -3688,16 +3719,18 @@
       if (this.TERRAINS[this.tiles[att.r][att.c]].noAtk) { toast("半渡之际，不可出战！"); return; }
       const res = this.computeCombat(att, def, flankers);
       def.hp = Math.max(0, def.hp - res.dmg);
+      att.dmgDealt = (att.dmgDealt || 0) + res.dmg;
       this.log(`⚔️ ${att.g.name} 攻击 ${def.g.name}${flankers ? "（夹击）" : ""}，造成 ${res.dmg} 点伤害${res.crit ? " 💥暴击！" : ""}${def.hp <= 0 ? "，一举击溃！" : ""}`);
       await this.playAttackFx(att, def, res);
-      if (def.hp <= 0) this.routUnit(def);
+      if (def.hp <= 0) { att.kills = (att.kills || 0) + 1; this.routUnit(def); }
       if (def.hp > 0 && !att.ranged && !this.TERRAINS[this.tiles[def.r][def.c]].noAtk) {
         const cres = this.computeCombat(def, att, 0);
         const counterDmg = Math.round(cres.dmg * 0.5);
         att.hp = Math.max(0, att.hp - counterDmg);
+        def.dmgDealt = (def.dmgDealt || 0) + counterDmg;
         this.log(`↩️ ${def.g.name} 奋力反击${cres.crit ? " 💥暴击" : ""}，造成 ${counterDmg} 点伤害${att.hp <= 0 ? "，反遭击溃！" : ""}`);
         await this.playAttackFx(def, att, { dmg: counterDmg, crit: cres.crit });
-        if (att.hp <= 0) this.routUnit(att);
+        if (att.hp <= 0) { def.kills = (def.kills || 0) + 1; this.routUnit(att); }
       }
     },
     // 夹击：主攻手 + 所有已就位（相邻目标、未行动）的同袍依次出手，各自独立结算伤害/反击，
@@ -3792,30 +3825,38 @@
         if (target) {
           const dmg = Math.round(this.computeCombat(u, target).dmg * 1.6);
           target.hp = Math.max(0, target.hp - dmg);
+          u.dmgDealt = (u.dmgDealt || 0) + dmg;
           AudioSystem.sfx.swing(); AudioSystem.sfx.hit();
+          this.syncUnitDom(target); this.syncTopBars();
           msg = `${u.g.name}【${sk.n}】陷阵突击，斩敌 ${target.g.name} 部 ${dmg} 点！`;
-          if (target.hp <= 0) this.routUnit(target);
+          if (target.hp <= 0) { u.kills = (u.kills || 0) + 1; this.routUnit(target); }
         } else msg = `${u.g.name}【${sk.n}】未寻得近旁可突击的目标。`;
       } else if (type === "school-ti") {
         const heal = Math.round(u.hpMax * 0.18); u.hp = Math.min(u.hpMax, u.hp + heal);
+        this.syncUnitDom(u); this.syncTopBars();
         msg = `${u.g.name}【${sk.n}】游走整军，自部兵力回复 ${heal}！`;
       } else if (type === "school-mei") {
         allies.forEach(a => this.gainMorale(a, 8));
+        this.syncTopBars();
         msg = `${u.g.name}【${sk.n}】振臂高呼，全军士气 +8！`;
       } else if (type === "school-zheng") {
         const heal = Math.round(u.hpMax * 0.15); u.hp = Math.min(u.hpMax, u.hp + heal);
+        this.syncUnitDom(u); this.syncTopBars();
         msg = `${u.g.name}【${sk.n}】调度粮秣，自部兵力回复 ${heal}！`;
       } else if (type === "awe" || type === "discord" || type === "roar") {
         enemies.forEach(e => this.dropMorale(e, 10));
+        this.syncTopBars();
         msg = `⭐ ${u.g.name}【${sk.n}】威慑当面，敌军士气 -10！`;
       } else if (type === "infiltrate") {
         const target = enemies[randInt(0, enemies.length - 1)];
         if (target) {
           const dmg = randInt(700, 1200);
           target.hp = Math.max(0, target.hp - dmg);
+          u.dmgDealt = (u.dmgDealt || 0) + dmg;
           AudioSystem.sfx.swing(); AudioSystem.sfx.hit();
+          this.syncUnitDom(target); this.syncTopBars();
           msg = `⭐ ${u.g.name}【${sk.n}】潜行突袭，${target.g.name} 部折损 ${dmg}！`;
-          if (target.hp <= 0) this.routUnit(target);
+          if (target.hp <= 0) { u.kills = (u.kills || 0) + 1; this.routUnit(target); }
         } else msg = `⭐ ${u.g.name}【${sk.n}】敌军已无可袭之部。`;
       } else if (type === "dualblade") {
         const target = near[0];
@@ -3844,24 +3885,52 @@
       }
       if (this.phase === "battle") this.renderBattle(); else this.renderDeploy();
     },
-    tryFireAttack(target) {
+    // 火攻的燃烧演出：火苗图标升起 + 目标格短促橙红闪动，与近战攻击的挥砍/受击一样先播完这段再回收
+    async playFireFx(target, dmg) {
+      const root = $("#fg-content");
+      const cell = root && root.querySelector(`.fg-cell[data-r="${target.r}"][data-c="${target.c}"]`);
+      const board = root && root.querySelector(".fg-board");
+      AudioSystem.sfx.hit();
+      if (board) board.classList.add("fg-fireflash");
+      if (cell) {
+        cell.classList.add("fg-fire-anim");
+        const flame = document.createElement("div");
+        flame.className = "fg-fire-icon"; flame.textContent = "🔥";
+        cell.appendChild(flame);
+        const num = document.createElement("div");
+        num.className = "fg-dmgnum fire"; num.textContent = "-" + dmg;
+        cell.appendChild(num);
+        setTimeout(() => { flame.remove(); num.remove(); }, 900);
+      }
+      this.syncUnitDom(target);
+      this.syncTopBars();
+      await this.uiPause(260);
+      if (cell) cell.classList.remove("fg-fire-anim");
+      if (board) board.classList.remove("fg-fireflash");
+      await this.uiPause(200);
+    },
+    async tryFireAttack(target) {
       if (this.myOrders <= 0) { toast("军令已用尽！"); this.orderMode = null; this.renderBattle(); return; }
       const terr = this.tiles[target.r][target.c];
       const master = this.armyHasFiremaster("my");
       if (terr !== "hill" && !master) { toast("火攻须在山道地形，或军中有精通天时的谋士"); return; }
+      if (this.busy) return;
+      this.busy = true;
       this.myOrders--; this.orderMode = null;
       const dmg = randInt(400, 800) * (master ? 2 : 1);
       target.hp = Math.max(0, target.hp - dmg);
-      AudioSystem.sfx.hit();
       this.log(`🔥 火攻！${master ? "⭐ 借东风，风向骤转、火势倍增——" : ""}${target.g.name} 部折损 ${dmg}（军令余 ${this.myOrders}）！`);
+      await this.playFireFx(target, dmg);
       if (target.hp <= 0) this.routUnit(target);
+      this.busy = false;
       if (!this.checkBattleEnd()) this.renderBattle();
     },
 
     /* ---------- 我方回合：选将/移动/行动 ---------- */
     selectUnit(u) {
       if (u.acted || u.side !== "my" || this.turnSide !== "my") return;
-      this.selectedUnit = u; this.selPhase = "move"; this.actionMode = "attack";
+      // 不再预设「攻击」为默认行动类型——玩家须先在环形菜单里点明确的行动方式，见 onCellClick 的把关
+      this.selectedUnit = u; this.selPhase = "move"; this.actionMode = null;
       this.renderBattle();
     },
     moveTo(r, c) {
@@ -3908,7 +3977,8 @@
       }
       if (this.selPhase === "act") {
         if (u === this.selectedUnit) return;
-        if (u && u.side === "foe") {
+        // 必须先在环形菜单里选定行动类型（单独攻击/夹击/单挑）才认目标点击，不再有默认"攻击"兜底
+        if (u && u.side === "foe" && this.actionMode) {
           const range = this.selectedUnit.ranged ? 2 : 1;
           const d = this.manhattan(this.selectedUnit, u);
           if (d <= range && (this.actionMode !== "challenge" || d === 1)) { this.doTargetAction(u); return; }
@@ -3943,8 +4013,8 @@
             const t = targets[randInt(0, targets.length - 1)];
             const dmg = randInt(400, 800) * (master ? 2 : 1);
             t.hp = Math.max(0, t.hp - dmg);
-            AudioSystem.sfx.hit();
             this.log(`🔥 敌军火攻！${t.g.name} 部折损 ${dmg}（敌令余 ${this.foeOrders}）！`);
+            await this.playFireFx(t, dmg);
             if (t.hp <= 0) this.routUnit(t);
             if (this.checkBattleEnd()) return;
           }
@@ -4049,14 +4119,29 @@
       if (!this.foeUnits.some(u => u.alive)) { this.finish(true, "敌军全部溃退、全线崩溃"); return true; }
       return false;
     },
+    // 终局战报：在原有胜负/阵亡/均气之外，补上此役头功、双方折损/留存武将点名，让战报更像一份可读的战报
+    // 而不是三行数字——kills/dmgDealt 由 resolveAttack/useActiveSkill/tryFireAttack 全程累加
     finish(won, reason) {
       this.phase = "done";
+      const fallenMy = this.myUnits.filter(u => !u.alive).map(u => u.g.name);
+      const fallenFoe = this.foeUnits.filter(u => !u.alive).map(u => u.g.name);
+      const mvp = [...this.myUnits, ...this.foeUnits]
+        .filter(u => (u.kills || 0) > 0 || (u.dmgDealt || 0) > 0)
+        .sort((a, b) => (b.kills || 0) - (a.kills || 0) || (b.dmgDealt || 0) - (a.dmgDealt || 0))[0];
+      const topSurvivors = arr => arr.filter(u => u.alive).sort((a, b) => b.hp - a.hp).slice(0, 3)
+        .map(u => `${u.g.name}(兵${Math.max(0, Math.round(u.hp)).toLocaleString()}·气${Math.round(u.morale)})`).join("、");
+      const mySurvHtml = topSurvivors(this.myUnits);
       openOverlay(`<div class="result-card">
         <h1>${won ? "🏆 野战大捷" : "💀 兵败如山"}</h1>
         <div class="wdesc">${reason}<br><br>
-          💀 阵亡：我方 ${this.myUnits.filter(u => !u.alive).length}/${this.myUnits.length} 将 · 敌方 ${this.foeUnits.filter(u => !u.alive).length}/${this.foeUnits.length} 将<br>
+          ⚔️ 鏖战 ${this.turnN} 回合<br>
+          💀 阵亡：我方 ${fallenMy.length}/${this.myUnits.length} 将 · 敌方 ${fallenFoe.length}/${this.foeUnits.length} 将<br>
           💪 均士气：我 ${this.avgMorale("my")} · 敌 ${this.avgMorale("foe")}<br>
-          ⚔️ 鏖战 ${this.turnN} 回合</div>
+          ${mvp ? `🎖️ 此役头功：${mvp.g.name}（${mvp.side === "my" ? "我方" : "敌方"}，斩获 ${mvp.kills || 0} 部・伤敌 ${Math.round(mvp.dmgDealt || 0).toLocaleString()}）<br>` : ""}
+          ${fallenMy.length ? `⚰️ 我方折损：${fallenMy.join("、")}<br>` : ""}
+          ${fallenFoe.length ? `⚰️ 敌方折损：${fallenFoe.join("、")}<br>` : ""}
+          ${mySurvHtml ? `🛡️ 我方留存主力：${mySurvHtml}<br>` : ""}
+        </div>
         <div class="btns">
           <button class="btn-primary" id="fg-again">再战一场</button>
           <button class="btn-ghost" id="fg-home">返回菜单</button>
@@ -4091,7 +4176,7 @@
               <span class="fg-name">${u.g.name}</span>
               ${skBadge}
               <span class="fg-hpbar"><i style="width:${pct * 100}%;background:${hpColor(pct)}"></i></span>
-              <span class="fg-morbar"><i style="width:${moralePct * 100}%;background:${hpColor(moralePct)}"></i></span>
+              <span class="fg-morbar"><i style="width:${moralePct * 100}%;background:${moraleColor(moralePct)}"></i></span>
             </div>`;
           } else {
             token = `<span class="fg-terrain-icon">${this.TERRAINS[terr].icon}</span>`;
@@ -4106,13 +4191,13 @@
       const tplName = this.TERRAIN_TPL_NAME[this.terrainTpl];
       const root = $("#fg-content");
       root.innerHTML = `
-        <div class="section-hint">棋盘对垒：方格步阵，一将一格。阵形按将而定——点棋子左上角图标可切换该将的阵形，备好后擂鼓开战</div>
+        <div class="section-hint">棋盘对垒：方格步阵，一将一格。阵形按将而定——点棋子左上角图标可切换该将的阵形，备好后出击</div>
         <div class="fb-banner">🗺️ 战场·${tplName} · 军令 <b>${this.myOrders}</b> 道</div>
         <div class="fg-legend">${Object.entries(this.TERRAINS).map(([k, t]) => `<span class="fg-legend-item"><i class="fg-t-${k}"></i>${t.icon}${t.n}</span>`).join("")}</div>
         <div class="fg-legend">${Object.entries(this.FORMS).map(([k, f]) => `<span class="fg-legend-item">${f.icon}${f.n}</span>`).join("")}</div>
         <div class="fg-board-wrap"><div class="fg-board" style="grid-template-columns:repeat(${this.COLS},1fr)">${this.boardCellsHtml()}</div></div>
         <div class="section-hint">🚩 我营在下，🚩 敌营在上；点选我方武将再点空格可调整初始站位</div>
-        <div class="cup-start-btns" style="margin-top:10px"><button class="cup-go primary" id="fg-go">🥁 擂鼓 · 两军对圆</button></div>`;
+        <div class="cup-start-btns" style="margin-top:10px"><button class="cup-go primary" id="fg-go">⚔️ 全军出击</button></div>`;
       const formKeys = Object.keys(this.FORMS);
       $$(".fg-cell", root).forEach(cell => cell.onclick = (e) => {
         const r = +cell.dataset.r, c = +cell.dataset.c;
@@ -4130,54 +4215,15 @@
       });
       $("#fg-go", root).onclick = () => this.startBattle();
     },
-    renderBattle() {
-      const u = this.selectedUnit;
-      let reachSet = new Set(), enemySet = new Set();
-      if (u && this.selPhase === "move") {
-        this.reachable(u).forEach(([r, c]) => reachSet.add(r + "," + c));
-        reachSet.add(u.r + "," + u.c);
-      }
-      if (u && this.selPhase === "act") {
-        const range = u.ranged ? 2 : 1;
-        this.foeUnits.filter(e => e.alive && this.manhattan(u, e) <= range && (this.actionMode !== "challenge" || this.manhattan(u, e) === 1))
-          .forEach(e => enemySet.add(e.r + "," + e.c));
-      }
-      // 行动菜单浮在该武将棋子正周围、按钮环形分布一圈，而非固定贴在屏幕下方
-      let floatMenu = "";
-      if (u && this.selPhase === "act") {
-        const hasTargets = enemySet.size > 0;
-        const sk = u.skActive ? Skill.of(u.g) : null;
-        const anyFlank = hasTargets && this.foeUnits.some(e => enemySet.has(e.r + "," + e.c) && this.eligibleFlankers(u, e).length > 0);
-        const leftPct = Math.min(90, Math.max(10, (u.c + 0.5) / this.COLS * 100));
-        const topPct = Math.min(86, Math.max(14, (u.r + 0.5) / this.ROWS * 100));
-        const btns = [];
-        if (hasTargets) btns.push({ id: "fg-mode-atk", cls: this.actionMode === "attack" ? "active" : "", title: "单独攻击", icon: "🗡️" });
-        if (anyFlank) btns.push({ id: "fg-mode-flank", cls: this.actionMode === "flank" ? "active" : "", title: "夹击（拉上就位的同袍一起出手）", icon: "⚔️" });
-        if (hasTargets) btns.push({ id: "fg-mode-chg", cls: this.actionMode === "challenge" ? "active" : "", title: "单挑", icon: "🤺" });
-        if (sk) btns.push(u.skCd <= 0
-          ? { id: "fg-skill-btn", cls: "", title: sk.n, icon: "🌟" }
-          : { id: "", cls: "dim", tag: "span", title: `${sk.n}冷却${u.skCd}`, icon: "🌟" });
-        btns.push({ id: "fg-standdown", cls: "", title: `待命${u.moved ? "" : "（+15%防）"}`, icon: "🛡️" });
-        const R = 48;
-        const btnsHtml = btns.map((b, i) => {
-          const ang = (-90 + i * (360 / btns.length)) * Math.PI / 180;
-          const dx = (Math.cos(ang) * R).toFixed(1), dy = (Math.sin(ang) * R).toFixed(1);
-          const tag = b.tag || "button";
-          return `<${tag} class="fg-rbtn ring ${b.cls}" ${b.id ? `id="${b.id}"` : ""} style="transform:translate(calc(-50% + ${dx}px),calc(-50% + ${dy}px))" title="${b.title}">${b.icon}</${tag}>`;
-        }).join("");
-        floatMenu = `<div class="fg-radial" style="left:${leftPct}%;top:${topPct}%">
-          <div class="fg-radial-info">${u.g.name}　兵${Math.max(0, Math.round(u.hp))}/${u.hpMax}　气${Math.round(u.morale)}</div>
-          ${btnsHtml}
-          ${!hasTargets ? `<div class="fg-radial-hint">附近无目标，仅可待命</div>` : ""}
-        </div>`;
-      }
+    // 顶部 VS 兵力条：两条从中线向外撑满，兵力越少、外沿越往中间方向收缩——一眼看出此消彼长；
+    // 拆成独立方法是为了让 syncTopBars() 能在命中瞬间原地刷新这一小块，不必牵动整块棋盘重绘
+    vsbarHtml() {
       const myTotalHp = this.totalHp("my"), foeTotalHp = this.totalHp("foe");
       const myMax = this.myUnits.reduce((s, x) => s + x.hpMax, 0) || 1;
       const foeMax = this.foeUnits.reduce((s, x) => s + x.hpMax, 0) || 1;
       const myPct = Math.max(0, Math.min(100, myTotalHp / myMax * 100));
       const foePct = Math.max(0, Math.min(100, foeTotalHp / foeMax * 100));
-      // VS 兵力条：两条从中线向外撑满，兵力越少、外沿越往中间方向收缩——一眼看出此消彼长
-      const vsbarHtml = `<div class="fg-vsbar">
+      return `<div class="fg-vsbar">
         <div class="fg-vsbar-side"><b>我军</b><span>${myTotalHp.toLocaleString()}</span></div>
         <div class="fg-vsbar-track">
           <div class="fg-vsbar-half my"><i style="width:${myPct}%"></i></div>
@@ -4186,15 +4232,94 @@
         </div>
         <div class="fg-vsbar-side"><b>敌军</b><span>${foeTotalHp.toLocaleString()}</span></div>
       </div>`;
+    },
+    // 对阵基本情况一行 + 点开后的逐将详细对比——同样拆出独立方法供 syncTopBars() 复用
+    matchupAreaHtml() {
       const myAlive = this.myUnits.filter(x => x.alive).length, foeAlive = this.foeUnits.filter(x => x.alive).length;
-      const matchupHtml = `<div class="fb-banner fg-banner-compact">${this.turnSide === "my" ? "🟢 我方回合" : "🔴 敌方回合"} · 第 ${this.turnN} 回合${this.formTurnsLeft > 0 ? `（阵形+${this.formTurnsLeft}）` : ""}
+      return `<div class="fb-banner fg-banner-compact">${this.turnSide === "my" ? "🟢 我方回合" : "🔴 敌方回合"} · 第 ${this.turnN} 回合${this.formTurnsLeft > 0 ? `（阵形+${this.formTurnsLeft}）` : ""}
           ${this.orderMode === "fire" ? "<b>· 请点选要火攻的敌方单位</b>" : ""}
         </div>
-        <div class="fg-matchup">
+        <div class="fg-matchup" id="fg-matchup-toggle">
           <span>存活 我${myAlive}/${this.myUnits.length}・敌${foeAlive}/${this.foeUnits.length}</span>
           <span>均气 我${this.avgMorale("my")}・敌${this.avgMorale("foe")}</span>
           <span>军令 我${this.myOrders}・敌${this.foeOrders}</span>
-        </div>`;
+          <span class="fg-matchup-fold">${this.matchupOpen ? "▴ 收起详情" : "▾ 查看详情"}</span>
+        </div>
+        ${this.matchupDetailHtml()}`;
+    },
+    // 逐将对比明细：点击「查看详情」展开，双栏分列我方/敌方每员武将的兵力/士气/攻/防
+    matchupDetailHtml() {
+      if (!this.matchupOpen) return "";
+      const row = u => `<div class="fg-md-row${u.alive ? "" : " dead"}">
+        <span class="fg-md-name">${u.g.name}</span>
+        <span class="fg-md-form">${this.FORMS[u.form].icon}</span>
+        <span class="fg-md-hp">${u.alive ? Math.max(0, Math.round(u.hp)).toLocaleString() : "阵亡"}${u.alive ? "/" + u.hpMax.toLocaleString() : ""}</span>
+        <span class="fg-md-mor">${u.alive ? Math.round(u.morale) : "-"}</span>
+        <span class="fg-md-atk">${Math.round(u.atk)}</span>
+        <span class="fg-md-def">${Math.round(u.def)}</span>
+      </div>`;
+      const col = (units, label) => `<div class="fg-md-col">
+        <div class="fg-md-head"><span>${label}</span><span class="fg-md-hint">兵力·士气·攻·防</span></div>
+        ${units.slice().sort((a, b) => (b.alive - a.alive) || b.hp - a.hp).map(row).join("")}
+      </div>`;
+      return `<div class="fg-matchup-detail">${col(this.myUnits, "我方")}${col(this.foeUnits, "敌方")}</div>`;
+    },
+    // 对比区域的展开/收起点击绑定，供整块渲染与 syncTopBars() 局部刷新共用一份逻辑
+    bindMatchupToggle(root) {
+      const t = $("#fg-matchup-toggle", root);
+      if (t) t.onclick = e => { e.stopPropagation(); this.matchupOpen = !this.matchupOpen; this.syncTopBars(); };
+    },
+    renderBattle() {
+      const u = this.selectedUnit;
+      let reachSet = new Set(), enemySet = new Set();
+      if (u && this.selPhase === "move") {
+        this.reachable(u).forEach(([r, c]) => reachSet.add(r + "," + c));
+        reachSet.add(u.r + "," + u.c);
+      }
+      // 目标高亮要等玩家在环形菜单里选定行动类型后才出现，避免"默认攻击"式的隐性预设
+      if (u && this.selPhase === "act" && this.actionMode) {
+        const range = u.ranged ? 2 : 1;
+        this.foeUnits.filter(e => e.alive && this.manhattan(u, e) <= range && (this.actionMode !== "challenge" || this.manhattan(u, e) === 1))
+          .forEach(e => enemySet.add(e.r + "," + e.c));
+      }
+      // 行动菜单浮在该武将棋子正周围、按钮环形分布一圈；一旦选定行动类型（点了🗡️/⚔️/🤺）立即收起按钮，
+      // 只留一枚不挡视线的小提示条，免得菜单本身盖住紧接着要点的目标
+      let floatMenu = "";
+      if (u && this.selPhase === "act") {
+        const leftPct = Math.min(90, Math.max(10, (u.c + 0.5) / this.COLS * 100));
+        const topPct = Math.min(86, Math.max(14, (u.r + 0.5) / this.ROWS * 100));
+        if (this.actionMode) {
+          const modeLabel = { attack: "单独攻击", flank: "夹击", challenge: "单挑" }[this.actionMode] || "";
+          floatMenu = `<div class="fg-radial-tag" style="left:${leftPct}%;top:${topPct}%">${u.g.name}·${modeLabel}中，请点选目标</div>`;
+        } else {
+          const range = u.ranged ? 2 : 1;
+          const inRange = this.foeUnits.filter(e => e.alive && this.manhattan(u, e) <= range);
+          const hasTargets = inRange.length > 0;
+          const hasChallenge = inRange.some(e => this.manhattan(u, e) === 1);
+          const anyFlank = inRange.some(e => this.eligibleFlankers(u, e).length > 0);
+          const sk = u.skActive ? Skill.of(u.g) : null;
+          const btns = [];
+          if (hasTargets) btns.push({ id: "fg-mode-atk", cls: "", title: "单独攻击", icon: "🗡️" });
+          if (anyFlank) btns.push({ id: "fg-mode-flank", cls: "", title: "夹击（拉上就位的同袍一起出手）", icon: "⚔️" });
+          if (hasChallenge) btns.push({ id: "fg-mode-chg", cls: "", title: "单挑", icon: "🤺" });
+          if (sk) btns.push(u.skCd <= 0
+            ? { id: "fg-skill-btn", cls: "", title: sk.n, icon: "🌟" }
+            : { id: "", cls: "dim", tag: "span", title: `${sk.n}冷却${u.skCd}`, icon: "🌟" });
+          btns.push({ id: "fg-standdown", cls: "", title: `待命${u.moved ? "" : "（+15%防）"}`, icon: "🛡️" });
+          const R = 48;
+          const btnsHtml = btns.map((b, i) => {
+            const ang = (-90 + i * (360 / btns.length)) * Math.PI / 180;
+            const dx = (Math.cos(ang) * R).toFixed(1), dy = (Math.sin(ang) * R).toFixed(1);
+            const tag = b.tag || "button";
+            return `<${tag} class="fg-rbtn ring ${b.cls}" ${b.id ? `id="${b.id}"` : ""} style="transform:translate(calc(-50% + ${dx}px),calc(-50% + ${dy}px))" title="${b.title}">${b.icon}</${tag}>`;
+          }).join("");
+          floatMenu = `<div class="fg-radial" style="left:${leftPct}%;top:${topPct}%">
+            <div class="fg-radial-info">${u.g.name}　兵${Math.max(0, Math.round(u.hp))}/${u.hpMax}　气${Math.round(u.morale)}</div>
+            ${btnsHtml}
+            ${!hasTargets ? `<div class="fg-radial-hint">附近无目标，仅可待命</div>` : ""}
+          </div>`;
+        }
+      }
       // 底部只留一行军令按钮，靠右排列；「军令/敌令」数已并入上方对阵情况，这里不再重复
       const orderToolbar = `<div class="fb-orders fg-orders-row">
         <button class="fb-ord" id="fg-drum" ${this.myOrders > 0 ? "" : "disabled"}>🥁 擂鼓</button>
@@ -4204,18 +4329,14 @@
       const root = $("#fg-content");
       root.innerHTML = `
         <div class="fg-layout">
-          <div class="fg-area-vsbar">${vsbarHtml}</div>
-          <div class="fg-area-matchup">${matchupHtml}</div>
+          <div class="fg-area-vsbar">${this.vsbarHtml()}</div>
+          <div class="fg-area-matchup">${this.matchupAreaHtml()}</div>
           <div class="fg-area-log"><div class="fb-log fg-log-compact" id="fg-log">${(this.logLines || []).join("")}</div></div>
           <div class="fg-area-board">
-            <div class="fg-board-wrap" id="fg-board-wrap">
+            <div class="fg-board-wrap zoomable" id="fg-board-wrap">
               <div class="fg-zoom-layer">
                 <div class="fg-board" style="grid-template-columns:repeat(${this.COLS},1fr)">${this.boardCellsHtml({ reachSet, enemySet })}</div>
                 ${floatMenu}
-              </div>
-              <div class="fg-zoom-ctl">
-                <button id="fg-zoom-in" type="button">＋</button>
-                <button id="fg-zoom-out" type="button">－</button>
               </div>
             </div>
           </div>
@@ -4252,6 +4373,7 @@
       const drum = $("#fg-drum", root); if (drum) drum.onclick = () => this.useOrder("drum");
       const fire = $("#fg-fire", root); if (fire) fire.onclick = () => this.useOrder("fire");
       this.bindGridZoom($("#fg-board-wrap", root));
+      this.bindMatchupToggle(root);
       // 点击棋盘/浮动菜单以外的区域（顶部对比条、战报、空白处等）：视为放弃当前武将的行动选择
       root.onclick = e => {
         if (!this.selectedUnit || this.busy) return;
@@ -4265,11 +4387,13 @@
       const layer = box.querySelector(".fg-zoom-layer");
       if (layer) layer.style.transform = `translate(${GridZoom.x}px,${GridZoom.y}px) scale(${GridZoom.scale})`;
     },
+    // 边界收紧到"内容边缘贴齐可视区边缘就不再多让"——去掉旧版留的一截余量，缩放/拖动到头即止，
+    // 不会把地图挪出可视范围留出空白
     clampGridZoomState(box) {
       GridZoom.scale = Math.min(3, Math.max(1, GridZoom.scale));
       const rect = box.getBoundingClientRect();
-      const maxX = (GridZoom.scale - 1) * rect.width / 2 + 30;
-      const maxY = (GridZoom.scale - 1) * rect.height / 2 + 30;
+      const maxX = (GridZoom.scale - 1) * rect.width / 2;
+      const maxY = (GridZoom.scale - 1) * rect.height / 2;
       GridZoom.x = Math.min(maxX, Math.max(-maxX, GridZoom.x));
       GridZoom.y = Math.min(maxY, Math.max(-maxY, GridZoom.y));
     },
@@ -4310,12 +4434,17 @@
         }
       };
       box.onpointerdown = e => {
-        if (e.target.closest(".fg-zoom-ctl")) return;
         pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
         document.addEventListener("pointermove", onMove);
         document.addEventListener("pointerup", onUp);
         document.addEventListener("pointercancel", onUp);
-        if (pointers.size === 1) { dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY; }
+        if (pointers.size === 1) {
+          // 未放大时（scale=1）边界钳制已把可平移范围锁死为 0（见 clampGridZoomState），平移本就无意义——
+          // 这时不进入"拖拽"追踪（dragging 保持 false），单指点击就是纯粹的点击，不会因合成事件的一丁点
+          // 抖动被误判成"刚拖拽过"而把紧接着的 click 拦掉（曾导致点选目标偶发失灵）；但 move/up 监听照常
+          // 挂上摘下，pointerup 仍能正常收尾，不会把这根手指残留在 pointers 表里搅乱后续的双指捏合判定
+          if (GridZoom.scale > 1.001) { dragging = true; moved = false; lastX = e.clientX; lastY = e.clientY; }
+        }
         else if (pointers.size === 2) {
           dragging = false;
           const pts = [...pointers.values()];
@@ -4330,9 +4459,6 @@
         this.applyGridZoom(box);
       };
       box.addEventListener("click", e => { if (box._justDragged) { e.stopPropagation(); e.preventDefault(); } }, true);
-      const zoomStep = d => { GridZoom.scale += d; if (GridZoom.scale <= 1.001) { GridZoom.x = 0; GridZoom.y = 0; } this.clampGridZoomState(box); this.applyGridZoom(box); };
-      const inBtn = $("#fg-zoom-in"); if (inBtn) inBtn.onclick = () => zoomStep(0.4);
-      const outBtn = $("#fg-zoom-out"); if (outBtn) outBtn.onclick = () => zoomStep(-0.4);
     },
     // 最新一条放最下（而非旧版顶插），阅读顺序与聊天记录一致；每次写入顺带把日志滚到底部
     log(msg) {

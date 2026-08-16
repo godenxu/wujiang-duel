@@ -1447,29 +1447,14 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 }
 
 /* ---------- 野战演武 · 棋盘对垒（GridBattle）：方格棋盘、单位徽标、可达/可攻高亮 ----------
-   整体针对手机竖屏做了紧凑化：banner/军令条/日志的内边距与行高普遍收窄；棋盘尺寸取
-   "占满容器宽度/绝对像素上限/占满可视高度" 三者中最小值，宽屏折叠屏展开后棋盘会明显放大，
-   窄屏手机上仍按屏幕高度封顶，不会把其余控件挤出可视区。 */
-#screen-fieldgrid #fg-content { padding-bottom: 4px; }
-/* 整体布局：手机竖屏单列纵向堆叠（对比条→对阵情况→战报→棋盘→军令），
-   宽屏/折叠屏展开后改双栏——棋盘占满左侧宽度，战报移到右侧独立一栏，不留空白 */
-.fg-layout {
-  display: grid; gap: 6px;
-  grid-template-areas: "vsbar" "matchup" "log" "board" "orders";
-}
-.fg-area-vsbar { grid-area: vsbar; }
-.fg-area-matchup { grid-area: matchup; }
-.fg-area-log { grid-area: log; }
-.fg-area-board { grid-area: board; min-width: 0; }
-.fg-area-orders { grid-area: orders; }
-@media (min-width: 700px) {
-  .fg-layout {
-    grid-template-columns: 1fr 300px;
-    grid-template-areas: "vsbar vsbar" "matchup matchup" "board log" "orders orders";
-    align-items: start;
-  }
-  .fg-log-compact { max-height: min(70vh, 640px); font-size: 13px; }
-}
+   整体布局改用 flex 列铺满可视高度：除顶部对比条/对阵情况、战报、底部军令这几处固定大小的区域外，
+   战场地图本身用 flex:1 吃掉全部剩余空间——不论手机竖屏、折叠屏展开、桌面宽屏，规则统一，
+   不再靠固定像素/vh 上限去猜某一类设备该多大。 */
+#screen-fieldgrid #fg-content { padding-bottom: 4px; display: flex; flex-direction: column; flex: 1; min-height: 0; }
+/* 纵向堆叠顺序：对比条→对阵情况（含展开详情）→战报→棋盘（占满剩余空间）→军令，与视线自上而下的阅读顺序一致 */
+.fg-layout { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 6px; }
+.fg-area-vsbar, .fg-area-matchup, .fg-area-log, .fg-area-orders { flex: 0 0 auto; }
+.fg-area-board { flex: 1 1 auto; min-height: 80px; }
 /* 顶部 VS 兵力对比条：两条从中线各自向外撑开，兵力越少、外沿越往中间收缩 */
 .fg-vsbar { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .fg-vsbar-side { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; line-height: 1.2; min-width: 34px; }
@@ -1482,22 +1467,26 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 .fg-vsbar-half.my i { display: block; height: 100%; background: linear-gradient(90deg, #7a1420, var(--cn-red)); }
 .fg-vsbar-half.foe i { display: block; height: 100%; background: linear-gradient(90deg, var(--jp-indigo), #4a5da0); }
 .fg-vsbar-mid { flex: 0 0 auto; width: 26px; text-align: center; font-size: 9.5px; font-weight: 800; opacity: .75; }
-.fg-matchup { display: flex; flex-wrap: wrap; gap: 3px 12px; font-size: 11px; opacity: .85; padding: 2px 10px 4px; }
+.fg-matchup { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 12px; font-size: 11px; opacity: .85; padding: 2px 10px 4px; cursor: pointer; }
+.fg-matchup-fold { margin-left: auto; opacity: .8; white-space: nowrap; }
+/* 点开的逐将详情：双栏（我方/敌方）列出每员武将的兵力/士气/攻/防，阵亡者灰显 */
+.fg-matchup-detail { display: flex; gap: 8px; padding: 2px 10px 6px; font-size: 10.5px; }
+.fg-md-col { flex: 1; min-width: 0; background: rgba(0,0,0,.22); border-radius: 6px; padding: 4px 6px; max-height: 160px; overflow-y: auto; }
+.fg-md-head { display: flex; justify-content: space-between; font-weight: 800; color: var(--cn-gold); opacity: .9; margin-bottom: 2px; }
+.fg-md-hint { font-weight: 400; opacity: .7; font-size: 9.5px; }
+.fg-md-row { display: grid; grid-template-columns: 1.4fr .5fr 1.1fr .6fr .5fr .5fr; gap: 2px; padding: 1.5px 0; opacity: .95; }
+.fg-md-row.dead { opacity: .4; text-decoration: line-through; }
+.fg-md-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fg-board-wrap {
-  position: relative; margin: 6px auto;
-  aspect-ratio: 12 / 9;
-  width: min(100%, 720px, 82vh);
-  overflow: hidden; border-radius: 6px; touch-action: none;
+  position: relative; width: 100%; height: 100%;
+  flex: 1 1 auto; min-height: 0;
+  overflow: hidden; border-radius: 6px;
 }
-@media (min-width: 700px) {
-  .fg-board-wrap { width: 100%; max-width: none; margin: 0; }
-}
+/* 缩放/拖拽手势只在真正接了 bindGridZoom 的战斗棋盘上启用；排兵布阵页共用同一个 .fg-board-wrap 类
+   但没有绑定手势，若也套上 touch-action:none 会在触屏设备上把该区域的默认滚动手势一并封死，
+   导致排兵布阵页在内容超高时无法用手指划到底部的开战按钮——因此单独用 .zoomable 修饰符区分 */
+.fg-board-wrap.zoomable { touch-action: none; }
 .fg-zoom-layer { position: relative; width: 100%; height: 100%; transform-origin: center center; }
-.fg-zoom-ctl { position: absolute; right: 4px; bottom: 4px; display: flex; flex-direction: column; gap: 3px; z-index: 30; }
-.fg-zoom-ctl button {
-  width: 24px; height: 24px; border-radius: 5px; border: 1px solid rgba(212,175,55,.5);
-  background: rgba(10,8,4,.8); color: var(--paper); font-size: 13px; line-height: 1; cursor: pointer;
-}
 .fg-board {
   display: grid; gap: 1.5px; width: 100%; height: 100%;
   background: rgba(0,0,0,.25); border: 1px solid rgba(212,175,55,.35); border-radius: 6px;
@@ -1515,7 +1504,7 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 .fg-t-camp  { background: radial-gradient(circle at 50% 38%, rgba(255,214,140,.35), transparent 62%), linear-gradient(165deg, #a8452f, #7c2f1e); }
 .fg-terrain-icon {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  font-size: 62%; opacity: .4; pointer-events: none; filter: drop-shadow(0 1px 1px rgba(0,0,0,.4));
+  font-size: 92%; opacity: .55; pointer-events: none; filter: drop-shadow(0 1px 1px rgba(0,0,0,.4));
 }
 .fg-cell.fg-reach::after {
   content: ""; position: absolute; inset: 8%; border-radius: 3px;
@@ -1581,13 +1570,21 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 }
 .fg-rbtn.active { background: linear-gradient(135deg, #f0d678, var(--accent)); border-color: transparent; }
 .fg-rbtn.dim { opacity: .45; }
+/* 选定行动类型后，环形按钮整个收起，只留这一枚不挡视线的小标签提示"正在做什么、请点目标" */
+.fg-radial-tag {
+  position: absolute; transform: translate(-50%, -50%); z-index: 20;
+  font-size: 11px; color: var(--paper); white-space: nowrap;
+  background: rgba(10,8,4,.92); border: 1px solid rgba(212,175,55,.55); border-radius: 8px;
+  padding: 4px 9px; box-shadow: 0 2px 8px rgba(0,0,0,.5); pointer-events: none;
+}
 .fb-ord.active { background: linear-gradient(135deg, #f0d678, var(--accent)); color: #1a1410; border-color: transparent; }
 /* banner/日志：比旧版 FieldBattle 共用的 .fb-banner/.fb-log 更紧凑一档 */
 .fg-banner-compact { padding: 6px 10px 2px; font-size: 12.5px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 /* 军令条只留一行，靠右排列，按钮进一步放大方便点按 */
 #screen-fieldgrid .fg-orders-row { margin: 4px 0; padding: 6px 8px; display: flex; flex-wrap: nowrap; justify-content: flex-end; gap: 8px; }
 #screen-fieldgrid .fg-orders-row .fb-ord { padding: 10px 16px; font-size: 15px; white-space: nowrap; }
-.fg-log-compact { max-height: 72px; margin-top: 0; font-size: 12.5px; overflow-y: auto; }
+/* 战报满宽横条，挪到对比区与棋盘之间；高度按 3~5 行文字估算，超出部分滚动查看 */
+.fg-log-compact { max-height: 84px; margin-top: 0; font-size: 12.5px; overflow-y: auto; }
 
 /* 攻击画面感：挥砍前倾、受击闪红+微震、暴击全屏亮闪、伤害数字浮现于目标格 */
 @keyframes fgLunge { 0%,100%{ transform: translateY(0) scale(1); } 45%{ transform: translateY(-2px) scale(1.08); } }
@@ -1607,11 +1604,29 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
   pointer-events: none; z-index: 6; animation: fgDmgUp .85s ease forwards;
 }
 .fg-dmgnum.crit { color: var(--cn-gold); font-size: 16px; }
+.fg-dmgnum.fire { color: #ffb74d; }
 @keyframes fgDmgUp {
   0%{ opacity: 0; transform: translateX(-50%) translateY(6px) scale(.6); }
   20%{ opacity: 1; transform: translateX(-50%) translateY(-4px) scale(1.15); }
   100%{ opacity: 0; transform: translateX(-50%) translateY(-24px) scale(1); }
 }
+/* 火攻燃烧演出：目标格橙红闪动 + 火苗图标升起消散，棋盘整体再叠一层短促暖色闪光 */
+.fg-cell.fg-fire-anim::before {
+  content: ""; position: absolute; inset: 0; background: rgba(255,120,20,.55); border-radius: 2px;
+  animation: fgFireFlash .6s ease forwards; pointer-events: none; z-index: 3;
+}
+@keyframes fgFireFlash { 0%{ opacity: 1; } 60%{ opacity: .7; } 100%{ opacity: 0; } }
+.fg-fire-icon {
+  position: absolute; left: 50%; bottom: 8%; transform: translateX(-50%);
+  font-size: 20px; pointer-events: none; z-index: 6; animation: fgFireRise .9s ease forwards;
+}
+@keyframes fgFireRise {
+  0%{ opacity: 0; transform: translateX(-50%) translateY(6px) scale(.7); }
+  25%{ opacity: 1; transform: translateX(-50%) translateY(-4px) scale(1.15); }
+  100%{ opacity: 0; transform: translateX(-50%) translateY(-26px) scale(1); }
+}
+.fg-board.fg-fireflash { animation: fgFireBoard .5s ease; }
+@keyframes fgFireBoard { 0%,100%{ filter: none; } 40%{ filter: brightness(1.5) sepia(.3) saturate(1.6); } }
 
 /* 挥军破阵全景战场 / 排兵布阵阵型预览：两块画布固定挂在 #fb-content 之外，不随其 innerHTML 重写而销毁重建。
    容器须给定明确高度（与 JS 里的逻辑缓冲高度一一对应），canvas 本身按 100%/100% 填满——
