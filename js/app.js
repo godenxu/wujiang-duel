@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608161923";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608162006";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -3552,12 +3552,17 @@
       showScreen("fieldgrid");
       this.renderDeploy();
     },
-    // 全军统帅+智力均值折算每回合军令恢复量（约 2~6 道）；军令不再是"每回合推倒重算"，
-    // 而是上限 10 道的累积池——恢复量按当前存活武将实时重算，折损越重恢复越慢，见 endTurnCycle
+    // 全军统帅+智力均值折算的基准值（约 2~6 道）：开战时的起始军令池直接取这个数；
+    // 军令不再是"每回合推倒重算"，而是上限 10 道的累积池
     calcOrders(arr) {
       if (!arr.length) return 2;
       const avg = arr.reduce((s, g) => s + (g.tong + g.zhi) / 2, 0) / arr.length;
       return Math.max(2, Math.min(6, Math.round((avg - 30) / 10)));
+    },
+    // 每回合的恢复量在基准值上再减半（向下取整但至少 1 道）——军令消耗更有分量，
+    // 不再是"一场仗打下来军令根本花不完"；恢复量按当前存活武将实时重算，折损越重恢复越慢，见 endTurnCycle
+    calcOrderRegen(arr) {
+      return Math.max(1, Math.floor(this.calcOrders(arr) / 2));
     },
     ORDERS_CAP: 10,
 
@@ -4083,46 +4088,56 @@
     /* ---------- 敌方回合：简化 AI ---------- */
     uiPause(ms = 260) { return new Promise(res => setTimeout(res, ms)); },
     nearestEnemyPos(u, enemies) { return enemies.slice().sort((a, b) => this.manhattan(u, a) - this.manhattan(u, b))[0]; },
+    // 敌军军令 AI：按局势优先级挑招（救援残部 > 烧可烧目标 > 士气过低先擂鼓 > 疑兵削弱我军主力 > 兜底擂鼓），
+    // 不再是单纯掷骰子四选一；返回 true 表示确实用掉了一道军令
+    async aiUseOrder() {
+      if (this.foeOrders <= 0) return false;
+      const hurtAlly = this.foeUnits.filter(u => u.alive && u.hp < u.hpMax * 0.55).sort((a, b) => a.hp / a.hpMax - b.hp / b.hpMax)[0];
+      const master = this.armyHasFiremaster("foe");
+      const fireTargets = this.myUnits.filter(u => u.alive && (this.tiles[u.r][u.c] === "hill" || master));
+      const avgMor = this.avgMorale("foe");
+      const strongestFoe = this.myUnits.filter(u => u.alive && !(u.feintTurns > 0)).sort((a, b) => b.atk - a.atk)[0];
+      if (hurtAlly && Math.random() < 0.85) {
+        this.foeOrders--;
+        const heal = Math.round(hurtAlly.hpMax * 0.14);
+        hurtAlly.hp = Math.min(hurtAlly.hpMax, hurtAlly.hp + heal);
+        this.log(`🩹 敌军医疗营救，${hurtAlly.g.name} 部兵力回复 ${heal}（敌令余 ${this.foeOrders}）！`);
+        await this.playHealFx(hurtAlly, heal);
+      } else if (fireTargets.length && Math.random() < 0.65) {
+        this.foeOrders--;
+        const t = fireTargets.sort((a, b) => b.hp - a.hp)[0];
+        const dmg = randInt(400, 800) * (master ? 2 : 1);
+        t.hp = Math.max(0, t.hp - dmg);
+        this.log(`🔥 敌军火攻！${t.g.name} 部折损 ${dmg}（敌令余 ${this.foeOrders}）！`);
+        await this.playFireFx(t, dmg);
+        if (t.hp <= 0) this.routUnit(t);
+        if (this.checkBattleEnd()) return true;
+      } else if (avgMor < 35) {
+        this.foeOrders--;
+        this.foeUnits.filter(u => u.alive).forEach(u => this.gainMorale(u, 8));
+        this.log(`🥁 敌阵擂鼓，敌军士气 +8（敌令余 ${this.foeOrders}）`);
+      } else if (strongestFoe && Math.random() < 0.55) {
+        this.foeOrders--;
+        strongestFoe.feintTurns = 2; strongestFoe.feintMul = 0.8;
+        this.log(`🎭 敌军疑兵佯攻，${strongestFoe.g.name} 部防御 -20%，持续 2 回合（敌令余 ${this.foeOrders}）！`);
+        await this.playFeintFx(strongestFoe);
+      } else {
+        this.foeOrders--;
+        this.foeUnits.filter(u => u.alive).forEach(u => this.gainMorale(u, 8));
+        this.log(`🥁 敌阵擂鼓，敌军士气 +8（敌令余 ${this.foeOrders}）`);
+      }
+      this.renderBattle();
+      return true;
+    },
     async runFoeTurn() {
       const myGen = this.gen;
-      // 敌军军令 AI：小概率在擂鼓/火攻/医疗/疑兵四式里随机挑一种使用
-      if (this.foeOrders > 0 && Math.random() < 0.4) {
-        const roll = Math.random();
-        if (roll < 0.3) {
-          this.foeOrders--; this.foeUnits.filter(u => u.alive).forEach(u => this.gainMorale(u, 8));
-          this.log(`🥁 敌阵擂鼓，敌军士气 +8（敌令余 ${this.foeOrders}）`);
-        } else if (roll < 0.6) {
-          const master = this.armyHasFiremaster("foe");
-          const targets = this.myUnits.filter(u => u.alive && (this.tiles[u.r][u.c] === "hill" || master));
-          if (targets.length) {
-            this.foeOrders--;
-            const t = targets[randInt(0, targets.length - 1)];
-            const dmg = randInt(400, 800) * (master ? 2 : 1);
-            t.hp = Math.max(0, t.hp - dmg);
-            this.log(`🔥 敌军火攻！${t.g.name} 部折损 ${dmg}（敌令余 ${this.foeOrders}）！`);
-            await this.playFireFx(t, dmg);
-            if (t.hp <= 0) this.routUnit(t);
-            if (this.checkBattleEnd()) return;
-          }
-        } else if (roll < 0.8) {
-          const hurt = this.foeUnits.filter(u => u.alive && u.hp < u.hpMax * 0.7).sort((a, b) => a.hp / a.hpMax - b.hp / b.hpMax)[0];
-          if (hurt) {
-            this.foeOrders--;
-            const heal = Math.round(hurt.hpMax * 0.14);
-            hurt.hp = Math.min(hurt.hpMax, hurt.hp + heal);
-            this.log(`🩹 敌军医疗营救，${hurt.g.name} 部兵力回复 ${heal}（敌令余 ${this.foeOrders}）！`);
-            await this.playHealFx(hurt, heal);
-          }
-        } else {
-          const strongest = this.myUnits.filter(u => u.alive).sort((a, b) => b.hp - a.hp)[0];
-          if (strongest) {
-            this.foeOrders--;
-            strongest.feintTurns = 2; strongest.feintMul = 0.8;
-            this.log(`🎭 敌军疑兵佯攻，${strongest.g.name} 部防御 -20%，持续 2 回合（敌令余 ${this.foeOrders}）！`);
-            await this.playFeintFx(strongest);
-          }
-        }
-        this.renderBattle();
+      // 军令消耗减半后 AI 更积极：每回合最多连用两道，用不用、用哪种都按上面 aiUseOrder 的局势优先级来
+      let orderUses = 0;
+      while (this.foeOrders > 0 && orderUses < 2 && Math.random() < (orderUses === 0 ? 0.75 : 0.4)) {
+        await this.aiUseOrder();
+        orderUses++;
+        if (this.gen !== myGen) return;
+        if (this.checkBattleEnd()) return;
       }
       for (const u of this.foeUnits) {
         if (this.gen !== myGen) return;
@@ -4180,8 +4195,15 @@
           return;
         }
       }
-      await this.resolveAttack(u, target);
-      u.acted = true;
+      // 夹击：若目标身周已有其他未行动同袍就位，AI 优先合力围攻（伤害倍率更高、更快解决战斗、
+      // 挨反击的只有主攻手），不再像旧版那样每次都单打独斗
+      const joiners = this.eligibleFlankers(u, target);
+      if (joiners.length > 0) {
+        await this.resolveCoordinatedAttack([u, ...joiners], target);
+      } else {
+        await this.resolveAttack(u, target);
+        u.acted = true;
+      }
       this.renderBattle();
     },
 
@@ -4213,9 +4235,10 @@
         if (u.skCd > 0) u.skCd--;
         if (u.feintTurns > 0) u.feintTurns--;
       });
-      // 军令改为累积池：本回合未用完的军令带到下一回合，叠加新一轮恢复量，封顶 ORDERS_CAP（10）道
-      this.myOrders = Math.min(this.ORDERS_CAP, this.myOrders + this.calcOrders(this.myUnits.filter(u => u.alive).map(u => u.g)));
-      this.foeOrders = Math.min(this.ORDERS_CAP, this.foeOrders + this.calcOrders(this.foeUnits.filter(u => u.alive).map(u => u.g)));
+      // 军令改为累积池：本回合未用完的军令带到下一回合，叠加新一轮恢复量（已减半，见 calcOrderRegen），
+      // 封顶 ORDERS_CAP（10）道
+      this.myOrders = Math.min(this.ORDERS_CAP, this.myOrders + this.calcOrderRegen(this.myUnits.filter(u => u.alive).map(u => u.g)));
+      this.foeOrders = Math.min(this.ORDERS_CAP, this.foeOrders + this.calcOrderRegen(this.foeUnits.filter(u => u.alive).map(u => u.g)));
       // 大本营围城：敌军连续站在我方大营、或我军连续站在敌方大营满 3 回合，即视为攻破——
       // 每回合末结算一次，中途换防（占领者撤走）就清零重新计，不是"累计出现过 3 次"
       const foeInMyCamp = this.foeUnits.some(x => x.alive && x.r === this.myCamp.r && x.c === this.myCamp.c);
@@ -4227,6 +4250,16 @@
       if (this.foeCampSiege >= 3) { this.finish(true, "大军攻破敌方大营，敌军土崩瓦解"); return; }
       if (this.myCampSiege >= 3) { this.finish(false, "大营失守三回合，全军溃败"); return; }
       if (this.checkBattleEnd()) return;
+      // 封顶 100 回合：满百回合仍未分出生死，以双方存兵多寡定胜负（兵力相同时以总士气为次级判据）
+      if (this.turnN >= 100) {
+        const myHp = this.totalHp("my"), foeHp = this.totalHp("foe");
+        const myMor = this.myUnits.filter(u => u.alive).reduce((s, u) => s + u.morale, 0);
+        const foeMor = this.foeUnits.filter(u => u.alive).reduce((s, u) => s + u.morale, 0);
+        const won = myHp !== foeHp ? myHp > foeHp : myMor >= foeMor;
+        this.log(`⏳ 鏖战满百回合，以存兵多寡定胜负——我方 ${Math.round(myHp).toLocaleString()} · 敌方 ${Math.round(foeHp).toLocaleString()}`);
+        this.finish(won, "鏖战满百回合仍未分出生死，以存兵多寡定胜负");
+        return;
+      }
       this.turnN++;
       this.turnSide = "my";
       // 我方/敌方的「已行动」都在这里统一清零——旧版只清了我方，导致敌方棋子从第二回合起
@@ -4363,9 +4396,12 @@
     // 拆成独立方法是为了让 syncTopBars() 能在命中瞬间原地刷新这一小块，不必牵动整块棋盘重绘
     // 顶部这一行现在把兵力条与存活/均气/军令全部并进同一行——点这一整条即弹出逐将详情浮层（见 showMatchupOverlay）
     // 军令数不再显示数字，改画等量的金黄色小旗子——直观感受"还剩几道军令"而不必读数
-    orderFlagsHtml(n) {
-      return `<span class="fg-flags">${Array.from({ length: Math.max(0, n) }).map(() => `<span class="fg-flag-icon"></span>`).join("")}</span>`;
+    orderFlagsHtml(n, side) {
+      return `<span class="fg-flags ${side}">${Array.from({ length: Math.max(0, n) }).map(() => `<span class="fg-flag-icon"></span>`).join("")}</span>`;
     },
+    // 三行整体布局（不再是"两侧+中轴"三栏）：第一行军名紧贴左右外沿、兵力数字各自朝中间靠拢；
+    // 第二行兵力色条从中线向两侧撑开；第三行"武将数+均气"仍在最外侧，中间对齐色条中轴处
+    // 摆双方军令小旗——我方旗子朝左展开、敌方朝右展开，方向左右镜像
     vsbarHtml() {
       const myTotalHp = this.totalHp("my"), foeTotalHp = this.totalHp("foe");
       const myMax = this.myUnits.reduce((s, x) => s + x.hpMax, 0) || 1;
@@ -4374,20 +4410,22 @@
       const foePct = Math.max(0, Math.min(100, foeTotalHp / foeMax * 100));
       const myAlive = this.myUnits.filter(x => x.alive).length, foeAlive = this.foeUnits.filter(x => x.alive).length;
       return `<div class="fg-vsbar" id="fg-vsbar-open">
-        <div class="fg-vsbar-side my">
-          <div class="fg-vsbar-top"><b>我军</b><span class="fg-vsbar-num">${myTotalHp.toLocaleString()}</span></div>
-          <div class="fg-vsbar-stats"><b>${myAlive}</b>存活 <b>${this.avgMorale("my")}</b>均气</div>
-          ${this.orderFlagsHtml(this.myOrders)}
+        <div class="fg-vsbar-row1">
+          <span class="fg-vsbar-half-row my"><b>我军</b><span class="fg-vsbar-num">${myTotalHp.toLocaleString()}</span></span>
+          <span class="fg-vsbar-half-row foe"><span class="fg-vsbar-num">${foeTotalHp.toLocaleString()}</span><b>敌军</b></span>
         </div>
         <div class="fg-vsbar-track">
           <div class="fg-vsbar-half my"><i style="width:${myPct}%"></i></div>
           <div class="fg-vsbar-mid">VS</div>
           <div class="fg-vsbar-half foe"><i style="width:${foePct}%"></i></div>
         </div>
-        <div class="fg-vsbar-side foe">
-          <div class="fg-vsbar-top"><span class="fg-vsbar-num">${foeTotalHp.toLocaleString()}</span><b>敌军</b></div>
-          <div class="fg-vsbar-stats"><b>${foeAlive}</b>存活 <b>${this.avgMorale("foe")}</b>均气</div>
-          ${this.orderFlagsHtml(this.foeOrders)}
+        <div class="fg-vsbar-row3">
+          <span class="fg-vsbar-stat">武将${myAlive} · 气${this.avgMorale("my")}</span>
+          <span class="fg-vsbar-flagzone">
+            ${this.orderFlagsHtml(this.myOrders, "my")}
+            ${this.orderFlagsHtml(this.foeOrders, "foe")}
+          </span>
+          <span class="fg-vsbar-stat">武将${foeAlive} · 气${this.avgMorale("foe")}</span>
         </div>
       </div>`;
     },
@@ -4400,11 +4438,12 @@
       if (!bits.length) return "";
       return `<div class="fg-hintline">${bits.join(" · ")}</div>`;
     },
-    // 军令选目标提示：不再占用棋盘上方的战场空间，改成军令按钮正上方的一行小字
+    // 军令选目标提示：改成悬浮在棋盘正上方居中的小标签（与武将行动菜单收起后同一视觉语言），
+    // 不再占用独立行布局，有没有这行提示都不会挤压/撑高战场区域
     orderModeHintHtml() {
-      if (this.orderMode === "fire") return `<div class="fg-order-hint">🔥 请点选要火攻的敌方单位</div>`;
-      if (this.orderMode === "heal") return `<div class="fg-order-hint">🩹 请点选要医疗营救的己方单位</div>`;
-      if (this.orderMode === "feint") return `<div class="fg-order-hint">🎭 请点选要疑兵佯攻的敌方单位</div>`;
+      if (this.orderMode === "fire") return `<div class="fg-order-float">🔥 请点选要火攻的敌方单位</div>`;
+      if (this.orderMode === "heal") return `<div class="fg-order-float">🩹 请点选要医疗营救的己方单位</div>`;
+      if (this.orderMode === "feint") return `<div class="fg-order-float">🎭 请点选要疑兵佯攻的敌方单位</div>`;
       return "";
     },
     // 逐将对比明细的行/列构建，供 showMatchupOverlay() 弹层复用
@@ -4530,9 +4569,10 @@
                 <div class="fg-board" style="grid-template-columns:repeat(${this.COLS},1fr)">${this.boardCellsHtml({ reachSet, enemySet, healSet, dimSet })}</div>
                 ${floatMenu}
               </div>
+              ${this.orderModeHintHtml()}
             </div>
           </div>
-          <div class="fg-area-orders">${this.orderModeHintHtml()}${orderToolbar}</div>
+          <div class="fg-area-orders">${orderToolbar}</div>
         </div>`;
       const logEl = $("#fg-log", root); if (logEl) logEl.scrollTop = logEl.scrollHeight;
       // 环形菜单贴着棋子摆，靠近棋盘边缘时可能溢出可视区——量出实际溢出量后原地平移拉回来
