@@ -154,6 +154,16 @@ const AudioSystem = (() => {
     charge() { if (sfxOn) { ensure(); const t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain(); o.type = "square"; o.frequency.setValueAtTime(180, t); o.frequency.linearRampToValueAtTime(720, t + 0.4); g.gain.setValueAtTime(0.12, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.45); o.connect(g); g.connect(sfxGain); o.start(t); o.stop(t + 0.45); } },
     gallop() { if (sfxOn) { ensure(); noise(0, 0.05, 0.18, "lowpass", 250, sfxGain); } },
     ko() { if (!sfxOn) return; ensure(); noise(0, 0.4, 0.5, "lowpass", 600, sfxGain); ["D4", "A3", "D3"].forEach((n, i) => voice("square", freq(n), i * 0.1, 0.35, 0.28, sfxGain)); },
+    // 火攻燃烧：带通噪声模拟火焰哔剥声 + 高频噪声模拟火星，叠一记下坠音强调"轰"的一下
+    burn() {
+      if (!sfxOn) return; ensure();
+      noise(0, 0.38, 0.42, "bandpass", 2200, sfxGain);
+      noise(0.04, 0.32, 0.22, "highpass", 4500, sfxGain);
+      const t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = "sawtooth"; o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.35);
+      g.gain.setValueAtTime(0.22, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.38);
+      o.connect(g); g.connect(sfxGain); o.start(t); o.stop(t + 0.4);
+    },
     victory() { if (!sfxOn) return; ensure(); ["D5", "F5", "A5", "D6"].forEach((n, i) => { voice("square", freq(n), i * 0.12, 0.45, 0.22, sfxGain); voice("triangle", freq(n.replace(/\d/, m => +m - 1)), i * 0.12, 0.45, 0.14, sfxGain); }); },
   };
 

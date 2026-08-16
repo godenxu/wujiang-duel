@@ -1459,12 +1459,17 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 .fg-area-vsbar, .fg-area-matchup, .fg-area-log, .fg-area-orders { flex: 0 0 auto; }
 .fg-area-board { flex: 1 1 auto; min-height: 80px; }
 /* 顶部 VS 兵力对比条：两条从中线各自向外撑开，兵力越少、外沿越往中间收缩 */
-/* 兵力条这一整行现在兼管存活/均气/军令三项数据，并可整行点击弹出逐将详情浮层 */
+/* 兵力条这一整行现在兼管存活/均气/军令三项数据，并可整行点击弹出逐将详情浮层；
+   "我军/敌军"字样紧贴数字外侧（我军在左、敌军在右），下方存活/均气字号加大，军令改画小旗 */
 .fg-vsbar { display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
-.fg-vsbar-side { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; line-height: 1.2; min-width: 58px; }
-.fg-vsbar-side b { font-size: 11px; opacity: .8; font-weight: 700; }
+.fg-vsbar-side { flex: 0 0 auto; display: flex; flex-direction: column; line-height: 1.25; min-width: 64px; }
+.fg-vsbar-side.my { align-items: flex-start; }
+.fg-vsbar-side.foe { align-items: flex-end; }
+.fg-vsbar-top { display: flex; align-items: baseline; gap: 3px; }
+.fg-vsbar-top b { font-size: 11px; opacity: .8; font-weight: 700; white-space: nowrap; }
 .fg-vsbar-num { font-weight: 900; }
-.fg-vsbar-sub { font-size: 9px; opacity: .75; white-space: nowrap; }
+.fg-vsbar-stats { font-size: 12.5px; opacity: .92; white-space: nowrap; }
+.fg-vsbar-stats b { font-weight: 900; color: var(--cn-gold); font-size: 13.5px; }
 .fg-vsbar-track { flex: 1; display: flex; align-items: center; height: 14px; background: rgba(0,0,0,.4); border-radius: 7px; overflow: hidden; border: 1px solid rgba(212,175,55,.35); }
 .fg-vsbar-half { flex: 1; height: 100%; overflow: hidden; }
 .fg-vsbar-half.my { display: flex; justify-content: flex-end; }
@@ -1472,6 +1477,15 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 .fg-vsbar-half.my i { display: block; height: 100%; background: linear-gradient(90deg, #7a1420, var(--cn-red)); }
 .fg-vsbar-half.foe i { display: block; height: 100%; background: linear-gradient(90deg, var(--jp-indigo), #4a5da0); }
 .fg-vsbar-mid { flex: 0 0 auto; width: 26px; text-align: center; font-size: 9.5px; font-weight: 800; opacity: .75; }
+/* 军令改画小旗：竿+三角旗，金黄色，数量即军令余量，多了自动换行不挤爆两侧 */
+.fg-flags { display: flex; flex-wrap: wrap; gap: 1px; max-width: 84px; margin-top: 1px; }
+.fg-vsbar-side.foe .fg-flags { justify-content: flex-end; }
+.fg-flag-icon { display: inline-block; position: relative; width: 8px; height: 9px; }
+.fg-flag-icon::before { content: ""; position: absolute; left: 0; top: 0; width: 1px; height: 9px; background: #8a7442; }
+.fg-flag-icon::after {
+  content: ""; position: absolute; left: 1px; top: 0; width: 0; height: 0;
+  border-style: solid; border-width: 3px 0 3px 6px; border-color: transparent transparent transparent var(--cn-gold);
+}
 /* 阵形/火攻等提示行：平时无内容时高度为 0，不占位 */
 .fg-hintline { font-size: 11px; opacity: .85; padding: 2px 10px; }
 /* 点兵力条弹出的半透明详情浮层：双栏（我方/敌方）列出每员武将的兵力/士气/攻/防，阵亡者灰显；
@@ -1479,13 +1493,21 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 .fg-matchup-overlay { padding: 4px 2px; }
 .fg-matchup-overlay-title { font-size: 17px; font-weight: 800; color: var(--cn-gold); text-align: center; margin-bottom: 10px; }
 .fg-matchup-overlay-hint { text-align: center; font-size: 11px; opacity: .6; margin-top: 8px; }
-.fg-matchup-detail { display: flex; gap: 8px; font-size: 11px; }
-.fg-md-col { flex: 1; min-width: 0; background: rgba(0,0,0,.22); border-radius: 6px; padding: 6px 7px; max-height: 50vh; overflow-y: auto; }
-.fg-md-head { display: flex; justify-content: space-between; font-weight: 800; color: var(--cn-gold); opacity: .9; margin-bottom: 3px; }
-.fg-md-hint { font-weight: 400; opacity: .7; font-size: 9.5px; }
-.fg-md-row { display: grid; grid-template-columns: 1.4fr .5fr 1.1fr .6fr .5fr .5fr; gap: 2px; padding: 2px 0; opacity: .95; }
-.fg-md-row.dead { opacity: .4; text-decoration: line-through; }
-.fg-md-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fg-matchup-detail { display: flex; gap: 8px; font-size: 14.5px; }
+.fg-md-col { flex: 1; min-width: 0; background: rgba(0,0,0,.22); border-radius: 6px; padding: 7px 8px; max-height: 50vh; overflow-y: auto; }
+.fg-md-head { display: flex; justify-content: space-between; font-weight: 800; color: var(--cn-gold); opacity: .9; margin-bottom: 4px; }
+.fg-md-hint { font-weight: 400; opacity: .7; font-size: 11px; }
+/* 姓名/阵形图标/将魂名字数不定、放大字号后一行塞不下，改两行显示：
+   第一行姓名+阵形+将魂名各自完整不截断；第二行兵力/士气/攻防三项统一 gap，间距看起来一致 */
+.fg-md-row { padding: 5px 0; opacity: .95; border-bottom: 1px solid rgba(255,255,255,.06); }
+.fg-md-row:last-child { border-bottom: none; }
+.fg-md-row.dead { opacity: .45; text-decoration: line-through; }
+.fg-md-line1 { display: flex; align-items: baseline; gap: 6px; margin-bottom: 2px; }
+.fg-md-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+.fg-md-form { flex: 0 0 auto; font-size: .85em; }
+.fg-md-soul { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .85; font-size: .88em; color: var(--cn-gold); }
+.fg-md-line2 { display: flex; gap: 10px; font-size: .92em; opacity: .9; white-space: nowrap; }
+.fg-md-hp { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
 .fg-board-wrap {
   position: relative; width: 100%; height: 100%;
   flex: 1 1 auto; min-height: 0;
@@ -1531,7 +1553,17 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
   content: ""; position: absolute; inset: 8%; border-radius: 3px;
   background: rgba(255,70,70,.4); border: 1px solid rgba(255,120,120,.95);
 }
+.fg-cell.fg-heal-target::after {
+  content: ""; position: absolute; inset: 8%; border-radius: 3px;
+  background: rgba(80,220,120,.38); border: 1px solid rgba(140,255,170,.95);
+}
 .fg-cell.fg-selected { outline: 2px solid var(--cn-gold); outline-offset: -2px; z-index: 1; }
+/* 军令选目标期间，非可选目标的格子整片蒙上半透明遮罩，凸显可选目标本体 */
+.fg-cell.fg-dimmed::before {
+  content: ""; position: absolute; inset: 0; background: rgba(0,0,0,.6); z-index: 4; pointer-events: none;
+}
+/* 军令选目标提示：挪到军令按钮正上方的一行小字，不再挤占棋盘上方的战场空间 */
+.fg-order-hint { font-size: 11px; opacity: .9; text-align: right; padding: 0 8px 3px; color: var(--cn-gold); }
 /* 方形徽标（而非圆形）：容得下完整姓名，中文名较长时靠 ellipsis 兜底而非硬挤成一坨 */
 .fg-unit {
   position: absolute; inset: 5%; border-radius: 3px;
@@ -1597,12 +1629,12 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 .fb-ord.active { background: linear-gradient(135deg, #f0d678, var(--accent)); color: #1a1410; border-color: transparent; }
 /* banner/日志：比旧版 FieldBattle 共用的 .fb-banner/.fb-log 更紧凑一档 */
 .fg-banner-compact { padding: 6px 10px 2px; font-size: 12.5px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
-/* 军令条只留一行，靠右排列，按钮进一步放大方便点按 */
-#screen-fieldgrid .fg-orders-row { margin: 4px 0; padding: 6px 8px; display: flex; flex-wrap: nowrap; justify-content: flex-end; gap: 8px; }
-#screen-fieldgrid .fg-orders-row .fb-ord { padding: 10px 16px; font-size: 15px; white-space: nowrap; }
+/* 军令条只留一行，靠右排列；五枚按钮塞进窄屏时允许横向滚动兜底，不强行挤破行 */
+#screen-fieldgrid .fg-orders-row { margin: 4px 0; padding: 6px 8px; display: flex; flex-wrap: nowrap; justify-content: flex-end; gap: 6px; overflow-x: auto; }
+#screen-fieldgrid .fg-orders-row .fb-ord { padding: 9px 12px; font-size: 13.5px; white-space: nowrap; flex: 0 0 auto; }
 /* 战报满宽横条，挪到棋盘正上方；高度锁定为固定 3 行文字（不随内容多少而变化，避免布局跳动），
    超出部分内部滚动查看 */
-.fg-log-compact { height: 70px; max-height: 70px; margin-top: 0; font-size: 12.5px; overflow-y: auto; flex: 0 0 70px; }
+.fg-log-compact { height: 68.25px; max-height: 68.25px; margin-top: 0; font-size: 12.5px; overflow-y: auto; flex: 0 0 68.25px; }
 
 /* 攻击画面感：挥砍前倾、受击闪红+微震、暴击全屏亮闪、伤害数字浮现于目标格 */
 @keyframes fgLunge { 0%,100%{ transform: translateY(0) scale(1); } 45%{ transform: translateY(-2px) scale(1.08); } }
@@ -1645,6 +1677,19 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 }
 .fg-board.fg-fireflash { animation: fgFireBoard .5s ease; }
 @keyframes fgFireBoard { 0%,100%{ filter: none; } 40%{ filter: brightness(1.5) sepia(.3) saturate(1.6); } }
+/* 医疗营救：目标格柔和绿光一闪，配合浮现的回复数字 */
+.fg-dmgnum.heal { color: #7be08a; }
+.fg-cell.fg-heal-anim::before {
+  content: ""; position: absolute; inset: 0; background: rgba(90,230,120,.4); border-radius: 2px;
+  animation: fgFireFlash .6s ease forwards; pointer-events: none; z-index: 3;
+}
+/* 疑兵佯攻：目标格左右摇晃 + 紫灰闪动，暗示军心浮动 */
+@keyframes fgFeintShake { 0%,100%{ transform: translateX(0); } 20%{ transform: translateX(-3px); } 40%{ transform: translateX(3px); } 60%{ transform: translateX(-2px); } 80%{ transform: translateX(2px); } }
+.fg-cell.fg-feint-anim .fg-unit { animation: fgFeintShake .5s ease; }
+.fg-cell.fg-feint-anim::before {
+  content: ""; position: absolute; inset: 0; background: rgba(140,110,200,.42); border-radius: 2px;
+  animation: fgFireFlash .55s ease forwards; pointer-events: none; z-index: 3;
+}
 
 /* 挥军破阵全景战场 / 排兵布阵阵型预览：两块画布固定挂在 #fb-content 之外，不随其 innerHTML 重写而销毁重建。
    容器须给定明确高度（与 JS 里的逻辑缓冲高度一一对应），canvas 本身按 100%/100% 填满——
