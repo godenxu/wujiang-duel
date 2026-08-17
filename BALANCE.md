@@ -1779,3 +1779,15 @@ softCap = 55
 - `MapUI.resolveBorderWar`/`resolveSiege` 两处 `FieldBattle.beginExternal(...)` 全部改为 `GridBattle.beginExternal(...)`，调用方式与参数不变——「野战演武·经典版」本身原样保留、继续作为小游戏合集的独立试玩入口，只是不再是边境战事/攻城战内部实际调用的引擎。
 
 **验证**：`node --check`/CSS 大括号配平复核全过；Playwright 覆盖：`beginExternal` 主角亲历路径（`observe:false`）——调用后 `phase` 停在 `"deploy"`（等待手动排兵）、`rpg`/`external` 标记正确、`#screen-fieldgrid` 正确激活；`troopScale` 缩放核验——传入 `{mine:30000, foe:20000}` 后 `myUnits`/`foeUnits` 的 `hpMax` 总和精确落在目标值附近（≤50 误差，来自四舍五入累积）；全自动推演（`observe:true`）端到端跑通一整场真实战斗（5v5，`setTimeout` 延迟压缩到 ≤2ms 加速回放但不改变任何判定逻辑），全程无一次点击、约 15.5 秒真实耗时内跑完并正确触发 `onDone`，返回的结果对象字段/类型/数值全部符合约定契约（`mySurvivors` 为完整武将对象数组、`kills` 与 `foeSurvivors` 长度吻合、`myTroopsLeft`/`foeTroopsLeft` 与终局兵力吻合）；15 回合 AI-vs-AI 压力测试确认 `aiActUnit` 泛化重构后双方行为不受影响、无 `NaN`/控制台报错。回归确认旧版「野战演武·经典版」小游戏自由试玩入口（`FieldBattle.open()`）不受影响，仍按原引擎运行。
+
+## 六十七、修复野战定时器陈旧竞态：打完仗回天下游历后误触其他面板会莫名跳出（第六十五轮）
+
+用户反馈：正式接入边境战/攻城战之后，打完一局野战演武、回到天下游历界面，再操作城建、委任掌柜、集市买卖、计谋、出征等任意一处面板，点了按钮却直接跳出到天下游历——但重开页面后问题消失、且用干净的自动化测试环境怎么都复现不出来（每次都是全新页面加载）。这个"必须先打过一局仗、且不能重开页面"的线索是找到根因的关键。
+
+**根因**：`endMyTurn()`（结束我方回合后 400ms 排定 `runFoeTurn`）、`_setupCommon()`/`endTurnCycle()`（委外战场全自动推演时排定下一轮 `autoPlayMyTurn`）三处 `setTimeout` 续跑逻辑，写法都是 `setTimeout(() => this.xxx(), 400)`——真正的世代（`gen`）校验写在被调用函数**内部**（`const myGen = this.gen;` 再逐步比对），也就是说这个校验值是定时器**触发那一刻**才读取的"当下"的 `this.gen`，而不是排定这个定时器**那一刻**的 `this.gen`。这样的校验等于自己和自己比，永远相等，起不到任何拦截作用。
+
+真实后果：玩家如果在这 400ms 窗口内中途退出战斗（点返回键触发 `abort()`，`gen` 自增）——不论是退出小游戏自由试玩的"野战演武"，还是（更常见地）委外战场自动推演过程中提前离开——这个陈旧定时器到点后仍会照常触发，在玩家已经回到天下地图、正操作着某个完全无关的面板时，凭空跑出一段幽灵般的敌方回合甚至整场战斗的收尾逻辑，最终调用 `finish()` 弹出野战演武自己的结算浮层（`{modal:true}`），叠在玩家当前面板之上。玩家看着像是自己点的按钮，实际点中的是这个不请自来的浮层里"返回菜单"一类的按钮，于是被带回天下游历——這正是"点哪个面板的按钮都会跳出"这个现象的成因：不是哪个面板本身坏了，而是一个游离的战斗浮层不定时凭空出现，恰好接住了玩家下一次点击。
+
+**修复**：新增 `scheduleIfCurrent(fn, ms)`，在**排定定时器的那一刻**就把 `gen` 钉死（`const gen = this.gen`），定时器触发时先比对这个当时钉死的值，不匹配则直接跳过，不再执行 `fn`。三处 `setTimeout` 全部换成这个包装：`endMyTurn()` 排定 `runFoeTurn`、`_setupCommon()` 排定首轮 `autoPlayMyTurn`、`endTurnCycle()` 排定下一轮 `autoPlayMyTurn`。
+
+**验证**：`node --check` 复核通过；Playwright 直接复现该竞态——排定一个 `scheduleIfCurrent` 定时器后立刻自增 `gen`（模拟中途退出），等过设定延迟后断言回调确未执行，另建一组不自增 `gen` 的对照组断言回调确有执行；进一步模拟真实场景：开局→结束我方回合（排定陈旧 `runFoeTurn`）→立即 `abort()`→清掉浮层→等过 700ms，断言全程无浮层弹出、敌方兵力全程未变（陈旧的 `runFoeTurn` 确未跑起来）；同样手法核验委外战场全自动推演链路（`beginExternal(observe:true)` 排定首轮 `autoPlayMyTurn` 后立即 `abort()`）同样被正确拦下、`onDone` 未被误触发。回归确认修复后正常流程（无中途退出）不受影响：完整 5v5 全自动推演端到端跑通、15 回合 AI 对战压力测试、真实"出征→野战→攻城→边境战报"全流程测试，均一切正常、无报错。

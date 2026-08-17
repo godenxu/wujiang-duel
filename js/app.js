@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608162145";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608172050";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -3580,7 +3580,7 @@
       // 委外战场且主角未被抽中亲历：跳过排兵布阵画面/点将出阵等一切手动确认，直接开战并自动推演双方
       if (this.external && this.external.auto) {
         this.startBattle();
-        setTimeout(() => this.autoPlayMyTurn(), 400);
+        this.scheduleIfCurrent(() => this.autoPlayMyTurn(), 400);
       } else {
         this.renderDeploy();
       }
@@ -4115,11 +4115,20 @@
       this.selectedUnit = null; this.selPhase = null;
       this.turnSide = "foe";
       this.renderBattle();
-      setTimeout(() => this.runFoeTurn(), 400);
+      this.scheduleIfCurrent(() => this.runFoeTurn(), 400);
     },
 
     /* ---------- 敌方回合：简化 AI ---------- */
     uiPause(ms = 260) { return new Promise(res => setTimeout(res, ms)); },
+    // 排定"这局战斗结束后 ms 毫秒接着跑下一步"的定时器时，必须在排定的这一刻就把 gen 钉死，
+    // 而不是等定时器真正触发时才读——若定时器触发前玩家已经中途退出战斗（abort 会令 gen 自增）、
+    // 或紧接着又开了一局新战斗，回调函数体内部临时 const myGen = this.gen 只会读到"当下"的 gen，
+    // 跟自己比对永远相等，起不到任何拦截作用，陈旧的 runFoeTurn/autoPlayMyTurn 就会在玩家已经
+    // 离开战场（甚至正在天下地图操作别的面板）之后凭空续跑，跑出玩家意想不到的结算弹窗。
+    scheduleIfCurrent(fn, ms) {
+      const gen = this.gen;
+      setTimeout(() => { if (this.gen === gen) fn(); }, ms);
+    },
     nearestEnemyPos(u, enemies) { return enemies.slice().sort((a, b) => this.manhattan(u, a) - this.manhattan(u, b))[0]; },
     // 敌军军令 AI：按局势优先级挑招（救援残部 > 烧可烧目标 > 士气过低先擂鼓 > 疑兵削弱我军主力 > 兜底擂鼓），
     // 不再是单纯掷骰子四选一；返回 true 表示确实用掉了一道军令
@@ -4370,7 +4379,7 @@
       this.renderBattle();
       // 委外战场全自动推演（主角未亲历）：敌方回合刚结束、回到我方回合时，接着自动跑我方这一轮，
       // 不必等玩家点击——与 endMyTurn 里"我方跑完自动接敌方回合"首尾相扣，串成完整的无人值守循环
-      if (this.external && this.external.auto && this.phase === "battle") setTimeout(() => this.autoPlayMyTurn(), 400);
+      if (this.external && this.external.auto && this.phase === "battle") this.scheduleIfCurrent(() => this.autoPlayMyTurn(), 400);
     },
     // 胜负判定：一方全部武将皆已溃退（兵力或士气归零）才算落败——单场单挑或单一部的溃散
     // 至多只是"折损一部"，不会像旧版团队共享士气那样被一次意外拖累判定整场大捷/大败
