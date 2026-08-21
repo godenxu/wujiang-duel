@@ -515,6 +515,17 @@ html, body {
 .wr-row.cn .wr-name { color: #ff9a9a; } .wr-row.jp .wr-name { color: #9ab6ff; }
 .wr-row .wr-k { color: var(--cn-gold); font-weight: 700; font-family: "DotGothic16", monospace; }
 
+/* 野战/边境战·攻城战终局功勋榜（GridBattle finish/finalizeBorderWar 共用） */
+.merit-board { background: rgba(0,0,0,.4); border: 1px solid rgba(212,175,55,.3); border-radius: 10px; padding: 6px 12px; margin-bottom: 10px; max-height: 260px; overflow-y: auto; }
+.merit-row { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 8px; padding: 3px 0; font-size: 14px; }
+.merit-row .merit-no { text-align: center; color: #c9b890; font-family: "DotGothic16", monospace; }
+.merit-row .merit-name { color: #e8dcc0; }
+.merit-row .merit-name em { font-style: normal; font-size: 11px; margin-left: 6px; opacity: .65; }
+.merit-row.my .merit-name { color: #ff9a9a; } .merit-row.foe .merit-name { color: #9ab6ff; }
+.merit-row.fallen { opacity: .55; }
+.merit-row.fallen .merit-name::after { content: "（折损）"; font-size: 11px; opacity: .8; }
+.merit-row .merit-val { color: var(--cn-gold); font-weight: 700; font-family: "DotGothic16", monospace; }
+
 /* ---------- 组队大战 ---------- */
 /* 汇总栏：存活数 · 评分合计 · 兵力合计；战国一侧整体镜像（row-reverse），与武将行的镜像呼应 */
 .tw-summary { display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; margin: 6px 10px 2px; }
@@ -1533,9 +1544,12 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
   background: rgba(0,0,0,.25); border: 1px solid rgba(212,175,55,.35); border-radius: 6px;
   padding: 3px; box-sizing: border-box;
 }
+/* container-type 让格子成为"容器查询"的度量基准：格子在大屏（iPad/桌面浏览器/展开态折叠屏）上
+   随可用空间被行列均分撑大时，里面的姓名/徽标/兵力条/伤害数字全部按 cqw（格子自身宽度的百分比）
+   同步放大，不再只按视口宽度 vw 估算——vw 在容器变宽但格子本身受行列数限制时会失真，cqw 是精确的 */
 .fg-cell {
   position: relative; border-radius: 2px; min-width: 0; min-height: 0; cursor: pointer;
-  overflow: hidden;
+  overflow: hidden; container-type: inline-size;
 }
 /* 地形纹理：底色之外叠一层渐变/纹样，外加半透明地形图标，空格上也能一眼看出地貌 */
 .fg-t-plain { background: repeating-linear-gradient(100deg, rgba(255,255,255,.05) 0 2px, transparent 2px 9px), linear-gradient(165deg, #6c8d4f, #557142); }
@@ -1545,7 +1559,7 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 .fg-t-camp  { background: radial-gradient(circle at 50% 38%, rgba(255,214,140,.35), transparent 62%), linear-gradient(165deg, #a8452f, #7c2f1e); }
 .fg-terrain-icon {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  font-size: 92%; opacity: .55; pointer-events: none; filter: drop-shadow(0 1px 1px rgba(0,0,0,.4));
+  font-size: clamp(10px, 55cqw, 46px); opacity: .55; pointer-events: none; filter: drop-shadow(0 1px 1px rgba(0,0,0,.4));
 }
 /* 大本营围城光圈：进度越高圈越粗越亮，满 3 回合即攻破，脉冲提醒玩家留意 */
 .fg-siege-ring {
@@ -1591,24 +1605,24 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 .fg-unit.my  { background: linear-gradient(135deg, var(--cn-red), #7a1420); border: 1px solid var(--cn-gold); }
 .fg-unit.foe { background: linear-gradient(135deg, var(--jp-indigo), #1a2440); border: 1px solid #8fa0d0; }
 .fg-name {
-  font-size: clamp(6px, 1.6vw, 9px); font-weight: 800; color: #fff; line-height: 1.1;
+  font-size: clamp(6px, 18cqw, 20px); font-weight: 800; color: #fff; line-height: 1.1;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 92%;
   text-shadow: 0 1px 1px rgba(0,0,0,.6);
 }
-.fg-hpbar, .fg-morbar { position: relative; width: 84%; height: 2.5px; background: rgba(0,0,0,.55); border-radius: 2px; overflow: hidden; margin-top: 1px; }
+.fg-hpbar, .fg-morbar { position: relative; width: 84%; height: clamp(2px, 4cqw, 6px); background: rgba(0,0,0,.55); border-radius: 2px; overflow: hidden; margin-top: 1px; }
 .fg-hpbar i, .fg-morbar i { display: block; height: 100%; }
 .fg-unit.acted { opacity: .5; filter: grayscale(.4); }
 .fg-skbadge {
-  position: absolute; top: -3px; right: -3px; width: 13px; height: 13px; border-radius: 50%;
-  background: var(--cn-gold); color: #241a08; font-size: 8px; line-height: 13px; text-align: center;
+  position: absolute; top: -3px; right: -3px; width: clamp(11px, 30cqw, 26px); height: clamp(11px, 30cqw, 26px); border-radius: 50%;
+  background: var(--cn-gold); color: #241a08; font-size: clamp(7px, 16cqw, 15px); line-height: clamp(11px, 30cqw, 26px); text-align: center;
   box-shadow: 0 1px 2px rgba(0,0,0,.6); z-index: 3;
 }
 .fg-skbadge.cd { background: #6a6255; color: rgba(255,255,255,.6); }
 /* 阵形徽标：与技能徽标对称摆在左上角，逐将独立而非全军一个选择 */
 .fg-formbadge {
-  position: absolute; top: -3px; left: -3px; width: 13px; height: 13px; border-radius: 50%;
-  background: rgba(20,16,10,.9); border: 1px solid rgba(212,175,55,.6); font-size: 8px;
-  line-height: 12px; text-align: center; box-shadow: 0 1px 2px rgba(0,0,0,.6); z-index: 3;
+  position: absolute; top: -3px; left: -3px; width: clamp(11px, 30cqw, 26px); height: clamp(11px, 30cqw, 26px); border-radius: 50%;
+  background: rgba(20,16,10,.9); border: 1px solid rgba(212,175,55,.6); font-size: clamp(7px, 16cqw, 15px);
+  line-height: clamp(10px, 28cqw, 24px); text-align: center; box-shadow: 0 1px 2px rgba(0,0,0,.6); z-index: 3;
 }
 .fg-formbadge.tap { cursor: pointer; }
 .fg-legend { display: flex; flex-wrap: wrap; gap: 3px 10px; margin: 4px 0 6px; font-size: 11px; color: var(--paper); opacity: .85; }
@@ -1671,10 +1685,10 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 @keyframes fgScreenFlash { 0%,100%{ filter: none; } 40%{ filter: brightness(1.7) saturate(1.4); } }
 .fg-dmgnum {
   position: absolute; left: 50%; top: 6%; transform: translateX(-50%);
-  font-weight: 900; font-size: 12px; color: #fff; text-shadow: 0 1px 3px #000;
+  font-weight: 900; font-size: clamp(11px, 26cqw, 26px); color: #fff; text-shadow: 0 1px 3px #000;
   pointer-events: none; z-index: 6; animation: fgDmgUp .85s ease forwards;
 }
-.fg-dmgnum.crit { color: var(--cn-gold); font-size: 16px; }
+.fg-dmgnum.crit { color: var(--cn-gold); font-size: clamp(14px, 32cqw, 32px); }
 .fg-dmgnum.fire { color: #ffb74d; }
 @keyframes fgDmgUp {
   0%{ opacity: 0; transform: translateX(-50%) translateY(6px) scale(.6); }

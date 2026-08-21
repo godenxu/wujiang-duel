@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608172050";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608212333";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -3515,6 +3515,7 @@
         skCd: 0, skCdMax: this.warCD(g),
         alive: true, acted: false, moved: false, standDef: false,
         kills: 0, dmgDealt: 0,      // 战绩统计，供终局战报评头功用
+        merit: 0,                   // 战场功勋值：消灭敌军、对敌武将最后一击、计谋成功、单挑得胜、力战存活皆计入
       };
     },
     // 被动将魂：融入攻防结算的乘区（design 6.1，网格化版）
@@ -3774,17 +3775,19 @@
       const res = this.computeCombat(att, def, flankers);
       def.hp = Math.max(0, def.hp - res.dmg);
       att.dmgDealt = (att.dmgDealt || 0) + res.dmg;
+      this.gainMerit(att, res.dmg / 100);
       this.log(`⚔️ ${att.g.name} 攻击 ${def.g.name}${flankers ? "（夹击）" : ""}，造成 ${res.dmg} 点伤害${res.crit ? " 💥暴击！" : ""}${def.hp <= 0 ? "，一举击溃！" : ""}`);
       await this.playAttackFx(att, def, res);
-      if (def.hp <= 0) { att.kills = (att.kills || 0) + 1; this.routUnit(def); }
+      if (def.hp <= 0) { att.kills = (att.kills || 0) + 1; this.gainMerit(att, 30); this.routUnit(def); }
       if (def.hp > 0 && !att.ranged && !this.TERRAINS[this.tiles[def.r][def.c]].noAtk) {
         const cres = this.computeCombat(def, att, 0);
         const counterDmg = Math.round(cres.dmg * 0.5);
         att.hp = Math.max(0, att.hp - counterDmg);
         def.dmgDealt = (def.dmgDealt || 0) + counterDmg;
+        this.gainMerit(def, counterDmg / 100);
         this.log(`↩️ ${def.g.name} 奋力反击${cres.crit ? " 💥暴击" : ""}，造成 ${counterDmg} 点伤害${att.hp <= 0 ? "，反遭击溃！" : ""}`);
         await this.playAttackFx(def, att, { dmg: counterDmg, crit: cres.crit });
-        if (att.hp <= 0) { def.kills = (def.kills || 0) + 1; this.routUnit(att); }
+        if (att.hp <= 0) { def.kills = (def.kills || 0) + 1; this.gainMerit(def, 30); this.routUnit(att); }
       }
     },
     // 夹击：主攻手 + 所有已就位（相邻目标、未行动）的同袍依次出手，各自独立结算伤害/反击，
@@ -3799,6 +3802,11 @@
     },
     // 溃退：兵力或士气（见 dropMorale）任一见底皆触发，两者互为独立判定；殃及己方同袍士气小幅下滑、
     // 敌方同步小振——由个体的溃败连锁牵动全局，而非旧版"全队一个开关"式的整队瞬间崩溃
+    // 功勋值：各类战场表现的统一入账口——伤敌以战果论功、扣至归零则再加一记头功，
+    // 计谋施展见效、单挑取胜、力战存活亦各有加成（详见各调用处），终局据此排出双方功勋榜
+    gainMerit(u, n) {
+      u.merit = (u.merit || 0) + n;
+    },
     routUnit(u, reason) {
       if (!u.alive) return;
       u.alive = false;
@@ -3854,6 +3862,8 @@
       if (!res) { this.afterAction(); return; }
       const winnerIsAtt = res.winner.name === att.g.name;
       const loser = winnerIsAtt ? def : att;
+      const winner = winnerIsAtt ? att : def;
+      this.gainMerit(winner, 40);
       loser.hp = Math.max(1, Math.round(loser.hp * 0.5));
       this.dropMorale(loser, 20);
       this.log(`${winnerIsAtt ? "⚔️" : "💥"} ${res.winner.name} 单挑得胜，${res.loser.name} 部众折损过半、军心动摇！`);
@@ -3873,7 +3883,7 @@
       const enemies = (u.side === "my" ? this.foeUnits : this.myUnits).filter(e => e.alive);
       const allies = (u.side === "my" ? this.myUnits : this.foeUnits).filter(e => e.alive);
       const near = enemies.filter(e => this.manhattan(u, e) <= 1);
-      let msg = "", handled = false;
+      let msg = "", handled = false, schemeLanded = false;
       if (type === "school-wu") {
         const target = near[0];
         if (target) {
@@ -3883,24 +3893,29 @@
           AudioSystem.sfx.swing(); AudioSystem.sfx.hit();
           this.syncUnitDom(target); this.syncTopBars();
           msg = `${u.g.name}【${sk.n}】陷阵突击，斩敌 ${target.g.name} 部 ${dmg} 点！`;
-          if (target.hp <= 0) { u.kills = (u.kills || 0) + 1; this.routUnit(target); }
+          schemeLanded = true;
+          if (target.hp <= 0) { u.kills = (u.kills || 0) + 1; this.gainMerit(u, 30); this.routUnit(target); }
         } else msg = `${u.g.name}【${sk.n}】未寻得近旁可突击的目标。`;
       } else if (type === "school-ti") {
         const heal = Math.round(u.hpMax * 0.18); u.hp = Math.min(u.hpMax, u.hp + heal);
         this.syncUnitDom(u); this.syncTopBars();
         msg = `${u.g.name}【${sk.n}】游走整军，自部兵力回复 ${heal}！`;
+        schemeLanded = true;
       } else if (type === "school-mei") {
         allies.forEach(a => this.gainMorale(a, 8));
         this.syncTopBars();
         msg = `${u.g.name}【${sk.n}】振臂高呼，全军士气 +8！`;
+        schemeLanded = true;
       } else if (type === "school-zheng") {
         const heal = Math.round(u.hpMax * 0.15); u.hp = Math.min(u.hpMax, u.hp + heal);
         this.syncUnitDom(u); this.syncTopBars();
         msg = `${u.g.name}【${sk.n}】调度粮秣，自部兵力回复 ${heal}！`;
+        schemeLanded = true;
       } else if (type === "awe" || type === "discord" || type === "roar") {
         enemies.forEach(e => this.dropMorale(e, 10));
         this.syncTopBars();
         msg = `⭐ ${u.g.name}【${sk.n}】威慑当面，敌军士气 -10！`;
+        schemeLanded = enemies.length > 0;
       } else if (type === "infiltrate") {
         const target = enemies[randInt(0, enemies.length - 1)];
         if (target) {
@@ -3910,18 +3925,20 @@
           AudioSystem.sfx.swing(); AudioSystem.sfx.hit();
           this.syncUnitDom(target); this.syncTopBars();
           msg = `⭐ ${u.g.name}【${sk.n}】潜行突袭，${target.g.name} 部折损 ${dmg}！`;
-          if (target.hp <= 0) { u.kills = (u.kills || 0) + 1; this.routUnit(target); }
+          schemeLanded = true;
+          if (target.hp <= 0) { u.kills = (u.kills || 0) + 1; this.gainMerit(u, 30); this.routUnit(target); }
         } else msg = `⭐ ${u.g.name}【${sk.n}】敌军已无可袭之部。`;
       } else if (type === "dualblade") {
         const target = near[0];
-        if (target) { this.log(`⭐ ${u.g.name}【${sk.n}】技势不衰，连番猛击！`); await this.resolveAttack(u, target); handled = true; }
+        if (target) { this.log(`⭐ ${u.g.name}【${sk.n}】技势不衰，连番猛击！`); await this.resolveAttack(u, target); handled = true; schemeLanded = true; }
         else msg = `${u.g.name}【${sk.n}】附近无可连击的目标。`;
       } else if (type === "tempo") {
         const ally = allies.find(a => a !== u && a.acted && this.manhattan(u, a) <= 1);
-        if (ally) { ally.acted = false; msg = `${u.g.name}【${sk.n}】临阵调度，${ally.g.name} 获得额外行动！`; }
+        if (ally) { ally.acted = false; msg = `${u.g.name}【${sk.n}】临阵调度，${ally.g.name} 获得额外行动！`; schemeLanded = true; }
         else msg = `${u.g.name}【${sk.n}】附近无已行动的友军可供调度。`;
       }
       if (msg && !handled) this.log("🌟 " + msg);
+      if (schemeLanded) this.gainMerit(u, randInt(8, 15));
       u.skCd = u.skCdMax;
       u.acted = true;
       this.busy = false;
@@ -4163,19 +4180,23 @@
         strongestFoe.feintTurns = 2; strongestFoe.feintMul = 0.8;
         this.log(`🎭 敌军疑兵佯攻，${strongestFoe.g.name} 部防御 -20%，持续 2 回合（敌令余 ${this.foeOrders}）！`);
         await this.playFeintFx(strongestFoe);
-      } else {
+      } else if (avgMor < 55) {
+        // 兜底擂鼓也要看士气是否真有起色空间——士气本就充裕时不再为了"用掉"而硬用一道，把军令留给真正用得上的时机
         this.foeOrders--;
         this.foeUnits.filter(u => u.alive).forEach(u => this.gainMorale(u, 8));
         this.log(`🥁 敌阵擂鼓，敌军士气 +8（敌令余 ${this.foeOrders}）`);
+      } else {
+        return false;
       }
       this.renderBattle();
       return true;
     },
     async runFoeTurn() {
       const myGen = this.gen;
-      // 军令消耗减半后 AI 更积极：每回合最多连用两道，用不用、用哪种都按上面 aiUseOrder 的局势优先级来
+      // 是否出军令、出几次都按上面 aiUseOrder 的局势优先级来；这一层的"要不要试一次"概率
+      // 调低到更接近"看情况偶尔用"，而不是每回合近乎必用，军令因此更集中花在真正有用的时机
       let orderUses = 0;
-      while (this.foeOrders > 0 && orderUses < 2 && Math.random() < (orderUses === 0 ? 0.75 : 0.4)) {
+      while (this.foeOrders > 0 && orderUses < 2 && Math.random() < (orderUses === 0 ? 0.55 : 0.2)) {
         await this.aiUseOrder();
         orderUses++;
         if (this.gen !== myGen) return;
@@ -4224,10 +4245,12 @@
         strongestFoe.feintTurns = 2; strongestFoe.feintMul = 0.8;
         this.log(`🎭 我军疑兵佯攻，${strongestFoe.g.name} 部防御 -20%，持续 2 回合（军令余 ${this.myOrders}）！`);
         await this.playFeintFx(strongestFoe);
-      } else {
+      } else if (avgMor < 55) {
         this.myOrders--;
         this.myUnits.filter(u => u.alive).forEach(u => this.gainMorale(u, 8));
         this.log(`🥁 我阵擂鼓，我军士气 +8（军令余 ${this.myOrders}）`);
+      } else {
+        return false;
       }
       this.renderBattle();
       return true;
@@ -4237,7 +4260,7 @@
     async autoPlayMyTurn() {
       const myGen = this.gen;
       let orderUses = 0;
-      while (this.myOrders > 0 && orderUses < 2 && Math.random() < (orderUses === 0 ? 0.75 : 0.4)) {
+      while (this.myOrders > 0 && orderUses < 2 && Math.random() < (orderUses === 0 ? 0.55 : 0.2)) {
         await this.aiUseOrderMy();
         orderUses++;
         if (this.gen !== myGen) return;
@@ -4303,6 +4326,12 @@
           this.renderBattle();
           return;
         }
+      }
+      // 单挑：贴身（非远程）交锋且这一击并非稳赢一记击溃时，AI 也有一定概率挑发对方阵前一战，
+      // 给战局添些变数，而不是逢敌必默认一味厮杀——稳赢的场合仍照常攻击，不白白把送到嘴边的战果让给赌局
+      if (!u.ranged && this.manhattan(u, target) === 1 && this.computeCombat(u, target).dmg < target.hp && Math.random() < 0.18) {
+        await this.challenge(u, target);
+        return;
       }
       // 夹击：若目标身周已有其他未行动同袍就位，AI 优先合力围攻（伤害倍率更高、更快解决战斗、
       // 挨反击的只有主攻手），不再像旧版那样每次都单打独斗
@@ -4382,24 +4411,47 @@
       if (this.external && this.external.auto && this.phase === "battle") this.scheduleIfCurrent(() => this.autoPlayMyTurn(), 400);
     },
     // 胜负判定：一方全部武将皆已溃退（兵力或士气归零）才算落败——单场单挑或单一部的溃散
-    // 至多只是"折损一部"，不会像旧版团队共享士气那样被一次意外拖累判定整场大捷/大败
+    // 至多只是"折损一部"，不会像旧版团队共享士气那样被一次意外拖累判定整场大捷/大败。
+    // phase 守卫：部分调用链上，判定即战即败的军令（如火攻）分支内部已经调用过本函数并触发过 finish()，
+    // 紧接着外层（runFoeTurn/autoPlayMyTurn 的军令循环）又会不知情地再调一次——若不拦下，finish()
+    // 会被同一次胜负结果重复调用两次：第二次调用时 this.external 已被第一次的 finishExternal 清空，
+    // 于是误入"非委外战场"分支，凭空多开一张野战演武自己的结算卡（叠在委外战场真正的战报之上）
     checkBattleEnd() {
+      if (this.phase !== "battle") return false;
       if (!this.myUnits.some(u => u.alive)) { this.finish(false, "我军全部溃退、全线崩溃"); return true; }
       if (!this.foeUnits.some(u => u.alive)) { this.finish(true, "敌军全部溃退、全线崩溃"); return true; }
       return false;
+    },
+    // 功勋榜结算：存活至终局者再加一份「力战存活」功勋，随后按功勋值把双方所有参战武将一并排出名次——
+    // 供 finish() 自身的战报卡片、以及委外战场（边境战/攻城战）的 res.meritRanking 共用同一份数据
+    finalizeMerit() {
+      [...this.myUnits, ...this.foeUnits].forEach(u => { if (u.alive) this.gainMerit(u, 5); });
+      return [...this.myUnits, ...this.foeUnits]
+        .map(u => ({ id: u.g.id, name: u.g.name, side: u.side, merit: Math.round(u.merit || 0), alive: u.alive }))
+        .sort((a, b) => b.merit - a.merit);
+    },
+    meritRankingHtml(ranking, opts = {}) {
+      const list = opts.limit ? ranking.slice(0, opts.limit) : ranking;
+      if (!list.length) return "";
+      const medal = i => i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
+      const rows = list.map((r, i) => `<div class="merit-row ${r.side}${r.alive ? "" : " fallen"}">
+          <span class="merit-no">${medal(i)}</span>
+          <span class="merit-name">${r.name}<em>${r.side === "my" ? "我方" : "敌方"}</em></span>
+          <span class="merit-val">${r.merit}</span>
+        </div>`).join("");
+      return `<div class="mc-sect">🎖️ 此役功勋榜</div><div class="merit-board">${rows}</div>`;
     },
     // 终局战报：在原有胜负/阵亡/均气之外，补上此役头功、双方折损/留存武将点名，让战报更像一份可读的战报
     // 而不是三行数字——kills/dmgDealt 由 resolveAttack/useActiveSkill/tryFireAttack 全程累加
     finish(won, reason) {
       this.phase = "done";
+      const meritRanking = this.finalizeMerit();
       // 委外战场（边境战/攻城战）：不展示野战演武自身的战果卡，折算为调用方约定的结果对象后回调，
       // 由调用方（MapUI.resolveBorderWar/resolveSiege）沿用既有的经验/金币/夺城结算流程
-      if (this.external) { this.finishExternal(won, reason); return; }
+      if (this.external) { this.finishExternal(won, reason, meritRanking); return; }
       const fallenMy = this.myUnits.filter(u => !u.alive).map(u => u.g.name);
       const fallenFoe = this.foeUnits.filter(u => !u.alive).map(u => u.g.name);
-      const mvp = [...this.myUnits, ...this.foeUnits]
-        .filter(u => (u.kills || 0) > 0 || (u.dmgDealt || 0) > 0)
-        .sort((a, b) => (b.kills || 0) - (a.kills || 0) || (b.dmgDealt || 0) - (a.dmgDealt || 0))[0];
+      const mvp = meritRanking[0];
       const topSurvivors = arr => arr.filter(u => u.alive).sort((a, b) => b.hp - a.hp).slice(0, 3)
         .map(u => `${u.g.name}(兵${Math.max(0, Math.round(u.hp)).toLocaleString()}·气${Math.round(u.morale)})`).join("、");
       const mySurvHtml = topSurvivors(this.myUnits);
@@ -4409,11 +4461,12 @@
           ⚔️ 鏖战 ${this.turnN} 回合<br>
           💀 阵亡：我方 ${fallenMy.length}/${this.myUnits.length} 将 · 敌方 ${fallenFoe.length}/${this.foeUnits.length} 将<br>
           💪 均士气：我 ${this.avgMorale("my")} · 敌 ${this.avgMorale("foe")}<br>
-          ${mvp ? `🎖️ 此役头功：${mvp.g.name}（${mvp.side === "my" ? "我方" : "敌方"}，斩获 ${mvp.kills || 0} 部・伤敌 ${Math.round(mvp.dmgDealt || 0).toLocaleString()}）<br>` : ""}
+          ${mvp && mvp.merit > 0 ? `🎖️ 此役头功：${mvp.name}（${mvp.side === "my" ? "我方" : "敌方"}，功勋 ${mvp.merit}）<br>` : ""}
           ${fallenMy.length ? `⚰️ 我方折损：${fallenMy.join("、")}<br>` : ""}
           ${fallenFoe.length ? `⚰️ 敌方折损：${fallenFoe.join("、")}<br>` : ""}
           ${mySurvHtml ? `🛡️ 我方留存主力：${mySurvHtml}<br>` : ""}
         </div>
+        ${this.meritRankingHtml(meritRanking)}
         <div class="btns">
           <button class="btn-primary" id="fg-again">再战一场</button>
           <button class="btn-ghost" id="fg-home">返回菜单</button>
@@ -4424,7 +4477,7 @@
     // 委外战场终局：历战成长与旧版 FieldBattle.finishExternal 同一套逻辑（双方真实参战武将各有小概率
     // 六维精进），随后折算为调用方约定的结果对象（mySurvivors/foeSurvivors 就是原样的武将对象引用，
     // 不是战场内部的 unit 包装，调用方无需关心网格战场的内部数据结构）
-    finishExternal(won, reason) {
+    finishExternal(won, reason, meritRanking) {
       if (typeof Campaign !== "undefined") {
         const gm = Campaign.mapState();
         if (gm) {
@@ -4441,6 +4494,7 @@
         kills: this.foeUnits.filter(u => !u.alive).length,
         myTroopsLeft: Math.max(0, Math.round(this.totalHp("my"))),
         foeTroopsLeft: Math.max(0, Math.round(this.totalHp("foe"))),
+        meritRanking: meritRanking || this.finalizeMerit(),
       };
       const onDone = this.external.onDone;
       this.external = null;
@@ -7108,6 +7162,8 @@
   function isMonthEnd(day) { return day % 30 === 0; }
   // 武将大会：每月 15 日举行
   function isTournamentDay(day) { const d = calYMD(day); return d.dom === 15; }
+  // 每月初一：集市行情有较大概率大幅变动的判定日（见 rollMarketTrends）
+  function isMonthStart(day) { const d = calYMD(day); return d.dom === 1; }
 
   /* ============================================================
    *  势力（军事三期）：中日两国之下各自再分十家势力，40 座非海路城池尽数分属其中——
@@ -7376,6 +7432,16 @@
       if (!est) return 0;
       return Math.round(ESTATE_TYPES[est.type].rate * this.LV_MULT[this.lvOf(est) - 1] * (1 + this.managerBonus(est.manager) / 100) * Prosper.mult(m, cityId));
     },
+    // 产业收益逐日浮动：以 (城市, 游戏天数) 播种，同一天重算结果恒定不抖动，只有翻篇到下一天才换新——
+    // 常规日常规 ±15% 小幅波动；另各自独立 4% 概率「🎉丰收」（+35%~60%）、4% 概率「⚠️歉收」（-45%~-30%），
+    // 让日进不再是一口价，但同一天内反复查看/结算金额始终一致，不给玩家"读档刷数值"的空子
+    dailyNoiseMul(cityId, day) {
+      const rnd = seededRand(mixSeed(hashStr("estate|" + cityId + "|" + day)));
+      const r1 = rnd();
+      if (r1 < 0.04) return { mul: 1.35 + rnd() * 0.25, tag: "harvest" };
+      if (r1 < 0.08) return { mul: 0.55 + rnd() * 0.15, tag: "lean" };
+      return { mul: 0.85 + rnd() * 0.3, tag: "normal" };
+    },
     // 敌营产业日进（无掌柜加成，行情/繁荣倍率照常）：供全部城市总览展示各城日产金额
     npcDailyRate(m, cityId) {
       const n = this.npcGet(m, cityId);
@@ -7401,18 +7467,24 @@
       const est = this.get(m, cityId);
       if (!est) return;
       const days = Math.max(0, m.day - est.lastDay);
+      const fromDay = est.lastDay;
       est.lastDay = m.day;
       if (days <= 0 || this.sealed(m, cityId)) return;
       const rate = this.dailyRate(m, cityId);
+      // 按实际经过的每一天各自取当天的浮动系数再累加，而不是整段区间套用同一个数——掌柜久未收账、
+      // 一口气结算多天时，期间的丰收/歉收/常规波动天数都各自算数，不会被平均抹平
+      let noisyTotal = 0;
+      for (let d = fromDay + 1; d <= m.day; d++) noisyTotal += rate * this.dailyNoiseMul(cityId, d).mul;
+      noisyTotal = Math.round(noisyTotal);
       if (est.manager != null) {
-        let gold = rate * days;
+        let gold = noisyTotal;
         if (est.type === "caravan") gold = Math.round(gold * (0.6 + Math.random() * 0.8));
         if (gold > 0) {
           Bond.addGold(gold, "掌柜代收");
           est.banked = (est.banked || 0) + gold;
         }
       } else {
-        est.pending = Math.min(rate * this.ACCRUE_CAP_DAYS, (est.pending || 0) + rate * days);
+        est.pending = Math.min(rate * this.ACCRUE_CAP_DAYS, (est.pending || 0) + noisyTotal);
       }
       if (est.type === "mine") {
         const lv = this.lvOf(est);
@@ -8926,10 +8998,46 @@
     if (!m) return false;
     return m.curCity === "tsushima" || (m.discountUntilDay && m.day <= m.discountUntilDay);
   }
-  // 各城行情系数：对马岛黑市固定八折，其余按城名哈希稳定落在 0.90~1.20——低价城可"淘货"，高价城慎买
+  // 各城行情系数：对马岛黑市固定八折，其余按城名哈希稳定落在 0.90~1.20 作为「底价」——低价城可"淘货"，
+  // 高价城慎买；每月初一（见 rollMarketTrends）城市有较大概率叠加一段本月行情事件，在底价上再打一层折扣/溢价，
+  // 让集市不再是一成不变的静态数字，跑商淘货这件事本身也随月份起伏更有玩味
   function cityPriceFactor(cityId) {
     if (cityId === "tsushima") return 0.8;
-    return 0.9 + (hashStr(cityId) % 31) / 100;
+    const base = 0.9 + (hashStr(cityId) % 31) / 100;
+    const m = typeof Campaign !== "undefined" && Campaign.mapState();
+    const trend = m && m.marketTrend && m.marketTrend[cityId];
+    return trend ? Math.max(0.5, base * trend.mul) : base;
+  }
+  // 月度行情事件：甩卖（降价走量）/ 平稳（不叠加）/ 抢购（涨价）/ 商旅云集（小幅降价，行商扎堆压价）——
+  // 四选一，乘区分别在底价上再打折/加价，与 cityPriceFactor 的哈希底价相乘得到当月实际行情
+  const MARKET_TRENDS = {
+    crash: { icon: "📉", label: "甩卖", mulRange: [0.7, 0.8] },
+    boom: { icon: "📈", label: "抢购", mulRange: [1.2, 1.35] },
+    glut: { icon: "🈹", label: "商旅云集", mulRange: [0.85, 0.95] },
+  };
+  // 每月初一判定：每座城（对马岛黑市固定八折，不参与）各自独立 45% 概率触发一段本月行情事件，
+  // 未触发或本月已到期的城市恢复平稳（即从 m.marketTrend 移除，退回哈希底价）——返回本轮实际变动的城市列表，
+  // 供 camp() 写进宿营夜报
+  function rollMarketTrends(m) {
+    if (!m.marketTrend) m.marketTrend = {};
+    const changed = [];
+    CITIES.filter(c => c.side !== "sea" && c.id !== "tsushima").forEach(c => {
+      if (Math.random() >= 0.45) { delete m.marketTrend[c.id]; return; }
+      const keys = Object.keys(MARKET_TRENDS);
+      const key = keys[randInt(0, keys.length - 1)];
+      const t = MARKET_TRENDS[key];
+      const mul = t.mulRange[0] + Math.random() * (t.mulRange[1] - t.mulRange[0]);
+      m.marketTrend[c.id] = { key, mul: +mul.toFixed(3) };
+      changed.push({ cityId: c.id, key });
+    });
+    return changed;
+  }
+  // 供各处「集市」相关文案拼接一段本月行情事件标签（无事件则返回空串）
+  function marketTrendSuffix(m, cityId) {
+    const trend = m && m.marketTrend && m.marketTrend[cityId];
+    if (!trend) return "";
+    const t = MARKET_TRENDS[trend.key];
+    return t ? `·本月${t.icon}${t.label}` : "";
   }
   // 简易可复现随机序列：城市集市货摊按 (城市, 游戏天数, 本局种子) 生成，宿营跨天即换新货
   function seededRand(seed) {
@@ -8976,6 +9084,15 @@
   const CITY_HINTS = {};
   Object.entries(CITY_HINTS_RAW).forEach(([cid, names]) => names.forEach(n => { CITY_HINTS[n] = cid; }));
   function hashStr(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
+  // 整数雪崩混合（murmur3 finalizer 手法）：hashStr 对"前缀相同、末尾数字逐日递增"的字符串（如
+  // "estate|chengdu|9" 与 "estate|chengdu|10"）只会在末位产生极小的差值，直接拿去做 seededRand 的种子，
+  // LCG 输出会随天数近乎线性缓慢爬升，长期看不出"随机"的样子、极端区间（如小概率丰收/歉收判定）也很难被
+  // 命中——用这道雪崩步骤把"种子相邻"打散成"输出无关"，专供 dailyNoiseMul 这类逐日取值场景使用
+  function mixSeed(x) {
+    x = (x ^ (x >>> 16)) >>> 0; x = Math.imul(x, 0x45d9f3b) >>> 0;
+    x = (x ^ (x >>> 16)) >>> 0; x = Math.imul(x, 0x45d9f3b) >>> 0;
+    return (x ^ (x >>> 16)) >>> 0;
+  }
   // distribution: "historical" 优先用 CITY_HINTS，未命中按姓名哈希稳定兜底；"random" 每局按姓名+本局随机种子重新洗牌
   function buildCityAssignment(distribution, seed) {
     const cnCities = CITIES.filter(c => c.side === "cn").map(c => c.id);
@@ -9892,7 +10009,7 @@
       const fac = CITY_FACILITY[m.curCity];
       const bounties = (!isSea && m.bounties[m.curCity]) || [];
       const factor = cityPriceFactor(m.curCity);
-      const factorTxt = factor <= 0.85 ? "黑市八折" : factor < 1 ? "行情便宜" : factor > 1.1 ? "行情偏贵" : "价格公道";
+      const factorTxt = (factor <= 0.85 ? "黑市八折" : factor < 1 ? "行情便宜" : factor > 1.1 ? "行情偏贵" : "价格公道") + marketTrendSuffix(m, m.curCity);
       const smithType = Armory.TYPES[hashStr(m.curCity) % Armory.TYPES.length];
       const curFid = cityFactionId(m, m.curCity);
       const curFacDef = factionDef(curFid);
@@ -9945,6 +10062,10 @@
       if (est.pending) parts.push(`待收 ${est.pending} 金`);
       if (est.matPending) parts.push(`材料 ${est.matPending} 份`);
       if (!parts.length) parts.push(`日进 ${Estate.dailyRate(m, m.curCity)} 金`);
+      // 今日产业行情：常规 ±15% 波动不特别提示，只在触发「丰收/歉收」这类明显大幅摆动的日子才标出来
+      const todayTrend = Estate.dailyNoiseMul(m.curCity, m.day).tag;
+      if (todayTrend === "harvest") parts.push(`🎉 今日丰收`);
+      else if (todayTrend === "lean") parts.push(`⚠️ 今日歉收`);
       return `<button class="menu-btn" id="map-estate"><span class="mi">${t.icon}</span><span>${Estate.lvName(m, m.curCity)}<small>${sealed ? "⛔ 已被查封 · 夺回城池后恢复" : parts.join(" · ")}</small></span></button>`;
     },
     // 城建按钮：显示本城已修建筑概览（敌占城市仍可入内查看，面板内不可捐修）
@@ -10142,8 +10263,8 @@
           <div class="mkt-tab ${marketTab === "sell" ? "active" : ""}" data-tab="sell">🚢 卖出</div>
         </div>
         <div class="wdesc mkt-hint">${marketTab === "buy"
-          ? `本地行情：${factor <= 0.85 ? "🈹 黑市/折扣价" : factor < 1 ? "💰 偏低" : factor > 1.1 ? "📈 偏贵" : "⚖️ 公道"}（约 ${Math.round(factor * 100)}% 市价）`
-          : `按本城真实行情结算（本城约 ${Math.round(cityPriceFactor(m.curCity) * 100)}% 市价 × 85%）；低价城买、高价城卖方能赚得差价`}</div>
+          ? `本地行情：${factor <= 0.85 ? "🈹 黑市/折扣价" : factor < 1 ? "💰 偏低" : factor > 1.1 ? "📈 偏贵" : "⚖️ 公道"}（约 ${Math.round(factor * 100)}% 市价）${marketTrendSuffix(m, m.curCity)}`
+          : `按本城真实行情结算（本城约 ${Math.round(cityPriceFactor(m.curCity) * 100)}% 市价 × 85%）；低价城买、高价城卖方能赚得差价${marketTrendSuffix(m, m.curCity)}`}</div>
         ${marketTab === "sell" && bulkTargets.length ? `<div class="btns" style="margin:6px 0 0"><button class="btn-ghost" id="market-sell-all">🚢 一键卖出非传奇宝物（${bulkTargets.length} 件 · 约 ${bulkTotal} 金）</button></div>` : ""}
         <div class="buff-list mkt-list">${marketTab === "buy" ? buyHtml : sellHtml}</div>
         <div class="btns"><button class="btn-ghost" id="market-close">离开集市</button></div></div>`);
@@ -11072,6 +11193,12 @@
       NightReport.add("alert", Nemesis.campEvent(m));  // 宿敌主动寻衅：拦路挑战 / 抢先夺赏 / 踏营下战书（三选一，小概率）
       NightReport.addAll("grow", Growth.tick(m));      // 岁月修行：随机武将闭关精进（评分越低概率越高）
       if (isMonthEnd(m.day)) NightReport.addAll("people", Loyalty.monthlyTick(m));   // 忠诚随势力盛衰月度浮动，过低小概率叛逃
+      // 每月初一：各城集市行情各自独立 45% 概率大幅变动（甩卖/抢购/商旅云集），详见 rollMarketTrends
+      if (isMonthStart(m.day)) {
+        const trendChanged = rollMarketTrends(m);
+        if (trendChanged.length) NightReport.addAll("news", trendChanged.map(t =>
+          `${MARKET_TRENDS[t.key].icon} ${cityName(t.cityId)}集市本月「${MARKET_TRENDS[t.key].label}」！`));
+      }
       // 悬赏轮换：每次宿营，每座城的每一条悬赏各自独立 50% 概率静默换新——榜单不再一成不变；
       // 已接取中的悬赏结算按接取时写入 m.activeBounty 的独立快照进行，不受轮换影响
       if (m.bounties) {
@@ -11556,7 +11683,7 @@
         toast(`🏳️ ${cityName(targetCity)}城中空虚，${attackerName}大军兵不血刃，长驱直入！`);
         this.finalizeBorderWar(m, edge, true, attackerFaction, targetCity, attackerCity, heroFought,
           heroFought && attackerSurvivors.some(g => g.id === -1), fieldRes.kills,
-          { attacker: attackerTroops, defender: 0 }, heroIn);
+          { attacker: attackerTroops, defender: 0 }, heroIn, null);
         return;
       }
 
@@ -11587,7 +11714,8 @@
           const attackerSurvivorsList = attackerIsMine ? siegeRes.mySurvivors : siegeRes.foeSurvivors;
           const heroAliveFinal = heroFought && attackerSurvivorsList.some(g => g.id === -1);
           this.finalizeBorderWar(m, edge, attackerWonSiege, attackerFaction, targetCity, attackerCity, heroFought,
-            heroAliveFinal, fieldRes.kills + siegeRes.kills, { attacker: attackerTroopsLeft, defender: defenderTroopsLeft }, heroIn);
+            heroAliveFinal, fieldRes.kills + siegeRes.kills, { attacker: attackerTroopsLeft, defender: defenderTroopsLeft }, heroIn,
+            siegeRes.meritRanking);
         },
       });
     },
@@ -11602,7 +11730,7 @@
     // heroFought 为真时（主角随野战得胜之军追击攻城）金币/名声与你的钱袋直接相关，胜负皆有所得——
     // 攻克照旧得所夺城池日产出 30 倍犒赏，未克则改发一份约合十天产出的掳掠慰劳金，敌城本身也在这场攻城战里元气大伤；
     // 未随军攻城（含己方野战即落败）则此战胜负与你的钱袋无涉，只有战报，没有金币结算
-    finalizeBorderWar(m, edge, captured, attackerFaction, targetCity, attackerCity, heroFought, heroAlive, totalKills, troops, heroIn) {
+    finalizeBorderWar(m, edge, captured, attackerFaction, targetCity, attackerCity, heroFought, heroAlive, totalKills, troops, heroIn, meritRanking) {
       let capturedCity = null;
       let unifyHtml = "";
       if (captured) {
@@ -11621,15 +11749,29 @@
         const goldGain = Bond.addGold(30 + totalKills * 4);
         const bonusGold = Bond.addGold(warGold);
         if (captured) Campaign.addFame(20); else Campaign.addFame(10);
-        // 随军攻城是效力主公最直接的实绩；主动出征（你自己挑的仗）比被动应召的月末国战更值
-        if (m.playerFaction) PlayerRank.addMerit(m, captured ? (this._sortieMode ? 150 : 120) : 40);
+        // 随军攻城是效力主公最直接的实绩；主动出征（你自己挑的仗）比被动应召的月末国战更值。
+        // 自二十二期起，攻城得胜的功勋不再是一口价，而是按你本人在这场攻城战里的功勋排名（战场功勋值体系，
+        // 见 GridBattle.finalizeMerit）打折/加成：排在前 30% ×1.3、中间 40% 原价、垫底 30% ×0.75——
+        // 未能取胜（captured=false）或本场没有真打攻城战（空城直入，meritRanking 为 null）时不参与这套折算
+        const meritBase = captured ? (this._sortieMode ? 150 : 120) : 40;
+        let meritMul = 1, meritRankNote = "";
+        if (captured && meritRanking && meritRanking.length) {
+          const idx = meritRanking.findIndex(r => r.id === -1);
+          if (idx >= 0) {
+            const pct = (idx + 1) / meritRanking.length;
+            meritMul = pct <= 0.3 ? 1.3 : pct <= 0.7 ? 1.0 : 0.75;
+            meritRankNote = `（此役功勋第 ${idx + 1}/${meritRanking.length} 名 · ${meritMul > 1 ? "居前加成" : meritMul < 1 ? "垫底折算" : "居中原价"} ×${meritMul}）`;
+          }
+        }
+        const meritAward = Math.round(meritBase * meritMul);
+        if (m.playerFaction) PlayerRank.addMerit(m, meritAward);
         const exp = totalKills * 12 + (captured ? 60 : 25);
         c.exp += exp;
         let lvUp = 0;
         while (c.exp >= RPG.expNeed(c.level)) { c.exp -= RPG.expNeed(c.level); c.level++; c.points += 1; lvUp++; }
         RPG.save();
         heroHtml = `<div class="mc-sect">🎖️ 你的战果</div>
-          <div class="wdesc">${heroAlive ? '全身而退' : '力战倒下（阵中负伤）'}，此役连破野战、攻城两阵，共歼敌将 <b style="color:var(--cn-red)">${totalKills}</b> 员${captured ? `，成功攻克【${cityName(reportCity)}】，名声 <b style="color:var(--cn-red)">+20</b>` : `，惜未能攻克【${cityName(reportCity)}】，名声仍 <b style="color:var(--cn-red)">+10</b>`}<br>获得经验 <b style="color:var(--cn-red)">+${exp}</b>${goldGain ? Bond.goldLine(goldGain) : ''}${bonusGold ? `<br>${captured ? "🏆 边境犒赏" : "💰 掳掠慰劳"} <b style="color:#b8860b">+${bonusGold}</b> 金（${captured ? "所夺" : "攻城未克，敌城"}日产出 ${captured ? this.BORDER_WAR_GOLD_DAYS : Math.round(this.BORDER_WAR_GOLD_DAYS / 3)} 倍 · 现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : ''}${lvUp ? `<br>🎉 升级 ${lvUp} 级！` : ''}</div>`;
+          <div class="wdesc">${heroAlive ? '全身而退' : '力战倒下（阵中负伤）'}，此役连破野战、攻城两阵，共歼敌将 <b style="color:var(--cn-red)">${totalKills}</b> 员${captured ? `，成功攻克【${cityName(reportCity)}】，名声 <b style="color:var(--cn-red)">+20</b>` : `，惜未能攻克【${cityName(reportCity)}】，名声仍 <b style="color:var(--cn-red)">+10</b>`}<br>获得经验 <b style="color:var(--cn-red)">+${exp}</b>${m.playerFaction ? `<br>🎖️ 功勋 <b style="color:var(--cn-red)">+${meritAward}</b>${meritRankNote}` : ''}${goldGain ? Bond.goldLine(goldGain) : ''}${bonusGold ? `<br>${captured ? "🏆 边境犒赏" : "💰 掳掠慰劳"} <b style="color:#b8860b">+${bonusGold}</b> 金（${captured ? "所夺" : "攻城未克，敌城"}日产出 ${captured ? this.BORDER_WAR_GOLD_DAYS : Math.round(this.BORDER_WAR_GOLD_DAYS / 3)} 倍 · 现有 <b style="color:#b8860b">${Bond.gold()}</b>）` : ''}${lvUp ? `<br>🎉 升级 ${lvUp} 级！` : ''}</div>`;
       } else if (heroIn) {
         // 主角亲历了野战，但己方未能取胜、无缘随军攻城——仍与你的钱袋无涉，但不宜说"未见你的身影"
         heroHtml = `<div class="wdesc">你亲历此役，惜野战失利，未能扩大战果——胜负不动你的钱袋。</div>`;
@@ -11640,6 +11782,7 @@
         <h1>⚔️ 边境战报</h1>
         <div class="wdesc">${captured ? `${factionDef(attackerFaction).n}一举攻克【${cityName(reportCity)}】！` : `${factionDef(attackerFaction).n}兵临【${cityName(reportCity)}】城下，久攻不克，只得退兵。`}${unifyHtml}</div>
         ${heroHtml}
+        ${meritRanking ? GridBattle.meritRankingHtml(meritRanking, { limit: 8 }) : ""}
         <div class="btns"><button class="btn-primary" id="bw-close">${heroIn ? "返回天下地图" : "知道了"}</button></div>
       </div>`, { modal: true });
       $("#bw-close").onclick = () => { closeOverlay(); this.render(); showScreen("map"); };
@@ -11968,7 +12111,7 @@
       const est = Estate.get(m, cityId);
       const eType = Estate.typeOf(cityId);
       const factor = cityPriceFactor(cityId);
-      const factorTxt = factor <= 0.85 ? "黑市八折" : factor < 1 ? "行情便宜" : factor > 1.1 ? "行情偏贵" : "价格公道";
+      const factorTxt = (factor <= 0.85 ? "黑市八折" : factor < 1 ? "行情便宜" : factor > 1.1 ? "行情偏贵" : "价格公道") + marketTrendSuffix(m, cityId);
       const appearedNames = DB.list.filter(g => m.assign[g.id] === cityId && m.appeared.includes(g.id))
         .map(g => `<span class="dt-name ${g.side}" style="margin-right:8px">${g.name}</span>`).join("") || "暂无现身武将";
       const bounties = (m.bounties && m.bounties[cityId]) || [];
