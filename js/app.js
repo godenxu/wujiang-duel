@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608221044";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608221144";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -6693,11 +6693,21 @@
         </div>
         <div class="section-hint">历练、悬赏、擂台/道场等设施挑战请在「天下游历」地图中进行（均计入经验与名声）；只想爽玩各模式可去首页「小游戏」。</div>
       </div>`;
-      // 蜘蛛图外框高度与右侧（评分+加点+六维）总高度对齐；图形本身按宽度等比居中，不被拉伸变形
+      // 蜘蛛图外框高度与右侧（评分+加点+六维）总高度对齐；图形本身按宽度等比居中，不被拉伸变形——
+      // 此前只在这一刻测量一次高度就写死，浏览器/iPad 上常见的窗口缩放、分屏宽度变化、地址栏
+      // 收起展开、字体异步加载完成后的重排，都会在此后继续改变 .rpg-side 的实际高度，蜘蛛图的
+      // 高度却停留在渲染瞬间的旧值不再跟着变，宽高比就对不上、看起来忽大忽小；改用 ResizeObserver
+      // 持续跟随右侧高度的任何变化（不管是什么原因引起的），而不是只赌渲染那一刻的布局已经稳定
       const sideEl = C.querySelector(".rpg-side"), radarEl = C.querySelector(".rpg-radar");
+      if (this._radarRO) { this._radarRO.disconnect(); this._radarRO = null; }
       if (sideEl && radarEl) {
-        const h = Math.round(sideEl.getBoundingClientRect().height);
-        if (h > 0) radarEl.style.height = h + "px";
+        const sync = () => {
+          const h = Math.round(sideEl.getBoundingClientRect().height);
+          if (h > 0) radarEl.style.height = h + "px";
+        };
+        sync();
+        this._radarRO = new ResizeObserver(sync);
+        this._radarRO.observe(sideEl);
       }
       $$(".rd-plus").forEach(b => b.onclick = () => this.allocate(b.dataset.k));
       $("#rpg-armory").onclick = () => ArmoryUI.open();
@@ -12311,6 +12321,9 @@
         : "—";
       const guard = Guard.of(m, cityId);
       const captNames = Guard.heldAt(m, cityId).map(g => g.name).join("、");
+      // 若当前所在城池与这座城池之间已能通驿（两端均归属本方国别且建有驿站），额外给一个直达按钮——
+      // 费用、耗行动力与驿站快马面板完全一致（同一份 postDests/postTravel），不是另起一套换算
+      const postDest = RPG.char && cityId !== m.curCity ? Buildings.postDests(m).find(d => d.id === cityId) : null;
       openOverlay(`<div class="result-card detail-card">
         <h1>📍 ${c.n} <small style="color:var(--cn-gold)">${"★".repeat(r.prosper)}</small></h1>
         <div class="wdesc">
@@ -12325,9 +12338,21 @@
           📋 悬赏（${bounties.length}）：${bounties.map(b => `${b.legendary ? "⭐" : ""}${b.desc}`).join("；") || "暂无"}<br>
           🛣️ 相邻城池：${adjCities(cityId).map(id => cityName(id)).join("、")}
         </div>
-        <div class="btns"><button class="btn-primary" id="ac-close">知道了</button></div>
+        <div class="btns">
+          ${postDest ? `<button class="btn-ghost" id="ac-post-go">🏇 驿站直达（${postDest.cost} 金 · 1⚡）</button>` : ""}
+          <button class="btn-primary" id="ac-close">知道了</button>
+        </div>
       </div>`, { modal: true });
       $("#ac-close").onclick = () => closeOverlay();
+      if (postDest) {
+        $("#ac-post-go").onclick = () => {
+          MapUI.confirmPostTravel(m, postDest);
+          // 从「全部城市」这张只读表格发起的直达：走完驿传后要把玩家带回天下地图去看新位置，
+          // 而不是留在原地——这一点与驿站快马面板/地图点城两条既有入口（本就已在地图屏）不同
+          const goBtn = $("#pt-go");
+          if (goBtn) goBtn.onclick = () => { MapUI.postTravel(m, postDest.id); showScreen("map"); };
+        };
+      }
     },
   };
 
@@ -13006,11 +13031,15 @@
 
     // 返回（点击左上角箭头）：与硬件/浏览器返回键（见下方 popstate 监听）共用同一套 handleBackAction 逻辑
     $$("[data-back]").forEach(b => b.onclick = handleBackAction);
-    // 手机系统/浏览器返回键同步：弹窗打开时优先关闭弹窗（不消耗画面层级，随即补回一条历史记录）；
-    // 否则与左上角返回箭头走同一套逻辑（backNavActive 置位期间 showScreen 不再重复 push，避免历史栈越返越深）
+    // 手机系统/浏览器返回键同步：非模态弹窗（如"两军阵前对比"，本就设计成点哪都能关）优先关闭
+    // 弹窗（不消耗画面层级，随即补回一条历史记录）；模态弹窗（集市、战报等需要点具体按钮才能离开的）
+    // 则不关——浏览器/iPad 的横向滑动手势（触控板双指滑动、iPad 边缘滑动）在用户想滚动/操作
+    // 宽屏弹窗内容时很容易被系统误判成"返回上一页"，从而触发这同一个 popstate；modal:true 的弹窗
+    // 若也被这个手势一并关掉，就是用户反映的"点着点着弹窗自己没了"——这里只吸收掉这次误判的返回
+    // 动作（补回历史记录，不做任何界面变化），弹窗该怎么留就怎么留，逼用户走弹窗自己的按钮离开
     window.addEventListener("popstate", () => {
       if (overlay.classList.contains("show")) {
-        closeOverlay();
+        if (!overlayModal) closeOverlay();
         history.pushState({ t: Date.now() }, "", "");
         return;
       }
