@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608220925";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608221044";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -337,7 +337,7 @@
         <button class="btn-ghost" id="detail-close">关闭</button>
       </div>
     </div>`;
-    openOverlay(html);
+    openOverlay(html, { modal: true });
     $("#detail-close").onclick = closeOverlay;
     if (opts.pickable) $("#detail-pick").onclick = () => { closeOverlay(); opts.onPick(g); };
     if (bondable) {
@@ -388,7 +388,7 @@
       <div class="buff-list">
         ${mates.map(t => `<button class="buff-btn replace-opt" data-id="${t.id}"><span class="bi">👤</span><span class="bt"><b>${t.name}</b><small>评分 ${ratingScore(t)} · 友谊 ${Bond.pts(t.id)}</small></span></button>`).join("")}
       </div>
-      <div class="btns"><button class="btn-ghost" id="replace-cancel">取消</button></div></div>`);
+      <div class="btns"><button class="btn-ghost" id="replace-cancel">取消</button></div></div>`, { modal: true });
     $$(".replace-opt").forEach(b => b.onclick = () => {
       const rid = +b.dataset.id;
       const ok = Bond.recruit(g, rid);
@@ -1341,7 +1341,7 @@
           <div class="btns">
             <button class="btn-primary" id="g-next">立即迎战</button>
             <button class="btn-ghost" id="g-quit">鸣金收兵</button>
-          </div></div>`);
+          </div></div>`, { modal: true });
         const advance = () => {
           clearTimeout(timer);
           closeOverlay();
@@ -4164,8 +4164,16 @@
       setTimeout(() => { if (this.gen === gen) fn(); }, ms);
     },
     nearestEnemyPos(u, enemies) { return enemies.slice().sort((a, b) => this.manhattan(u, a) - this.manhattan(u, b))[0]; },
-    // 敌军军令 AI：按局势优先级挑招（救援残部 > 烧可烧目标 > 士气过低先擂鼓 > 疑兵削弱我军主力 > 兜底擂鼓），
-    // 不再是单纯掷骰子四选一；返回 true 表示确实用掉了一道军令
+    // 军令连续尝试的次数与首次概率都随手头余量走高走低：囤得越多越舍得抛，免得攒到封顶却
+    // 始终没用出去、白白浪费；余量紧张时收着点，把机会留给真正紧急的场合——敌我双方共用同一套节奏
+    orderAttemptPlan(orders) {
+      if (orders >= 7) return [0.75, 0.45, 0.2];
+      if (orders >= 4) return [0.6, 0.25];
+      if (orders >= 1) return [0.4];
+      return [];
+    },
+    // 敌军军令 AI：按局势优先级挑招（救援残部 > 烧可烧目标 > 士气过低先擂鼓 > 疑兵削弱我军主力 >
+    // 兜底擂鼓 > 军令快满时主动疑兵免得溢出浪费）；返回 true 表示确实用掉了一道军令
     async aiUseOrder() {
       if (this.foeOrders <= 0) return false;
       const hurtAlly = this.foeUnits.filter(u => u.alive && u.hp < u.hpMax * 0.55).sort((a, b) => a.hp / a.hpMax - b.hp / b.hpMax)[0];
@@ -4173,15 +4181,20 @@
       const fireTargets = this.myUnits.filter(u => u.alive && (this.tiles[u.r][u.c] === "hill" || master));
       const avgMor = this.avgMorale("foe");
       const strongestFoe = this.myUnits.filter(u => u.alive && !(u.feintTurns > 0)).sort((a, b) => b.atk - a.atk)[0];
+      // 火攻优先挑"这把火大概率能直接烧溃"的残部斩杀，找不到才退而求其次去烧兵力最厚的那部，
+      // 与近战集火（aiActUnit）思路一致：军令也要优先换成实打实的斩获，而非平均分摊伤害
+      const fireEstDmg = 600 * (master ? 2 : 1);
+      const fireTarget = fireTargets.length ?
+        (fireTargets.filter(t => t.hp <= fireEstDmg).sort((a, b) => a.hp - b.hp)[0] || fireTargets.slice().sort((a, b) => b.hp - a.hp)[0]) : null;
       if (hurtAlly && Math.random() < 0.85) {
         this.foeOrders--;
         const heal = Math.round(hurtAlly.hpMax * 0.14);
         hurtAlly.hp = Math.min(hurtAlly.hpMax, hurtAlly.hp + heal);
         this.log(`🩹 敌军医疗营救，${hurtAlly.g.name} 部兵力回复 ${heal}（敌令余 ${this.foeOrders}）！`);
         await this.playHealFx(hurtAlly, heal);
-      } else if (fireTargets.length && Math.random() < 0.65) {
+      } else if (fireTarget && Math.random() < 0.65) {
         this.foeOrders--;
-        const t = fireTargets.sort((a, b) => b.hp - a.hp)[0];
+        const t = fireTarget;
         const dmg = randInt(400, 800) * (master ? 2 : 1);
         t.hp = Math.max(0, t.hp - dmg);
         this.log(`🔥 敌军火攻！${t.g.name} 部折损 ${dmg}（敌令余 ${this.foeOrders}）！`);
@@ -4192,7 +4205,7 @@
         this.foeOrders--;
         this.foeUnits.filter(u => u.alive).forEach(u => this.gainMorale(u, 8));
         this.log(`🥁 敌阵擂鼓，敌军士气 +8（敌令余 ${this.foeOrders}）`);
-      } else if (strongestFoe && Math.random() < 0.55) {
+      } else if (strongestFoe && Math.random() < 0.6) {
         this.foeOrders--;
         strongestFoe.feintTurns = 2; strongestFoe.feintMul = 0.8;
         this.log(`🎭 敌军疑兵佯攻，${strongestFoe.g.name} 部防御 -20%，持续 2 回合（敌令余 ${this.foeOrders}）！`);
@@ -4202,6 +4215,13 @@
         this.foeOrders--;
         this.foeUnits.filter(u => u.alive).forEach(u => this.gainMorale(u, 8));
         this.log(`🥁 敌阵擂鼓，敌军士气 +8（敌令余 ${this.foeOrders}）`);
+      } else if (strongestFoe && this.foeOrders >= this.ORDERS_CAP - 2) {
+        // 以上时机都没触发，但军令已快攒到封顶——与其看着它溢出浪费，不如主动疑兵削一削
+        // 对面最能打的那部，好歹算是花在了刀刃上
+        this.foeOrders--;
+        strongestFoe.feintTurns = 2; strongestFoe.feintMul = 0.8;
+        this.log(`🎭 敌军军令将满，主动疑兵佯攻，${strongestFoe.g.name} 部防御 -20%，持续 2 回合（敌令余 ${this.foeOrders}）！`);
+        await this.playFeintFx(strongestFoe);
       } else {
         return false;
       }
@@ -4210,10 +4230,11 @@
     },
     async runFoeTurn() {
       const myGen = this.gen;
-      // 是否出军令、出几次都按上面 aiUseOrder 的局势优先级来；这一层的"要不要试一次"概率
-      // 调低到更接近"看情况偶尔用"，而不是每回合近乎必用，军令因此更集中花在真正有用的时机
+      // 是否出军令、出几次都按上面 aiUseOrder 的局势优先级来；这一层"要不要试一次"的概率与
+      // 上限次数由 orderAttemptPlan 按当前余量决定——余量充裕时更舍得连续出招，紧张时收着点
       let orderUses = 0;
-      while (this.foeOrders > 0 && orderUses < 2 && Math.random() < (orderUses === 0 ? 0.55 : 0.2)) {
+      const foePlan = this.orderAttemptPlan(this.foeOrders);
+      while (this.foeOrders > 0 && orderUses < foePlan.length && Math.random() < foePlan[orderUses]) {
         await this.aiUseOrder();
         orderUses++;
         if (this.gen !== myGen) return;
@@ -4229,7 +4250,7 @@
       if (this.gen !== myGen) return;
       this.endTurnCycle();
     },
-    // 我方军令 AI：仅供委外战场全自动推演（主角未亲历，见 beginExternal 的 observe 参数）调用，
+    // 我方军令 AI：委外战场全自动推演（主角未亲历）与委托代打（this.delegated）共用同一套逻辑，
     // 与 aiUseOrder（敌方专用）逻辑完全对称，只是主体换成我方——按局势优先级挑招，不写死角色
     async aiUseOrderMy() {
       if (this.myOrders <= 0) return false;
@@ -4238,15 +4259,19 @@
       const fireTargets = this.foeUnits.filter(u => u.alive && (this.tiles[u.r][u.c] === "hill" || master));
       const avgMor = this.avgMorale("my");
       const strongestFoe = this.foeUnits.filter(u => u.alive && !(u.feintTurns > 0)).sort((a, b) => b.atk - a.atk)[0];
+      // 火攻优先挑"这把火大概率能直接烧溃"的残部斩杀，找不到才退而求其次去烧兵力最厚的那部
+      const fireEstDmg = 600 * (master ? 2 : 1);
+      const fireTarget = fireTargets.length ?
+        (fireTargets.filter(t => t.hp <= fireEstDmg).sort((a, b) => a.hp - b.hp)[0] || fireTargets.slice().sort((a, b) => b.hp - a.hp)[0]) : null;
       if (hurtAlly && Math.random() < 0.85) {
         this.myOrders--;
         const heal = Math.round(hurtAlly.hpMax * 0.14);
         hurtAlly.hp = Math.min(hurtAlly.hpMax, hurtAlly.hp + heal);
         this.log(`🩹 我军医疗营救，${hurtAlly.g.name} 部兵力回复 ${heal}（军令余 ${this.myOrders}）！`);
         await this.playHealFx(hurtAlly, heal);
-      } else if (fireTargets.length && Math.random() < 0.65) {
+      } else if (fireTarget && Math.random() < 0.65) {
         this.myOrders--;
-        const t = fireTargets.sort((a, b) => b.hp - a.hp)[0];
+        const t = fireTarget;
         const dmg = randInt(400, 800) * (master ? 2 : 1);
         t.hp = Math.max(0, t.hp - dmg);
         this.log(`🔥 我军火攻！${t.g.name} 部折损 ${dmg}（军令余 ${this.myOrders}）！`);
@@ -4257,7 +4282,7 @@
         this.myOrders--;
         this.myUnits.filter(u => u.alive).forEach(u => this.gainMorale(u, 8));
         this.log(`🥁 我阵擂鼓，我军士气 +8（军令余 ${this.myOrders}）`);
-      } else if (strongestFoe && Math.random() < 0.55) {
+      } else if (strongestFoe && Math.random() < 0.6) {
         this.myOrders--;
         strongestFoe.feintTurns = 2; strongestFoe.feintMul = 0.8;
         this.log(`🎭 我军疑兵佯攻，${strongestFoe.g.name} 部防御 -20%，持续 2 回合（军令余 ${this.myOrders}）！`);
@@ -4266,18 +4291,28 @@
         this.myOrders--;
         this.myUnits.filter(u => u.alive).forEach(u => this.gainMorale(u, 8));
         this.log(`🥁 我阵擂鼓，我军士气 +8（军令余 ${this.myOrders}）`);
+      } else if (strongestFoe && this.myOrders >= this.ORDERS_CAP - 2) {
+        // 以上时机都没触发，但军令已快攒到封顶——主动疑兵削一削对面最能打的那部，别白白浪费掉
+        this.myOrders--;
+        strongestFoe.feintTurns = 2; strongestFoe.feintMul = 0.8;
+        this.log(`🎭 我军军令将满，主动疑兵佯攻，${strongestFoe.g.name} 部防御 -20%，持续 2 回合（军令余 ${this.myOrders}）！`);
+        await this.playFeintFx(strongestFoe);
       } else {
         return false;
       }
       this.renderBattle();
       return true;
     },
-    // 我方回合全自动推演：仅委外战场 observe 模式下使用（主角未被抽中亲历，双方皆由 AI 接管），
+    // 我方回合全自动推演：委外战场 observe 模式（主角未被抽中亲历）与玩家中途「委托」两种场景共用，
     // 与 endMyTurn+runFoeTurn 的正常玩家流程完全并行、结构对称，跑完即调用既有 endMyTurn() 交回敌方回合
     async autoPlayMyTurn() {
       const myGen = this.gen;
+      // 委托可随时被玩家收回：endTurnCycle 排定本次调用时 delegated 也许还是真，但真正执行的这一刻
+      // 玩家可能已经点了收回——改按当下状态走「只帮不可控部众代打」，把可控部众原样留给玩家
+      if (!this.delegated && !(this.external && this.external.auto)) { this.autoPlayNonControlled(); return; }
       let orderUses = 0;
-      while (this.myOrders > 0 && orderUses < 2 && Math.random() < (orderUses === 0 ? 0.55 : 0.2)) {
+      const myPlan = this.orderAttemptPlan(this.myOrders);
+      while (this.myOrders > 0 && orderUses < myPlan.length && Math.random() < myPlan[orderUses]) {
         await this.aiUseOrderMy();
         orderUses++;
         if (this.gen !== myGen) return;
@@ -4325,13 +4360,24 @@
       if (this.gen !== myGen) return;
       this.endMyTurn();
     },
+    // 委托：可随时切换，再点一次即收回指挥权，不再要求二次确认——按钮本身已明确标注当前状态
+    // （🤝 委托 / 🎮 收回指挥），点错了立刻能反悔，无需专门弹窗确认这一步
     delegate() {
-      if (this.delegated || this.turnSide !== "my" || this.phase !== "battle") return;
-      if (!confirm("委托 AI 代为指挥，本局余下战斗将全自动推演，确定吗？此举不可撤销。")) return;
+      if (this.phase !== "battle") return;
+      // 收回指挥权不设回合限制：委托战斗中敌我回合交替飞快，玩家很可能在敌方回合点这个按钮，
+      // 若仍要求 turnSide==="my" 才生效，收回操作会被静默吞掉、按钮看着点了却毫无反应
+      if (this.delegated) {
+        this.delegated = false;
+        this.log("🎮 已收回指挥权，继续亲自操控");
+        this.renderBattle();
+        return;
+      }
       this.delegated = true;
       this.log("🤝 已委托全军自主指挥，静观战报即可");
       this.renderBattle();
-      this.autoFinishMyTurn();
+      // 开启委托这一刻若恰逢我方回合，立即代打完当前回合；若是敌方回合，则等 endTurnCycle
+      // 轮到我方回合时自会按 this.delegated 走 autoPlayMyTurn，无需在此强求
+      if (this.turnSide === "my") this.autoFinishMyTurn();
     },
     // 侧别无关的通用 AI：既供敌方回合（runFoeTurn）调用，也供外部委外战场全自动推演时
     // 驱动我方（autoPlayMyTurn，主角未亲历时）调用——按 u.side 自行判定敌我，不再写死"我方=玩家"
@@ -4496,16 +4542,30 @@
         .map(u => ({ id: u.g.id, name: u.g.name, side: u.side, merit: Math.round(u.merit || 0), alive: u.alive }))
         .sort((a, b) => b.merit - a.merit);
     },
+    // 战报唯一的"每位武将一行"展示：既是功勋榜也是战况板——委外战场（边境战/攻城战）传入的
+    // 是 finalizeMerit() 精简后的 {id,name,side,merit,alive}，没有兵力/士气可看，只显示战果一行；
+    // 野战演武自己的终局战报（finish()）会在调用前把 hp/hpMax/morale 一并补充进条目，多显示一行细节——
+    // 同一套外观、同一处维护，不必再在战报里另起一份重复的折损/留存文字列表
     meritRankingHtml(ranking, opts = {}) {
       const list = opts.limit ? ranking.slice(0, opts.limit) : ranking;
       if (!list.length) return "";
-      const medal = i => i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`;
-      const rows = list.map((r, i) => `<div class="merit-row ${r.side}${r.alive ? "" : " fallen"}">
-          <span class="merit-no">${medal(i)}</span>
-          <span class="merit-name">${r.name}<em>${r.side === "my" ? "我方" : "敌方"}</em></span>
-          <span class="merit-val">${r.merit}</span>
-        </div>`).join("");
-      return `<div class="mc-sect">🎖️ 此役功勋榜</div><div class="merit-board">${rows}</div>`;
+      const medal = i => i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}`;
+      const rows = list.map((r, i) => {
+        const hasDetail = r.hp != null;
+        return `<div class="merit-row ${r.side}${r.alive ? "" : " fallen"}">
+          <div class="merit-line1">
+            <span class="merit-no">${medal(i)}</span>
+            <span class="merit-name">${r.name}</span>
+            <span class="merit-side">${r.side === "my" ? "我方" : "敌方"}</span>
+            ${r.alive ? "" : `<span class="merit-fallen-tag">阵亡</span>`}
+          </div>
+          <div class="merit-line2">
+            ${hasDetail ? `<span>${r.alive ? `兵 ${Math.max(0, Math.round(r.hp)).toLocaleString()}/${r.hpMax.toLocaleString()}` : "－"}</span><span>${r.alive ? "气 " + Math.round(r.morale) : "－"}</span>` : ""}
+            <span class="merit-val">功勋 ${r.merit}</span>
+          </div>
+        </div>`;
+      }).join("");
+      return `<div class="mc-sect">🎖️ 此役战况总览</div><div class="merit-board">${rows}</div>`;
     },
     // 终局战报：在原有胜负/阵亡/均气之外，补上此役头功、双方折损/留存武将点名，让战报更像一份可读的战报
     // 而不是三行数字——kills/dmgDealt 由 resolveAttack/useActiveSkill/tryFireAttack 全程累加
@@ -4515,24 +4575,23 @@
       // 委外战场（边境战/攻城战）：不展示野战演武自身的战果卡，折算为调用方约定的结果对象后回调，
       // 由调用方（MapUI.resolveBorderWar/resolveSiege）沿用既有的经验/金币/夺城结算流程
       if (this.external) { this.finishExternal(won, reason, meritRanking); return; }
-      const fallenMy = this.myUnits.filter(u => !u.alive).map(u => u.g.name);
-      const fallenFoe = this.foeUnits.filter(u => !u.alive).map(u => u.g.name);
+      const fallenMyCount = this.myUnits.filter(u => !u.alive).length;
+      const fallenFoeCount = this.foeUnits.filter(u => !u.alive).length;
       const mvp = meritRanking[0];
-      const topSurvivors = arr => arr.filter(u => u.alive).sort((a, b) => b.hp - a.hp).slice(0, 3)
-        .map(u => `${u.g.name}(兵${Math.max(0, Math.round(u.hp)).toLocaleString()}·气${Math.round(u.morale)})`).join("、");
-      const mySurvHtml = topSurvivors(this.myUnits);
+      // 下面这份战况总览板要一并挑大梁展示每位武将的存亡/兵力/士气/功勋，不再另起一份文字列表
+      // 重复念一遍谁阵亡、谁留存——两处对不上号、还占地方，合并成一处才是真正"好好规划"过的战报
+      const unitById = new Map([...this.myUnits, ...this.foeUnits].map(u => [u.g.id, u]));
+      const summaryEntries = meritRanking.map(r => {
+        const u = unitById.get(r.id);
+        return u ? { ...r, hp: u.hp, hpMax: u.hpMax, morale: u.morale } : r;
+      });
       openOverlay(`<div class="result-card">
         <h1>${won ? "🏆 野战大捷" : "💀 兵败如山"}</h1>
         <div class="wdesc">${reason}<br><br>
-          ⚔️ 鏖战 ${this.turnN} 回合<br>
-          💀 阵亡：我方 ${fallenMy.length}/${this.myUnits.length} 将 · 敌方 ${fallenFoe.length}/${this.foeUnits.length} 将<br>
-          💪 均士气：我 ${this.avgMorale("my")} · 敌 ${this.avgMorale("foe")}<br>
-          ${mvp && mvp.merit > 0 ? `🎖️ 此役头功：${mvp.name}（${mvp.side === "my" ? "我方" : "敌方"}，功勋 ${mvp.merit}）<br>` : ""}
-          ${fallenMy.length ? `⚰️ 我方折损：${fallenMy.join("、")}<br>` : ""}
-          ${fallenFoe.length ? `⚰️ 敌方折损：${fallenFoe.join("、")}<br>` : ""}
-          ${mySurvHtml ? `🛡️ 我方留存主力：${mySurvHtml}<br>` : ""}
+          ⚔️ 鏖战 ${this.turnN} 回合 · 阵亡：我方 ${fallenMyCount}/${this.myUnits.length} 将 · 敌方 ${fallenFoeCount}/${this.foeUnits.length} 将<br>
+          ${mvp && mvp.merit > 0 ? `🎖️ 此役头功：${mvp.name}（${mvp.side === "my" ? "我方" : "敌方"}，功勋 ${mvp.merit}）` : ""}
         </div>
-        ${this.meritRankingHtml(meritRanking)}
+        ${this.meritRankingHtml(summaryEntries)}
         <div class="btns">
           <button class="btn-primary" id="fg-again">再战一场</button>
           <button class="btn-ghost" id="fg-home">返回菜单</button>
@@ -4735,12 +4794,20 @@
     // 点顶部兵力条弹出的半透明浮层：不挤占棋盘任何空间，点浮层内任意处即关闭（复用全局 openOverlay，
     // 非 modal 模式下点遮罩本就会关闭，这里再给内容区自身也补一个点击关闭，覆盖"点任何区域"的要求）
     showMatchupOverlay() {
+      const myGen = this.gen;
       openOverlay(`<div class="fg-matchup-overlay">
         <div class="fg-matchup-overlay-title">⚔️ 两军阵前对比</div>
         ${this.matchupDetailInner()}
         <div class="fg-matchup-overlay-hint">点任意处关闭</div>
       </div>`);
       $("#overlay-content").onclick = () => closeOverlay();
+      // 委托/半自动战斗时后台仍在不断出手，浮层若只画开启那一刻的快照很快就会过时——按战斗节奏
+      // 定时把兵力/士气/攻防数据刷成最新，直到浮层被关闭、或切换成了别的战斗（gen 变化）为止
+      const timer = setInterval(() => {
+        const wrap = $(".fg-matchup-detail", $("#overlay-content"));
+        if (!wrap || this.gen !== myGen || !overlay.classList.contains("show")) { clearInterval(timer); return; }
+        wrap.outerHTML = this.matchupDetailInner();
+      }, 500);
     },
     renderBattle() {
       const u = this.selectedUnit;
@@ -4814,7 +4881,7 @@
       // 「委托」固定摆在最左侧：一键把余下战斗全交给 AI 代打，全自动推演的委外战场（已无需再委托一次）不显示
       const showDelegate = !(this.external && this.external.auto);
       const orderToolbar = `<div class="fb-orders fg-orders-row">
-        ${showDelegate ? `<button class="fb-ord delegate" id="fg-delegate" ${this.delegated ? "disabled" : ""}>${this.delegated ? "🤝 已委托" : "🤝 委托"}</button>` : ""}
+        ${showDelegate ? `<button class="fb-ord delegate ${this.delegated ? "active" : ""}" id="fg-delegate" title="${this.delegated ? "点击收回指挥权，恢复亲自操控" : "点击委托 AI 代打余下战斗"}">${this.delegated ? "🎮 收回指挥" : "🤝 委托"}</button>` : ""}
         <button class="fb-ord" id="fg-drum" ${this.myOrders > 0 && !this.delegated ? "" : "disabled"}>🥁 擂鼓</button>
         <button class="fb-ord ${this.orderMode === "heal" ? "active" : ""}" id="fg-heal" ${this.myOrders > 0 && !this.delegated ? "" : "disabled"} title="选定己方一部，小幅回复兵力">🩹 医疗</button>
         <button class="fb-ord ${this.orderMode === "feint" ? "active" : ""}" id="fg-feint" ${this.myOrders > 0 && !this.delegated ? "" : "disabled"} title="选定敌方一部，防御临时-20%，持续2回合">🎭 疑兵</button>
@@ -6978,7 +7045,7 @@
           ${mates.map(t => `<button class="buff-btn" data-id="${t.id}"><span class="bi">👥</span><span class="bt"><b>${t.name}</b><small>评分 ${ratingScore(t)} · 友谊 ${Bond.pts(t.id)}</small></span></button>`).join("")}
           <button class="buff-btn" data-id="rand"><span class="bi">🎲</span><span class="bt"><b>随机路人副将</b><small>不使用团队</small></span></button>
         </div>
-        <div class="btns"><button class="btn-ghost" id="duo-cancel">取消</button></div></div>`);
+        <div class="btns"><button class="btn-ghost" id="duo-cancel">取消</button></div></div>`, { modal: true });
       $$(".buff-btn[data-id]").forEach(b => b.onclick = () => {
         if (!apSpent && !spendAP()) return;
         closeOverlay();
@@ -10342,7 +10409,7 @@
         ${marketTab === "buy" && bulkBuyTargets.length ? `<div class="btns" style="margin:6px 0 0"><button class="btn-ghost" id="market-buy-all">🛒 一键买入所有宝物（${bulkBuyTargets.length} 件 · 约 ${bulkBuyTotal} 金）</button></div>` : ""}
         ${marketTab === "sell" && bulkTargets.length ? `<div class="btns" style="margin:6px 0 0"><button class="btn-ghost" id="market-sell-all">🚢 一键卖出非传奇宝物（${bulkTargets.length} 件 · 约 ${bulkTotal} 金）</button></div>` : ""}
         <div class="buff-list mkt-list">${marketTab === "buy" ? buyHtml : sellHtml}</div>
-        <div class="btns"><button class="btn-ghost" id="market-close">离开集市</button></div></div>`);
+        <div class="btns"><button class="btn-ghost" id="market-close">离开集市</button></div></div>`, { modal: true });
       $$(".mkt-tab").forEach(t => t.onclick = () => this.openMarket(t.dataset.tab));
       $$(".market-buy").forEach(b => b.onclick = () => {
         const i = +b.dataset.i, s = stalls[i];
@@ -10418,7 +10485,7 @@
             </button>`;
           }).join("")}
         </div>
-        <div class="btns"><button class="btn-ghost" id="forge-close">离开铁匠铺</button></div></div>`);
+        <div class="btns"><button class="btn-ghost" id="forge-close">离开铁匠铺</button></div></div>`, { modal: true });
       $$(".smith-forge").forEach(b => b.onclick = () => {
         const typeK = b.dataset.type;
         const isSpec = typeK === specialty.k;
@@ -10445,7 +10512,7 @@
             <button class="btn-primary" id="est-take" ${m.ap <= 0 ? "disabled" : ""}>接管（耗 1⚡）</button>
             <button class="btn-ghost" id="est-close">再想想</button>
           </div>
-        </div>`);
+        </div>`, { modal: true });
         $("#est-take").onclick = () => { if (Estate.takeover(m, cityId)) { closeOverlay(); this.render(); } };
         $("#est-close").onclick = () => closeOverlay();
         return;
@@ -10460,7 +10527,7 @@
             <button class="btn-primary" id="est-buy" ${m.ap <= 0 ? "disabled" : ""}>置办（耗 1⚡）</button>
             <button class="btn-ghost" id="est-close">再想想</button>
           </div>
-        </div>`);
+        </div>`, { modal: true });
         $("#est-buy").onclick = () => { if (Estate.buy(m, cityId)) { closeOverlay(); this.render(); } };
         $("#est-close").onclick = () => closeOverlay();
         return;
@@ -10490,7 +10557,7 @@
           <button class="btn-ghost" id="est-sell" ${sealed ? "disabled" : ""}>变卖（回收 ${Math.round(Estate.cumCost(cityId, lv) * Estate.SELL_FACTOR)} 金+未收账款）</button>
           <button class="btn-ghost" id="est-close">离开</button>
         </div>
-      </div>`);
+      </div>`, { modal: true });
       $("#est-collect").onclick = () => { closeOverlay(); this.collectEstate(cityId); };
       const upBtn = $("#est-up");
       if (upBtn) upBtn.onclick = () => { if (Estate.upgrade(m, cityId)) this.openEstate(); };
@@ -10507,7 +10574,7 @@
         <div class="wdesc">从<b>友谊满上限（${Bond.MAX_FRIEND}）</b>且不在团队中的武将里遴选，掌柜将常驻本城打理产业；收益加成 =（智力+政治）÷4，封顶 +${Estate.MANAGER_BONUS_MAX}%。</div>
         ${cands.length ? `<div class="menu" style="max-height:40vh;overflow-y:auto">${cands.map(g => `<button class="menu-btn est-mgr-cand" data-id="${g.id}"><span class="mi">${g.side === "cn" ? "🇨🇳" : "🇯🇵"}</span><span>${g.name}<small>智${g.zhi} 政${g.zheng} · 收益 +${Estate.managerBonus(g.id)}%</small></span></button>`).join("")}</div>` : `<div class="wdesc">暂无人选——先与武将处出满上限的交情吧（赠礼/拜访/切磋皆可积累友谊）。</div>`}
         <div class="btns"><button class="btn-ghost" id="est-mgr-back">返回</button></div>
-      </div>`);
+      </div>`, { modal: true });
       $$(".est-mgr-cand").forEach(el => el.onclick = () => { Estate.appoint(m, cityId, +el.dataset.id); this.openEstate(); });
       $("#est-mgr-back").onclick = () => this.openEstate();
     },
@@ -10549,7 +10616,7 @@
         ${sealed ? `<div class="wdesc bld-desc" style="color:var(--cn-red)">⛔ 此城现为敌占——建筑为敌所用（城墙助其守城），夺回后原级保留、即刻为你效力。</div>` : `<div class="wdesc bld-desc"><small>捐修花金币与本城专精材料（${matType.n}），不耗行动力；等级越高对繁荣度的贡献越大。</small></div>`}
         <div class="bld-list">${rows}</div>
         <div class="btns"><button class="btn-ghost" id="bld-close">离开</button></div>
-      </div>`);
+      </div>`, { modal: true });
       $$(".bld-up-btn").forEach(b => b.onclick = () => { if (Buildings.build(m, cityId, b.dataset.t)) this.openBuild(); });
       $("#bld-close").onclick = () => { closeOverlay(); this.render(); };
     },
@@ -10567,7 +10634,7 @@
           ${guard ? `<button class="btn-ghost" id="grd-out">解任守将</button>` : ""}
           <button class="btn-ghost" id="grd-close">离开</button>
         </div>
-      </div>`);
+      </div>`, { modal: true });
       $("#grd-manage").onclick = () => this.openGuardPicker(m, cityId);
       const outBtn = $("#grd-out"); if (outBtn) outBtn.onclick = () => { Guard.dismiss(m, cityId); toast(`守将已解任归乡`); this.openGuard(); };
       $("#grd-close").onclick = () => { closeOverlay(); this.render(); };
@@ -10579,7 +10646,7 @@
         <div class="wdesc">从<b>本势力武将</b>或<b>友谊满上限（${Bond.MAX_FRIEND}）</b>的他家武将中遴选（不在团队、未任掌柜、非一方主公），守将常驻本城死守，边境战报模拟中必上阵且六维 +${Guard.STAT_BONUS}。</div>
         ${cands.length ? `<div class="menu" style="max-height:40vh;overflow-y:auto">${cands.map(g => `<button class="menu-btn grd-cand" data-id="${g.id}"><span class="mi">🛡️</span><span>${g.name}<small>评分 ${ratingScore(g)}</small></span></button>`).join("")}</div>` : `<div class="wdesc">暂无人选——守将须是友谊满上限、且不在团队/不任掌柜的己方武将。</div>`}
         <div class="btns"><button class="btn-ghost" id="grd-back">返回</button></div>
-      </div>`);
+      </div>`, { modal: true });
       $$(".grd-cand").forEach(el => el.onclick = () => { Guard.appoint(m, cityId, +el.dataset.id); this.openGuard(); });
       $("#grd-back").onclick = () => this.openGuard();
     },
@@ -10614,7 +10681,7 @@
           <button class="btn-primary" id="grs-recruit" ${sliderMax > 0 ? "" : "disabled"}>💰 募兵</button>
           <button class="btn-ghost" id="grs-close">离开</button>
         </div>
-      </div>`);
+      </div>`, { modal: true });
       if ($("#grs-n")) {
         $("#grs-n").oninput = (e) => {
           this._grsN = +e.target.value;
@@ -10648,7 +10715,7 @@
         <h1>🏯 投效</h1>
         ${body}
         <div class="btns"><button class="btn-ghost" id="id-close">离开</button></div>
-      </div>`);
+      </div>`, { modal: true });
       $$(".id-fac").forEach(el => el.onclick = () => {
         if (el.classList.contains("disabled")) return;
         if (PlayerRank.join(m, el.dataset.f)) { this.render(); this.openJoin(); }
@@ -10716,7 +10783,7 @@
           ${this.lordActBtn(m, "feast", "🍶", "庆功宴", `全军忠诚 +3 · 庆功 ${Rewards.feastCharges(m)} 次`)}
         </div>
         <div class="btns"><button class="btn-ghost" id="id-close">离开</button></div>
-      </div>`);
+      </div>`, { modal: true });
       $$(".lord-act").forEach(b => b.onclick = () => this.openLordAction(b.dataset.a));
       $("#id-close").onclick = () => { closeOverlay(); this.render(); };
     },
@@ -10780,7 +10847,7 @@
           ${free <= 0 ? '<div class="wdesc">官位已满——再拓疆土方有新席位可授。</div>'
             : cand.length ? `<div class="menu" style="max-height:44vh;overflow-y:auto">${cand.map(g => row(g)).join("")}</div>`
             : '<div class="wdesc">麾下诸将皆已有职在身。</div>'}
-          ${back}</div>`);
+          ${back}</div>`, { modal: true });
         bind();
         $$(".la-pick").forEach(b => b.onclick = () => {
           if (!FactionOrders.spend(m, fid, 2)) { toast("军令不足"); return; }
@@ -10804,7 +10871,7 @@
           ${!free.length ? '<div class="wdesc">治下城池皆已有主。</div>'
             : cand.length ? `<div class="menu" style="max-height:40vh;overflow-y:auto">${cand.map(g => row(g)).join("")}</div>`
             : '<div class="wdesc">麾下诸将皆已受封。</div>'}
-          ${back}</div>`);
+          ${back}</div>`, { modal: true });
         bind();
         $$(".la-pick").forEach(b => b.onclick = () => {
           const gid = +b.dataset.id;
@@ -10814,7 +10881,7 @@
             <h1>🏯 封 ${DB.get(gid).name} 何城？</h1>
             <div class="menu" style="max-height:50vh;overflow-y:auto">${cities.map(cid =>
               `<button class="menu-btn la-city" data-c="${cid}"><span class="mi">🏙️</span><span>${cityName(cid)}<small>繁荣 ${Prosper.stars(m, cid)} · 日进 ${Estate.cityDailyGold(m, cid)} 金</small></span></button>`).join("")}</div>
-            ${back}</div>`);
+            ${back}</div>`, { modal: true });
           bind();
           $$(".la-city").forEach(cb => cb.onclick = () => {
             if (!FactionOrders.spend(m, fid, 2)) { toast("军令不足"); return; }
@@ -10836,7 +10903,7 @@
           ${!room ? '<div class="wdesc">义兄弟之数已满，情谊贵精不贵多。</div>'
             : cand.length ? `<div class="menu" style="max-height:44vh;overflow-y:auto">${cand.map(g => row(g, ` · 友谊 ${Bond.pts(g.id)}`)).join("")}</div>`
             : `<div class="wdesc">麾下尚无友谊达 ${Rewards.SWORN_BOND_MIN} 者——先多加走动罢。</div>`}
-          ${back}</div>`);
+          ${back}</div>`, { modal: true });
         bind();
         $$(".la-pick").forEach(b => b.onclick = () => {
           if (!FactionOrders.spend(m, fid, Rewards.SWORN_ORDERS)) { toast("军令不足"); return; }
@@ -10878,7 +10945,7 @@
             return `<button class="menu-btn plot-target" data-foe="${f.foe}"><span class="mi">${factionDef(f.foe).side === "cn" ? "🐲" : "🏯"}</span><span>${factionName(f.foe)}<small>智力差 ${adv >= 0 ? "+" : ""}${adv} · 约 ${chance}% 基础成算 · 敌对 ${FactionAI.hostility(m, fid, f.foe)}</small></span></button>`;
           }).join("")}</div>
         <div class="btns"><button class="btn-ghost" id="plot-close">离开</button></div>
-      </div>`);
+      </div>`, { modal: true });
       $$(".plot-target").forEach(b => b.onclick = () => this.openPlotPick(m, byFoe.get(b.dataset.foe)));
       $("#plot-close").onclick = () => { closeOverlay(); this.render(); };
     },
@@ -10897,7 +10964,7 @@
         <div class="wdesc">智力差 ${adv >= 0 ? "+" : ""}${Math.round(adv)}——差距越大成算与效果越猛，但七式一律可自由选用。</div>
         <div class="menu" style="max-height:50vh;overflow-y:auto">${rows}</div>
         <div class="btns"><button class="btn-ghost" id="plotpick-back">返回</button></div>
-      </div>`);
+      </div>`, { modal: true });
       $$(".plot-pick").forEach(b => b.onclick = () => {
         if (!FactionOrders.spend(m, fid, this.PLOT_ORDERS)) { toast("军令不足"); return; }
         const news = { plot: [] };
@@ -10918,7 +10985,7 @@
         <div class="wdesc">快马直达任一建有驿站的己方城市：不论多远只耗 <b>1⚡</b>，驿费按路程计（本城驿站等级越高越省），一路官道无奇遇、无风浪。💰 现有 ${Bond.gold()} 金</div>
         ${dests.length ? `<div class="menu post-dest-list" style="max-height:40vh;overflow-y:auto">${dests.map(d => `<button class="menu-btn post-dest" data-id="${d.id}" ${Bond.gold() < d.cost ? "disabled" : ""}><span class="mi">🏇</span><span>${d.n}<small>驿费 ${d.cost} 金</small></span></button>`).join("")}</div>` : `<div class="wdesc">尚无可达之处——对方城市也须归属己方且建有驿站。</div>`}
         <div class="btns"><button class="btn-ghost" id="post-back">返回</button></div>
-      </div>`);
+      </div>`, { modal: true });
       $$(".post-dest").forEach(el => el.onclick = () => this.postTravel(m, el.dataset.id));
       $("#post-back").onclick = () => { closeOverlay(); this.render(); };
     },
@@ -10931,7 +10998,7 @@
           <button class="btn-primary" id="pt-go" ${(m.ap <= 0 || Bond.gold() < dest.cost) ? "disabled" : ""}>快马前往</button>
           <button class="btn-ghost" id="pt-cancel">取消</button>
         </div>
-      </div>`);
+      </div>`, { modal: true });
       $("#pt-go").onclick = () => this.postTravel(m, dest.id);
       $("#pt-cancel").onclick = () => closeOverlay();
     },
@@ -10964,7 +11031,7 @@
           <button class="btn-primary" id="rsq-fight" ${m.ap <= 0 ? "disabled" : ""}>🗡️ 劫牢营救（1⚡）</button>
           <button class="btn-ghost" id="rsq-close">先行离开</button>
         </div>
-      </div>`);
+      </div>`, { modal: true });
       $("#rsq-pay").onclick = () => {
         if (!Bond.spend(price)) return;
         closeOverlay();
@@ -11117,7 +11184,7 @@
           <h1>${fac.icon} ${fac.n}</h1>
           <div class="wdesc">挑一位好手切磋，胜之可扬名声：</div>
           <div class="buff-list">${pool.map(g => `<button class="buff-btn fac-target" data-id="${g.id}"><span class="bi">⚔️</span><span class="bt"><b>${g.name}</b><small>评分 ${ratingScore(g)}</small></span></button>`).join("")}</div>
-          <div class="btns"><button class="btn-ghost" id="fac-cancel">取消</button></div></div>`);
+          <div class="btns"><button class="btn-ghost" id="fac-cancel">取消</button></div></div>`, { modal: true });
         $$(".fac-target").forEach(b => b.onclick = () => {
           if (m.ap <= 0) { toast("今日行动力已耗尽，请先宿营恢复"); return; }
           m.ap--; m.activeFacility = "duel"; Campaign.save();
@@ -11459,7 +11526,7 @@
           return `<button class="menu-btn sortie-t" data-id="${id}"><span class="mi">🎯</span><span>${cityName(id)}<small>${factionName(fid)} · 驻军 ${Garrison.get(m, id).toLocaleString()} · 城墙 ${Buildings.lv(m, id, "wall")} 级</small></span></button>`;
         }).join("")}</div>` : ""}
         <div class="btns"><button class="btn-ghost" id="sortie-close">再议</button></div>
-      </div>`);
+      </div>`, { modal: true });
       $$(".sortie-t").forEach(b => b.onclick = () => {
         const target = b.dataset.id;
         if (!spendAP()) return;
@@ -12259,7 +12326,7 @@
           🛣️ 相邻城池：${adjCities(cityId).map(id => cityName(id)).join("、")}
         </div>
         <div class="btns"><button class="btn-primary" id="ac-close">知道了</button></div>
-      </div>`);
+      </div>`, { modal: true });
       $("#ac-close").onclick = () => closeOverlay();
     },
   };
@@ -12376,7 +12443,7 @@
           🎖️ 麾下重臣：${top}
         </div>
         <div class="btns"><button class="btn-primary" id="af-close">知道了</button></div>
-      </div>`);
+      </div>`, { modal: true });
       $("#af-close").onclick = () => closeOverlay();
     },
   };
@@ -12463,7 +12530,7 @@
         <div class="btns" style="margin-top:16px">
           <button class="btn-primary" id="ef-save">保存</button>
           <button class="btn-ghost" id="ef-cancel">取消</button>
-        </div></div>`);
+        </div></div>`, { modal: true });
       $("#ef-cancel").onclick = closeOverlay;
       $("#ef-save").onclick = () => {
         const name = $("#ef-name").value.trim();
@@ -12593,7 +12660,7 @@
           <span class="bi">${it.icon}</span><span class="bt"><b style="color:${Armory.rarityDef(it.rarity).color}">${it.name}</b><small>${Armory.rarityDef(it.rarity).n} · +${it.bonus}${statUnit(it.stat)} ${statLabel(it.stat)}${it.equippedBy && it.equippedBy !== owner ? `（原佩戴于 ${ownerName(it.equippedBy)}）` : ''}${isGift ? ` · 友谊 +${Bond.GIFT_FRIEND[it.rarity]}${(Bond.data.gifted[owner] || []).includes(it.uid) ? '（已赠过，不重复计）' : ''}` : ''}</small></span></button>`).join("") || '<div class="empty">尚无该类可用宝物（未鉴定的宝物请先到「宝物库」鉴宝）</div>'}
         ${cur && !isGift ? `<button class="buff-btn" id="eq-unequip"><span class="bi">✕</span><span class="bt"><b>卸下</b></span></button>` : ""}
       </div>
-      <div class="btns"><button class="btn-ghost" id="eq-cancel">取消</button></div></div>`);
+      <div class="btns"><button class="btn-ghost" id="eq-cancel">取消</button></div></div>`, { modal: true });
     $$(".eq-opt").forEach(b => b.onclick = () => {
       const uid = +b.dataset.uid;
       const item = Armory.data.items.find(i => i.uid === uid);
@@ -12798,7 +12865,7 @@
         <div class="btns" style="margin-top:16px">
           <button class="btn-primary" id="vf-save">保存</button>
           <button class="btn-ghost" id="vf-cancel">取消</button>
-        </div></div>`);
+        </div></div>`, { modal: true });
       $("#vf-cancel").onclick = closeOverlay;
       $("#vf-save").onclick = () => {
         const name = $("#vf-name").value.trim();
@@ -12836,6 +12903,8 @@
       { key: "songti", n: "宋体", stack: '"Noto Serif SC", "Songti SC", "STSong", "SimSun", serif' },
       { key: "kaiti", n: "楷体", stack: '"STKaiti", "KaiTi", "Kaiti SC", "华文楷体", serif' },
       { key: "yuanti", n: "圆体", stack: '"STYuanti", "Yuanti SC", "华文中圆", "PingFang SC", sans-serif' },
+      { key: "yahei", n: "微软雅黑", stack: '"Microsoft YaHei", "Microsoft YaHei UI", "Noto Sans SC", "PingFang SC", sans-serif' },
+      { key: "pingfang", n: "苹方", stack: '"PingFang SC", "PingFang TC", -apple-system, "Noto Sans SC", sans-serif' },
     ],
     data: { font: "heiti" },
     load() {

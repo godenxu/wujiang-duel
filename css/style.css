@@ -121,7 +121,10 @@ html, body {
   letter-spacing: 1px; transition: transform .15s, box-shadow .15s; text-align: left;
   display: flex; align-items: center; gap: 8px; min-width: 0;
 }
-.menu-btn .mi { font-size: 22px; flex-shrink: 0; }
+/* 固定图标框：不同 emoji 本身的字形留白差异很大（如 🆕 这枚小徽章天生比 ▶️/📜 等圆形图标更瘦小、
+   更贴左上角），只设字号不设框会导致同一竖排按钮里图标看着彼此没对齐——统一给一个定宽定高的
+   居中容器，把每个 emoji 都摆进同一个视觉框正中央，字形差异就不再影响整排的对齐观感 */
+.menu-btn .mi { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0; }
 .menu-btn > span:last-child { min-width: 0; }
 .menu-btn small { display: block; font-size: 10px; letter-spacing: 0; color: #f0dcae; opacity: .85; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .menu-btn:active { transform: scale(.97); }
@@ -399,6 +402,12 @@ html, body {
   background: linear-gradient(160deg, var(--paper), var(--paper-dark)); color: var(--ink);
   box-shadow: 0 12px 40px #000; border: 2px solid var(--accent);
 }
+/* 浏览器/iPad/折叠屏展开态等宽屏场景：弹窗过去无论屏幕多宽都锁死在 420px，两侧空出大片背景，
+   内容却还是竖版手机那套单栏挤在一起——分两档放宽卡片本身可用宽度，配合下面各处内容改用
+   多栏/网格来真正把多出来的宽度用在展示更多信息上，而不是简单地拉宽卡片、四周多垫一圈空白。
+   .detail-card 自己的响应式宽度另在其基础规则之后覆写（见下方），避免被那条基础规则盖回 420px */
+@media (min-width: 640px) { .result-card { width: min(560px, 88vw); } }
+@media (min-width: 1000px) { .result-card { width: min(620px, 60vw); } }
 .result-card h1 { margin: 0 0 6px; font-size: 30px; color: var(--cn-red); letter-spacing: 4px; }
 .result-card .winner-av {
   width: 80px; height: 80px; border-radius: 50%; margin: 14px auto; font-size: 34px; font-weight: 900; color:#fff;
@@ -446,6 +455,8 @@ html, body {
 
 /* ---------- 详情弹窗（头像/姓名/简介横排、雷达图/六维并排，尽量单屏容纳） ---------- */
 .detail-card { width: min(420px, 92vw); max-height: 92vh; overflow-y: auto; padding: 18px 18px 22px; text-align: left; }
+@media (min-width: 640px) { .detail-card { width: min(680px, 88vw); } }
+@media (min-width: 1000px) { .detail-card { width: min(860px, 70vw); } }
 .dc-head { display: flex; align-items: center; gap: 12px; text-align: left; }
 .dc-av { width: 60px; height: 60px; margin: 0; flex: 0 0 auto; font-size: 26px; }
 .dc-head-info { flex: 1; min-width: 0; }
@@ -523,16 +534,25 @@ html, body {
 .wr-row.cn .wr-name { color: #ff9a9a; } .wr-row.jp .wr-name { color: #9ab6ff; }
 .wr-row .wr-k { color: var(--cn-gold); font-weight: 700; font-family: "DotGothic16", monospace; }
 
-/* 野战/边境战·攻城战终局功勋榜（GridBattle finish/finalizeBorderWar 共用） */
-.merit-board { background: rgba(0,0,0,.4); border: 1px solid rgba(212,175,55,.3); border-radius: 10px; padding: 6px 12px; margin-bottom: 10px; max-height: 260px; overflow-y: auto; }
-.merit-row { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 8px; padding: 3px 0; font-size: 14px; }
-.merit-row .merit-no { text-align: center; color: #c9b890; font-family: "DotGothic16", monospace; }
-.merit-row .merit-name { color: #e8dcc0; }
-.merit-row .merit-name em { font-style: normal; font-size: 11px; margin-left: 6px; opacity: .65; }
-.merit-row.my .merit-name { color: #ff9a9a; } .merit-row.foe .merit-name { color: #9ab6ff; }
-.merit-row.fallen { opacity: .55; }
-.merit-row.fallen .merit-name::after { content: "（折损）"; font-size: 11px; opacity: .8; }
-.merit-row .merit-val { color: var(--cn-gold); font-weight: 700; font-family: "DotGothic16", monospace; }
+/* 野战/边境战·攻城战终局战况总览板（GridBattle.meritRankingHtml 统一产出，finish/finalizeBorderWar 共用）——
+   这块板始终嵌在浅色宣纸底的 .result-card 里，配色须按浅底走，不能照搬深色 HUD 那一套浅色文字方案 */
+.merit-board { background: rgba(0,0,0,.05); border: 1px solid rgba(120,90,40,.3); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; max-height: 280px; overflow-y: auto; text-align: left; }
+.merit-row { padding: 5px 0; border-bottom: 1px solid rgba(120,90,40,.12); }
+.merit-row:last-child { border-bottom: none; }
+.merit-row .merit-line1 { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.merit-row .merit-no { min-width: 20px; text-align: center; color: #8a6d1f; font-weight: 700; font-family: "DotGothic16", monospace; }
+.merit-row .merit-name { flex: 1; color: var(--ink); font-weight: 600; }
+.merit-row .merit-side { font-size: 11px; opacity: .7; }
+.merit-row.my .merit-side { color: var(--cn-red); } .merit-row.foe .merit-side { color: #2c4a8a; }
+.merit-row .merit-fallen-tag { font-size: 11px; color: #8a7d5e; background: rgba(120,90,40,.14); border-radius: 4px; padding: 1px 6px; }
+.merit-row.fallen .merit-name { opacity: .6; text-decoration: line-through; }
+.merit-row .merit-line2 { display: flex; gap: 14px; font-size: 12px; color: #6b5d42; margin-top: 2px; padding-left: 26px; }
+.merit-row .merit-val { margin-left: auto; color: #8a6412; font-weight: 700; font-family: "DotGothic16", monospace; }
+/* 每行高度一致、条数往往不少——宽屏下改两栏摆放，让加宽的卡片装下更多武将而不必来回滚动 */
+@media (min-width: 640px) {
+  .merit-board { column-count: 2; column-gap: 16px; max-height: 360px; }
+  .merit-row { break-inside: avoid; }
+}
 
 /* ---------- 组队大战 ---------- */
 /* 汇总栏：存活数 · 评分合计 · 兵力合计；战国一侧整体镜像（row-reverse），与武将行的镜像呼应 */
@@ -1149,6 +1169,12 @@ html, body {
 .nr-sect.mine .nr-item { background: rgba(232,194,90,.16); border-left-color: #b8860b; }
 .nr-sect.alert .nr-head { color: var(--cn-red); }
 .nr-sect.alert .nr-item { background: rgba(193,39,45,.12); border-left-color: var(--cn-red); font-weight: 600; }
+/* 宽屏下夜报卡片本身变宽了，条目却还是单栏的一句句短消息，只会把行拉得老长、两端留白——
+   改用多栏报纸式排版把宽度用在"同屏看到更多条"上；每节 break-inside:avoid 尽量不被从中截断 */
+@media (min-width: 640px) {
+  .nr-body { columns: 2; column-gap: 22px; }
+  .nr-sect { break-inside: avoid; }
+}
 
 /* 主公标记 */
 .lord-mark { font-size: 12px; margin-left: 3px; }
