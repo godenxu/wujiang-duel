@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608212333";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608220925";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -3460,11 +3460,19 @@
       this.foes = foeRoster.slice(0, 10);
       this._setupCommon();
     },
+    // 可操控范围：野战演武·自由练习（this.rpg 为假）不受身份限制，两军随你摆弄，保留原有的练习/试玩体验；
+    // 委外战场（边境战/攻城战，this.rpg 为真）则按身份收紧——只有你本人、你的团队成员可亲自指挥，
+    // 其余武将（候选池随机补位而来）交由 AI 自主调度；官至「城主」（PlayerRank 最高一阶）或已自立门户
+    // 当主（"_player_"）时，视同已统率一方势力，本势力麾下全部出阵武将皆可指挥
     controllable(g) {
+      if (!this.rpg) return true;
       if (!RPG.char) return false;
       if (g.id === -1) return true;
       const m = typeof Campaign !== "undefined" && Campaign.mapState && Campaign.mapState();
-      if (m && m.playerFaction === "_player_") return (m.generalFaction || {})[g.id] === "_player_";
+      if (m && m.playerFaction) {
+        const lordLevel = m.playerFaction === "_player_" || m.playerRank >= PlayerRank.RANKS.length - 1;
+        if (lordLevel) return (m.generalFaction || {})[g.id] === m.playerFaction;
+      }
       return !!(typeof Bond !== "undefined" && Bond.data && (Bond.data.team || []).includes(g.id));
     },
     abort() { this.gen++; this.phase = null; this.selectedUnit = null; },
@@ -3577,6 +3585,7 @@
       this.selectedUnit = null; this.selPhase = null; this.actionMode = null; this.deploySel = null;
       this.myCampSiege = 0; this.foeCampSiege = 0;   // 大本营围城计数：连续 3 回合被占领即视为攻破
       this.busy = false;
+      this.delegated = false;   // 「委托」：玩家中途放弃亲自指挥，余下战斗全自动推演，见 delegate()
       showScreen("fieldgrid");
       // 委外战场且主角未被抽中亲历：跳过排兵布阵画面/点将出阵等一切手动确认，直接开战并自动推演双方
       if (this.external && this.external.auto) {
@@ -3852,7 +3861,13 @@
       this.log(`🤺 ${att.g.name} 请战单挑，${def.g.name} 按捺不住，两将阵前一战！`);
       const myGen = this.gen;
       const res = await startTeamDuel(clone(att.g), clone(def.g), {
-        title: "阵前单挑", backScreen: "fieldgrid", spectate: !this.controllable(att.g),
+        // 只要这一步棋是由 AI（而非玩家当场点击）代为出手，单挑就必须走观战/全自动结算，不能按
+        // "玩家亲自出招"打开——三种情形都算 AI 代打：已委托（delegated）、委外战场全自动推演
+        // （external.auto，主角未被抽中亲历）、或攻方本就不在玩家可操控范围内。只看 controllable
+        // 曾经漏判前两种：即便攻方恰是主角本人或本势力麾下、理论上"可操控"，一旦当下是 AI 在替玩家
+        // 操盘，仍会误开非观战模式的单挑画面，卡在等待一次永远不会到来的人工点击「出招」上
+        title: "阵前单挑", backScreen: "fieldgrid",
+        spectate: this.delegated || (this.external && this.external.auto) || !this.controllable(att.g),
         intro: `${att.g.name} 请战单挑 ${def.g.name}，两将阵前一决高下！`,
       });
       if (this.gen !== myGen) return;
@@ -3948,6 +3963,7 @@
     // 医疗营救（选定己方一部小幅回兵）/ 疑兵佯攻（选定敌方一部防御临时-20%，持续2回合）——
     // 「斥候探阵」随阵形改为逐将独立、且棋子上直接标出阵形图标后失去意义，本轮起移除
     useOrder(kind) {
+      if (this.delegated) return;
       if (this.myOrders <= 0) { toast("军令已用尽！"); return; }
       if (kind === "drum") {
         this.myOrders--; this.myUnits.filter(u => u.alive).forEach(u => this.gainMorale(u, 8));
@@ -4051,7 +4067,8 @@
 
     /* ---------- 我方回合：选将/移动/行动 ---------- */
     selectUnit(u) {
-      if (u.acted || u.side !== "my" || this.turnSide !== "my") return;
+      if (u.acted || u.side !== "my" || this.turnSide !== "my" || this.delegated) return;
+      if (!this.controllable(u.g)) { toast(`${u.g.name} 部不在你的直属调度范围内，已由部将自主接战`); return; }
       // 不再预设「攻击」为默认行动类型——玩家须先在环形菜单里点明确的行动方式，见 onCellClick 的把关
       // 若该部本回合已经挪动过（u.moved），哪怕中途取消选择、重新选中也不能再挪一次——直接进入行动阶段，
       // 之前是「移动后点空白处取消」会把这部重新丢回可移动状态，等于一回合能挪好几次的 bug
@@ -4276,6 +4293,46 @@
       if (this.gen !== myGen) return;
       this.endMyTurn();
     },
+    // 我方回合开局自动接战：不在玩家直属调度范围内的部众（候选池随机补位而来，见 controllable）
+    // 在每个我方回合一开始就自行行动完毕，只把真正可指挥的部众留给玩家操作；不推进回合本身，
+    // 玩家操作完自己能管的部众后仍需手动点「结束回合」——与全自动推演（autoPlayMyTurn）的区别在于
+    // 这里只挑"不可控"的部分出手，可控部众的 acted 状态原样保留，等玩家亲自处置
+    async autoPlayNonControlled() {
+      const myGen = this.gen;
+      for (const u of this.myUnits) {
+        if (this.gen !== myGen) return;
+        if (!u.alive || u.acted || this.controllable(u.g)) continue;
+        await this.aiActUnit(u);
+        if (this.gen !== myGen) return;
+        if (this.checkBattleEnd()) return;
+      }
+      if (this.gen !== myGen) return;
+      this.renderBattle();
+    },
+    // 「委托」：玩家中途放弃亲自指挥，把本回合剩余「未行动」的部众（含此前一直由玩家亲自操控的部众）
+    // 一并交给 AI 接管，随后调用 endMyTurn 进入敌方回合——此后每个我方回合，endTurnCycle 见 this.delegated
+    // 便会持续自动排定 autoPlayMyTurn，无需再逐回合手动确认，直到战斗结束
+    async autoFinishMyTurn() {
+      const myGen = this.gen;
+      this.selectedUnit = null; this.selPhase = null; this.actionMode = null; this.orderMode = null;
+      for (const u of this.myUnits) {
+        if (this.gen !== myGen) return;
+        if (!u.alive || u.acted) continue;
+        await this.aiActUnit(u);
+        if (this.gen !== myGen) return;
+        if (this.checkBattleEnd()) return;
+      }
+      if (this.gen !== myGen) return;
+      this.endMyTurn();
+    },
+    delegate() {
+      if (this.delegated || this.turnSide !== "my" || this.phase !== "battle") return;
+      if (!confirm("委托 AI 代为指挥，本局余下战斗将全自动推演，确定吗？此举不可撤销。")) return;
+      this.delegated = true;
+      this.log("🤝 已委托全军自主指挥，静观战报即可");
+      this.renderBattle();
+      this.autoFinishMyTurn();
+    },
     // 侧别无关的通用 AI：既供敌方回合（runFoeTurn）调用，也供外部委外战场全自动推演时
     // 驱动我方（autoPlayMyTurn，主角未亲历时）调用——按 u.side 自行判定敌我，不再写死"我方=玩家"
     async aiActUnit(u) {
@@ -4354,6 +4411,9 @@
       this.foeUnits.forEach(u => { u.acted = false; });
       this.log(`🥁 两军对圆！各部按己方阵形列阵——前 3 回合内阵形相克（锥克方圆·方圆克雁行·雁行克鹤翼·鹤翼克锥形）额外 +10% 攻击`);
       this.renderBattle();
+      // 委外战场且并非全自动推演（主角亲历，但麾下未必人人由你直接调度）：一开局就先让不在调度范围内的
+      // 部众自行接战，把回合真正交到玩家手上的只有可指挥的那部分
+      if (this.rpg && !this.delegated && !(this.external && this.external.auto)) this.autoPlayNonControlled();
     },
     endTurnCycle() {
       this.formTurnsLeft = Math.max(0, this.formTurnsLeft - 1);
@@ -4406,9 +4466,15 @@
       this.foeUnits.forEach(u => { u.acted = false; });
       this.log(`—— 第 ${this.turnN} 回合 ——`);
       this.renderBattle();
-      // 委外战场全自动推演（主角未亲历）：敌方回合刚结束、回到我方回合时，接着自动跑我方这一轮，
-      // 不必等玩家点击——与 endMyTurn 里"我方跑完自动接敌方回合"首尾相扣，串成完整的无人值守循环
-      if (this.external && this.external.auto && this.phase === "battle") this.scheduleIfCurrent(() => this.autoPlayMyTurn(), 400);
+      // 委外战场全自动推演（主角未亲历，或玩家中途点了「委托」）：敌方回合刚结束、回到我方回合时，
+      // 接着自动跑我方这一轮，不必等玩家点击——与 endMyTurn 里"我方跑完自动接敌方回合"首尾相扣，
+      // 串成完整的无人值守循环
+      if ((this.delegated || (this.external && this.external.auto)) && this.phase === "battle") {
+        this.scheduleIfCurrent(() => this.autoPlayMyTurn(), 400);
+      } else if (this.rpg && this.phase === "battle") {
+        // 半自动：主角亲历但麾下未必人人受你直接调度，每回合开局先让不可控的部众自行接战
+        this.autoPlayNonControlled();
+      }
     },
     // 胜负判定：一方全部武将皆已溃退（兵力或士气归零）才算落败——单场单挑或单一部的溃散
     // 至多只是"折损一部"，不会像旧版团队共享士气那样被一次意外拖累判定整场大捷/大败。
@@ -4744,13 +4810,16 @@
           </div>`;
         }
       }
-      // 底部只留一行军令按钮，靠右排列；「军令/敌令」数已并入上方对阵情况，这里不再重复
+      // 底部只留一行军令按钮，靠右排列；「军令/敌令」数已并入上方对阵情况，这里不再重复。
+      // 「委托」固定摆在最左侧：一键把余下战斗全交给 AI 代打，全自动推演的委外战场（已无需再委托一次）不显示
+      const showDelegate = !(this.external && this.external.auto);
       const orderToolbar = `<div class="fb-orders fg-orders-row">
-        <button class="fb-ord" id="fg-drum" ${this.myOrders > 0 ? "" : "disabled"}>🥁 擂鼓</button>
-        <button class="fb-ord ${this.orderMode === "heal" ? "active" : ""}" id="fg-heal" ${this.myOrders > 0 ? "" : "disabled"} title="选定己方一部，小幅回复兵力">🩹 医疗</button>
-        <button class="fb-ord ${this.orderMode === "feint" ? "active" : ""}" id="fg-feint" ${this.myOrders > 0 ? "" : "disabled"} title="选定敌方一部，防御临时-20%，持续2回合">🎭 疑兵</button>
-        <button class="fb-ord ${this.orderMode === "fire" ? "active" : ""}" id="fg-fire" ${this.myOrders > 0 ? "" : "disabled"} title="须山道地形，或军中有精通天时者">🔥 火攻</button>
-        <button class="fb-ord ctrl" id="fg-endturn" ${this.turnSide === "my" ? "" : "disabled"}>⏭ 结束回合</button>
+        ${showDelegate ? `<button class="fb-ord delegate" id="fg-delegate" ${this.delegated ? "disabled" : ""}>${this.delegated ? "🤝 已委托" : "🤝 委托"}</button>` : ""}
+        <button class="fb-ord" id="fg-drum" ${this.myOrders > 0 && !this.delegated ? "" : "disabled"}>🥁 擂鼓</button>
+        <button class="fb-ord ${this.orderMode === "heal" ? "active" : ""}" id="fg-heal" ${this.myOrders > 0 && !this.delegated ? "" : "disabled"} title="选定己方一部，小幅回复兵力">🩹 医疗</button>
+        <button class="fb-ord ${this.orderMode === "feint" ? "active" : ""}" id="fg-feint" ${this.myOrders > 0 && !this.delegated ? "" : "disabled"} title="选定敌方一部，防御临时-20%，持续2回合">🎭 疑兵</button>
+        <button class="fb-ord ${this.orderMode === "fire" ? "active" : ""}" id="fg-fire" ${this.myOrders > 0 && !this.delegated ? "" : "disabled"} title="须山道地形，或军中有精通天时者">🔥 火攻</button>
+        <button class="fb-ord ctrl" id="fg-endturn" ${this.turnSide === "my" && !this.delegated ? "" : "disabled"}>⏭ 结束回合</button>
       </div>`;
       const root = $("#fg-content");
       root.innerHTML = `
@@ -4797,6 +4866,7 @@
       const mf = $("#fg-mode-flank", root); if (mf) mf.onclick = () => { this.actionMode = "flank"; this.renderBattle(); };
       const mc = $("#fg-mode-chg", root); if (mc) mc.onclick = () => { this.actionMode = "challenge"; this.renderBattle(); };
       const skb = $("#fg-skill-btn", root); if (skb) skb.onclick = () => this.useActiveSkill(u);
+      const delegateBtn = $("#fg-delegate", root); if (delegateBtn) delegateBtn.onclick = () => this.delegate();
       const drum = $("#fg-drum", root); if (drum) drum.onclick = () => this.useOrder("drum");
       const fire = $("#fg-fire", root); if (fire) fire.onclick = () => this.useOrder("fire");
       const heal = $("#fg-heal", root); if (heal) heal.onclick = () => this.useOrder("heal");
@@ -10255,6 +10325,10 @@
       // 一键卖出：仅批量处理非传奇宝物（传奇宝物贵重，须逐件亲自确认，不纳入一键批处理，避免误卖）
       const bulkTargets = tradable.filter(item => item.rarity !== "legend");
       const bulkTotal = bulkTargets.reduce((s, item) => s + Armory.tradeSellPrice(item, m.curCity), 0);
+      // 一键买入：本城今日在售、尚未售罄的全部货摊一次买下，不区分是否传奇（买入不像卖出那样有"手滑卖掉传家宝"的风险，
+      // 无需逐件确认；总价一次性核验够不够钱，钱不够就整单作罢，不做"买到哪算哪"的半吊子结算）
+      const bulkBuyTargets = stallOrder.filter(i => !sold.includes(i));
+      const bulkBuyTotal = bulkBuyTargets.reduce((s, i) => s + Math.round(Armory.shopPrice(stalls[i].rarity) * factor), 0);
       openOverlay(`<div class="result-card detail-card market-card">
         <h1>🏪 ${c.n}集市</h1>
         <div class="wdesc">💰 现有 ${Bond.gold()} 金 · 货摊每日更新</div>
@@ -10265,6 +10339,7 @@
         <div class="wdesc mkt-hint">${marketTab === "buy"
           ? `本地行情：${factor <= 0.85 ? "🈹 黑市/折扣价" : factor < 1 ? "💰 偏低" : factor > 1.1 ? "📈 偏贵" : "⚖️ 公道"}（约 ${Math.round(factor * 100)}% 市价）${marketTrendSuffix(m, m.curCity)}`
           : `按本城真实行情结算（本城约 ${Math.round(cityPriceFactor(m.curCity) * 100)}% 市价 × 85%）；低价城买、高价城卖方能赚得差价${marketTrendSuffix(m, m.curCity)}`}</div>
+        ${marketTab === "buy" && bulkBuyTargets.length ? `<div class="btns" style="margin:6px 0 0"><button class="btn-ghost" id="market-buy-all">🛒 一键买入所有宝物（${bulkBuyTargets.length} 件 · 约 ${bulkBuyTotal} 金）</button></div>` : ""}
         ${marketTab === "sell" && bulkTargets.length ? `<div class="btns" style="margin:6px 0 0"><button class="btn-ghost" id="market-sell-all">🚢 一键卖出非传奇宝物（${bulkTargets.length} 件 · 约 ${bulkTotal} 金）</button></div>` : ""}
         <div class="buff-list mkt-list">${marketTab === "buy" ? buyHtml : sellHtml}</div>
         <div class="btns"><button class="btn-ghost" id="market-close">离开集市</button></div></div>`);
@@ -10299,6 +10374,23 @@
         AudioSystem.sfx.select();
         this.render();
         this.openMarket("sell");
+      };
+      const buyAllBtn = $("#market-buy-all");
+      if (buyAllBtn) buyAllBtn.onclick = () => {
+        if (!confirm(`一键买入本城全部 ${bulkBuyTargets.length} 件在售宝物，合计约需 ${bulkBuyTotal} 金，确定继续？`)) return;
+        if (Bond.gold() < bulkBuyTotal) { toast(`金币不足（需 ${bulkBuyTotal} 金）`); return; }
+        bulkBuyTargets.forEach(i => {
+          const s = stalls[i];
+          const price = Math.round(Armory.shopPrice(s.rarity) * factor);
+          if (!Bond.spend(price)) return;
+          Armory.data.items.push(Armory.makeItem(s.type, s.rarity, s.tmpl));
+          sold.push(i);
+        });
+        Armory.save(); Campaign.save();
+        AudioSystem.sfx.select();
+        toast(`已买入 ${bulkBuyTargets.length} 件宝物，共花费 ${bulkBuyTotal} 金`);
+        this.render();
+        this.openMarket("buy");
       };
       $("#market-close").onclick = () => { closeOverlay(); this.render(); };
     },
@@ -11942,14 +12034,17 @@
    * ============================================================ */
   const AllGenUI = {
     side: "all",
+    filterFid: null,   // 从「全部势力」点武将数跳转过来时，只看这一家势力麾下的已现身武将
     sort: { key: "bond", dir: -1 },   // 默认按友谊从高到低
-    open() {
+    open(filterFid) {
       this.side = "all";
+      this.filterFid = filterFid || null;
       $$(".side-tab[data-agside]").forEach(t => t.classList.toggle("active", t.dataset.agside === "all"));
       const kw = $("#allgen-search"); if (kw) kw.value = "";
       this.render();
       showScreen("allgen");
     },
+    clearFilter() { this.filterFid = null; this.render(); },
     setSide(side) {
       this.side = side;
       $$(".side-tab[data-agside]").forEach(t => t.classList.toggle("active", t.dataset.agside === side));
@@ -11967,7 +12062,12 @@
       const kw = ($("#allgen-search") && $("#allgen-search").value.trim()) || "";
       let arr = DB.list.filter(g => m.appeared.includes(g.id));
       if (this.side !== "all") arr = arr.filter(g => g.side === this.side);
+      if (this.filterFid) arr = arr.filter(g => (m.generalFaction || {})[g.id] === this.filterFid);
       if (kw) arr = arr.filter(g => g.name.includes(kw) || (g.title || "").includes(kw));
+      const filterBar = $("#allgen-filter");
+      if (filterBar) filterBar.innerHTML = this.filterFid
+        ? `<span class="filter-chip">只看：${facChip(this.filterFid)}<span class="fc-clear" id="allgen-filter-clear">✕</span></span>` : "";
+      const fcClear = $("#allgen-filter-clear"); if (fcClear) fcClear.onclick = () => this.clearFilter();
       const rows = arr.map(g => ({ g, hg: Armory.geared(g, g.id) }));
       const { key, dir } = this.sort;
       rows.sort((a, b) => {
@@ -12030,7 +12130,9 @@
    * 行点击弹出该城详情（归属/繁荣/设施/专精/行情/产业/本地武将/悬赏/相邻城池） */
   const AllCityUI = {
     sort: { key: "name", dir: 1 },
-    open() { this.render(); showScreen("allcity"); },
+    filterFid: null,   // 从「全部势力」点城池数跳转过来时，只看这一家势力名下的城池
+    open(filterFid) { this.filterFid = filterFid || null; this.render(); showScreen("allcity"); },
+    clearFilter() { this.filterFid = null; this.render(); },
     sortBy(key) {
       if (this.sort.key === key) this.sort.dir *= -1;
       else this.sort = { key, dir: key === "name" ? 1 : -1 };
@@ -12057,12 +12159,16 @@
       const buildTxt = buildOpts.length
         ? buildOpts.map(t => `${BUILD_TYPES[t].icon}${Buildings.lv(m, c.id, t)}`).join(" ")
         : "—";
+      const priceFactor = c.side === "sea" ? null : cityPriceFactor(c.id);
+      const priceTxt = priceFactor == null ? "—"
+        : (priceFactor <= 0.85 ? "🈹黑市" : priceFactor < 1 ? "💰偏低" : priceFactor > 1.1 ? "📈偏贵" : "⚖️公道")
+          + `${Math.round(priceFactor * 100)}%` + marketTrendSuffix(m, c.id);
       return {
         c, owner, prosper: Prosper.lv(m, c.id), buildTxt,
         fid, facnName: isRealFaction(fid) ? factionName(fid) : "无主", lord: isRealFaction(fid) ? factionLordName(fid) : "—",
         facName: fac ? fac.n : "—",
         smith: Armory.TYPES[hashStr(c.id) % Armory.TYPES.length].n,
-        estTxt, dailyGold, dailyTxt, appeared: appeared.length, total: locals.length,
+        estTxt, dailyGold, dailyTxt, priceFactor: priceFactor || 0, priceTxt, appeared: appeared.length, total: locals.length,
         bounty: ((m.bounties && m.bounties[c.id]) || []).length,
         // 对马岛虽是海路中转站，驻军照常回补募兵，总览表不再对其隐藏兵力数字（见 Garrison.tickAll 的根因修复）
         troops: Garrison.get(m, c.id), troopsCap: Garrison.cap(m, c.id),
@@ -12072,7 +12178,12 @@
       const m = Campaign.mapState();
       const list = $("#allcity-list");
       if (!m) { list.innerHTML = '<div class="empty">尚未开局</div>'; return; }
-      const rows = CITIES.map(c => this.rowData(m, c));
+      let rows = CITIES.map(c => this.rowData(m, c));
+      if (this.filterFid) rows = rows.filter(r => r.fid === this.filterFid);
+      const filterBar = $("#allcity-filter");
+      if (filterBar) filterBar.innerHTML = this.filterFid
+        ? `<span class="filter-chip">只看：${facChip(this.filterFid)}<span class="fc-clear" id="allcity-filter-clear">✕</span></span>` : "";
+      const fcClear = $("#allcity-filter-clear"); if (fcClear) fcClear.onclick = () => this.clearFilter();
       const { key, dir } = this.sort;
       rows.sort((a, b) => {
         if (key === "name") return a.c.n.localeCompare(b.c.n, "zh") * dir;
@@ -12083,7 +12194,7 @@
       });
       const arrow = k => key === k ? (dir > 0 ? " ▲" : " ▼") : "";
       const th = (k, label) => `<th data-sort="${k}" class="${key === k ? 'sorted' : ''}">${label}${arrow(k)}</th>`;
-      const head = `<tr>${th("name", "城市")}${th("facn", "势力")}${th("lord", "主公")}${th("owner", "国别")}${th("prosper", "繁荣")}<th>城建</th><th>特色设施</th><th>铁匠专精</th><th>产业</th>${th("dailyGold", "日进")}${th("troops", "驻军")}${th("appeared", "武将")}${th("bounty", "悬赏")}</tr>`;
+      const head = `<tr>${th("name", "城市")}${th("facn", "势力")}${th("lord", "主公")}${th("owner", "国别")}${th("prosper", "繁荣")}<th>城建</th><th>特色设施</th><th>铁匠专精</th><th>产业</th>${th("dailyGold", "日进")}${th("priceFactor", "本地行情")}${th("troops", "驻军")}${th("appeared", "武将")}${th("bounty", "悬赏")}</tr>`;
       const body = rows.map(r => `<tr data-id="${r.c.id}"${r.fid === m.playerFaction ? ' class="row-mine"' : ""}>
           <td class="dt-name ${r.owner}"><span class="dt-dot"></span>${r.c.id === m.curCity ? "📍" : ""}${r.c.n}</td>
           <td class="allgen-city">${isRealFaction(r.fid) ? facChip(r.fid) : "—"}</td>
@@ -12095,6 +12206,7 @@
           <td class="allgen-city">${r.smith}</td>
           <td class="allgen-city">${r.estTxt}</td>
           <td class="num">${r.dailyTxt}</td>
+          <td class="allgen-city">${r.priceTxt}</td>
           <td class="num">${r.troops == null ? "—" : `${r.troops.toLocaleString()}/${r.troopsCap.toLocaleString()}`}</td>
           <td class="num">${r.appeared}/${r.total}</td>
           <td class="num">${r.bounty}</td>
@@ -12211,8 +12323,8 @@
           <td class="allgen-city">${facChip(r.fid)}</td>
           <td class="dt-name ${r.side}">${r.lord}</td>
           <td class="num">${sideName(r.side)}</td>
-          <td class="num">${r.cities}</td>
-          <td class="num">${r.gens}/${r.gensTotal}</td>
+          <td class="num allfac-link" data-goto="cities">${r.cities}</td>
+          <td class="num allfac-link" data-goto="gens">${r.gens}/${r.gensTotal}</td>
           <td class="num">${r.troops.toLocaleString()}</td>
           <td class="num"><b style="color:var(--cn-gold)">${r.fame}</b><br><small>${FactionFame.tierName(r.fame)}</small></td>
           <td class="num">${r.orders}/${r.ordersCap}</td>
@@ -12226,6 +12338,12 @@
         : `<div class="empty">天下已无此列势力</div>`;
       $$("#allfac-list th[data-sort]").forEach(h => h.onclick = () => this.sortBy(h.dataset.sort));
       $$("#allfac-list tbody tr").forEach(tr => { tr.onclick = () => this.showFaction(tr.dataset.id); });
+      // 城池数/武将数两格单独跳转到「全部城市/全部武将」并按本势力筛选，不冒泡到整行的势力详情弹层
+      $$("#allfac-list .allfac-link").forEach(td => td.onclick = (e) => {
+        e.stopPropagation();
+        const fid = td.closest("tr").dataset.id;
+        if (td.dataset.goto === "cities") AllCityUI.open(fid); else AllGenUI.open(fid);
+      });
     },
     showFaction(fid) {
       const m = Campaign.mapState();
@@ -12708,6 +12826,50 @@
   };
 
   /* ============================================================
+   *  设置：目前只有字体选择一项，右上角音乐/音效按钮旁新增的⚙️入口——
+   *  切换只需改写 :root 的 --app-font 这一个 CSS 变量（见 style.css），存到 localStorage 下次启动自动生效
+   * ============================================================ */
+  const SETTINGS_KEY = "wujiang_settings_v1";
+  const Settings = {
+    FONTS: [
+      { key: "heiti", n: "黑体", stack: '"Noto Sans SC", "PingFang SC", "Microsoft YaHei", "Heiti SC", "Source Han Sans SC", sans-serif' },
+      { key: "songti", n: "宋体", stack: '"Noto Serif SC", "Songti SC", "STSong", "SimSun", serif' },
+      { key: "kaiti", n: "楷体", stack: '"STKaiti", "KaiTi", "Kaiti SC", "华文楷体", serif' },
+      { key: "yuanti", n: "圆体", stack: '"STYuanti", "Yuanti SC", "华文中圆", "PingFang SC", sans-serif' },
+    ],
+    data: { font: "heiti" },
+    load() {
+      try { const s = localStorage.getItem(SETTINGS_KEY); if (s) Object.assign(this.data, JSON.parse(s)); } catch (e) {}
+      this.apply();
+    },
+    save() { localStorage.setItem(SETTINGS_KEY, JSON.stringify(this.data)); },
+    apply() {
+      const f = this.FONTS.find(f => f.key === this.data.font) || this.FONTS[0];
+      document.documentElement.style.setProperty("--app-font", f.stack);
+    },
+    setFont(key) {
+      this.data.font = key;
+      this.save();
+      this.apply();
+      this.open();   // 原地刷新，让"当前选中"高亮立即跟上
+    },
+    open() {
+      openOverlay(`<div class="result-card detail-card">
+        <h1>⚙️ 设置</h1>
+        <div class="mc-sect">🔤 字体</div>
+        <div class="menu map-menu-free">
+          ${this.FONTS.map(f => `<button class="menu-btn settings-font-btn ${f.key === this.data.font ? "active" : ""}" data-font="${f.key}" style="font-family:${f.stack}">
+            <span>${f.n}<small>${f.key === this.data.font ? "当前使用" : "点击切换"}</small></span>
+          </button>`).join("")}
+        </div>
+        <div class="btns"><button class="btn-ghost" id="settings-close">关闭</button></div>
+      </div>`, { modal: true });
+      $$(".settings-font-btn").forEach(b => b.onclick = () => this.setFont(b.dataset.font));
+      $("#settings-close").onclick = () => closeOverlay();
+    },
+  };
+
+  /* ============================================================
    *  音频按钮绑定
    * ============================================================ */
   function syncAudioBtns() {
@@ -12718,12 +12880,14 @@
   function bindAudio() {
     $$('[id^="btn-music"]').forEach(b => b.onclick = () => { AudioSystem.toggleMusic(!AudioSystem.isMusicOn()); syncAudioBtns(); });
     $$('[id^="btn-sfx"]').forEach(b => b.onclick = () => { AudioSystem.toggleSfx(!AudioSystem.isSfxOn()); syncAudioBtns(); });
+    $$('[id^="btn-settings"]').forEach(b => b.onclick = () => Settings.open());
   }
 
   /* ============================================================
    *  初始化与事件绑定
    * ============================================================ */
   function init() {
+    Settings.load();
     DB.load();
     Bond.load();
     Armory.load();

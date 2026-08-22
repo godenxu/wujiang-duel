@@ -14,6 +14,9 @@
   --hp-good: #4caf50;
   --hp-mid: #ffb300;
   --hp-low: #e53935;
+  /* 全局字体：默认黑体族，可在「设置」里切换为其他主流字体（见 js/app.js 的 Settings 模块），
+     切换时只需改写这一个变量，无需逐处覆盖 font-family: inherit 的组件 */
+  --app-font: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", "Heiti SC", "Source Han Sans SC", sans-serif;
 }
 
 /* 全局隐藏原生滚动条（触摸/滚轮滑动仍可用）——经典（非悬浮）滚动条会在内容增高时临时占据一段宽度、
@@ -25,7 +28,7 @@
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body {
   margin: 0; padding: 0; height: 100%;
-  font-family: "Noto Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  font-family: var(--app-font);
   color: var(--paper);
   background: #120c08;
   overflow: hidden;
@@ -135,6 +138,11 @@ html, body {
 }
 .side-tab.active.cn { background: linear-gradient(135deg, var(--cn-red), #7a1420); color: #fff; border-color: var(--cn-gold);}
 .side-tab.active.jp { background: linear-gradient(135deg, var(--jp-indigo), #141e3c); color: #fff; border-color: var(--cn-gold);}
+/* 势力筛选提示条：从「全部势力」点城池数/武将数跳转到「全部城市/全部武将」时，标出当前只看哪家势力 */
+.filter-chip-bar:empty { display: none; }
+.filter-chip-bar { padding: 0 14px 8px; }
+.filter-chip { display: inline-flex; align-items: center; gap: 8px; background: rgba(212,175,55,.15); border: 1px solid rgba(212,175,55,.4); border-radius: 20px; padding: 6px 8px 6px 14px; font-size: 14px; color: var(--paper); }
+.filter-chip .fc-clear { cursor: pointer; background: rgba(0,0,0,.3); border-radius: 50%; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; }
 .search-box { padding: 0 14px 8px; }
 .search-box input {
   width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(212,175,55,.35);
@@ -617,6 +625,8 @@ html, body {
 .db-table thead th.sorted { color: #fff; background: #4a3015; }
 .db-table thead th:active { background: #4a3015; }
 .db-table td.num { font-weight: 700; font-family: "DotGothic16", monospace; font-size: 16px; }
+.db-table td.allfac-link { text-decoration: underline dotted rgba(232,194,90,.6); text-underline-offset: 3px; cursor: pointer; }
+.db-table td.allfac-link:active { color: var(--cn-gold); }
 .db-table td.dt-name { text-align: left; font-size: 16px; font-weight: 700; color: var(--paper); cursor: pointer; padding-left: 8px; }
 .db-table td.dt-name .dt-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
 .db-table td.dt-name.cn .dt-dot { background: var(--cn-red); }
@@ -1454,6 +1464,9 @@ input[type="range"] { accent-color: var(--cn-red); height: 22px; cursor: pointer
 /* 调速+暂停合一钮：宽度比其余军令钮更大，未点「开始总攻」前以金色高亮吸引首击；进入 ×1/×2/×4/暂停循环后转为普通样式 */
 .fb-ord.ctrl { min-width: 96px; padding: 7px 14px; }
 .fb-ord.ctrl.primary { background: var(--cn-gold); color: #241a08; border-color: var(--cn-gold); }
+/* 「委托」按钮：与军令按钮区分开的独立配色，提醒这不是消耗军令的普通指令，而是交出整场指挥权 */
+.fb-ord.delegate { background: rgba(43,58,103,.35); border-color: rgba(155,182,255,.6); color: #cfe0ff; }
+.fb-ord.delegate:disabled { background: rgba(255,255,255,.06); border-color: rgba(212,175,55,.3); color: var(--paper); }
 /* 战报日志：全景画布已承担主要画面感，文字战报退居辅助角色，压缩高度让画布腾出更多空间 */
 .fb-log {
   margin-top: 8px; max-height: 88px; overflow-y: auto; font-size: 12px; line-height: 1.5;

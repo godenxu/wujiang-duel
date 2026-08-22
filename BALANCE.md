@@ -1852,3 +1852,37 @@ softCap = 55
 **验证**：Playwright 直接构造场景复现——`beginExternal` 开局后手动把敌方全灭，连续同步调用两次 `checkBattleEnd()`，修复前 `finish()` 被记录调用两次（第二次 `external:false, phase:"done"`），修复后只调用一次；5v5 全自动推演端到端跑通（35~57 回合不等，无报错），`onDone` 拿到的 `meritRanking` 与战斗结束后直接读取 `myUnits`/`foeUnits` 的即时 `merit` 值完全一致（此前相差 5 点的问题消失）。
 
 **其余验证**：`node --check` 复核通过；每月初一集市行情推演——真实 `camp()` 流程把 `m.day` 推到月初，21/46 座陆地城市（约 45%）各自变更行情，`cityPriceFactor` 与集市/城池/城市详情三处 UI 文案联动核验（118%→147%/89% 等换算准确）；产业逐日浮动——5 天累计的待收金额与逐日手算结果分毫不差、30 天累计正确被待收上限封顶且无 `NaN`；攻城功勋排名结算——合成三档名次（1/10、5/10、10/10）分别核验发放 156/120/90 功勋（对应 ×1.3/×1.0/×0.75），战报文案与功勋榜渲染均正确；15 回合 AI-vs-AI 压力测试全程无 `NaN`/控制台报错。
+
+## 七十、全局字体改黑体+设置面板、野战委托与可操控范围收紧、势力一览跳转、集市一键买入、城市行情列（第六十八轮）
+
+用户本轮提出六项需求：①全局字体从宋体改黑体，右上角新增设置入口，首期放字体选择；②野战军令栏最左侧加「委托」按钮，一键交给 AI 代打；③野战里玩家不该能操控全部己方武将，应收紧到本人/团队成员，身为城主或势力主公时才能统御本势力全部出阵武将；④全部势力一览点城池数/武将数可跳转到全部城市/全部武将并按该势力筛选；⑤集市买入页签加"一键买入所有宝物"；⑥全部城市一览日进列右侧加本地行情列。
+
+### 一、全局字体改黑体 + 设置面板
+
+`:root` 新增 `--app-font` 变量（默认黑体族：`Noto Sans SC`/`PingFang SC`/`Microsoft YaHei`/`Heiti SC`），`html,body` 的 `font-family` 改引用这一个变量，其余组件原本大多是 `font-family: inherit`，无需逐处改。新增 `Settings` 模块（`localStorage` 键 `wujiang_settings_v1`），提供黑体/宋体/楷体/圆体四种字体供选，`Settings.setFont(key)` 写入存档后即时 `document.documentElement.style.setProperty("--app-font", ...)` 生效，下次启动 `Settings.load()` 自动复原。右上角每块 `.audio-btns`（全站 18 处，逐屏幕各自一份）音乐/音效按钮之后新增 `⚙️` 设置按钮，统一走 `[id^="btn-settings"]` 选择器绑定（与既有 `btn-music`/`btn-sfx` 同一套模式），点开是一张列出四种字体、当前选中项高亮的浮层。Google Fonts 链接同步补上 `Noto Sans SC`，与原有 `Noto Serif SC` 并列加载。
+
+### 二、野战「委托」按钮
+
+军令栏最左侧新增 `🤝 委托` 按钮（`this.external.auto` 为真的全自动委外战场本就无需再委托，不显示）。点击后二次确认，置位 `this.delegated = true`，把本回合剩余未行动的部众（含此前一直亲自操控的部众）一并转交 AI（`autoFinishMyTurn()`），随后 `endTurnCycle()` 见到 `this.delegated` 便持续排定 `autoPlayMyTurn()`，无需逐回合再点，直至战斗结束；军令四钮与「结束回合」按钮委托后一律禁用。
+
+### 三、野战可操控范围收紧
+
+`GridBattle.controllable(g)` 原先只在玩家已自立门户（`playerFaction==="_player_"`）时把本势力全军判定为可操控，其余情形只认主角本人与 `Bond.data.team`。本轮补上"城主"（`PlayerRank.RANKS` 最高一阶，仍效力于真实势力、尚未自立）同享统御本势力全军的资格——毕竟已官至一方封疆，理应节制得动本势力出阵的每一部；同时给这套限制加了一道总开关：`this.rpg` 为假（野战演武·自由练习小游戏）时直接放行所有单位，不受身份限制，保留原有的练习/试玩体验，只有委外战场（边境战/攻城战，`rpg:true`）才收紧。落地到实际操作：`selectUnit(u)` 点选前先查 `controllable`，点不可控的部众会弹出提示"已由部将自主接战"；每个我方回合开局与每回合切回我方时，新增 `autoPlayNonControlled()` 自动帮不可控的部众行动完毕，只把真正能指挥的部众留给玩家。
+
+**排查中顺手揪出一处真实死锁**：`challenge()`（单挑触发）原来的 `spectate: !this.controllable(att.g)` 只看攻方"理论上是否可操控"，没考虑"这一步棋此刻究竟是不是玩家亲自点出来的"。委托之后，`autoFinishMyTurn`/`autoPlayMyTurn` 仍会对主角本人这个单位调用 `aiActUnit`（毕竟主角这一部也要继续打），若恰好触发单挑，`controllable(主角)` 恒为真、`spectate` 就被判成假——单挑画面按"玩家亲自出招"打开，进入非观战模式后卡在等一次永远不会来的人工点击「出招」，全场战斗就此永久卡死。同理，委外战场全自动推演（`external.auto`，主角未被抽中亲历）时，若玩家恰是"城主"级别、其随机补位的本势力部众发起单挑，也会撞上同一个坑。修复为 `spectate: this.delegated || (this.external && this.external.auto) || !this.controllable(att.g)`——只要这一步是 AI 代打（已委托／全自动推演／攻方本就不可控，三者居一），单挑一律走观战/自动结算。
+
+**验证**：Playwright 直接构造委外战场（`resolveBorderWar`，主角以普通"偏将"身份随军，另设 2 名团队成员）——核验主角本人 `controllable=true`、随机补位的非团队武将 `controllable=false`；`selectUnit()` 对不可控武将确实拦下、对可控武将放行；点击委托后 `delegated` 置位、军令/结束回合按钮禁用；此前会在某次自动触发的主角单挑上卡死（`turnN` 冻结在 25、`busy` 恒真、`#screen-battle` 停在"阵前单挑"不再前进），改用带追踪的 `challenge()` 复核确认卡死的正是 `spectate:false` 的主角单挑，修复后同一场景一路打到 `myAlive:1 vs foeAlive:1`（回合数过 60）仍在稳定推进，未再复现卡死。
+
+### 四、全部势力一览点数字跳转
+
+`AllFacUI` 的城池数、武将数两格加 `allfac-link` 类与 `data-goto` 标记，点击各自 `stopPropagation` 后跳转 `AllCityUI.open(fid)`/`AllGenUI.open(fid)`（不冒泡到整行原有的"点行看势力详情"）。`AllCityUI`/`AllGenUI` 新增 `filterFid` 状态，`render()` 按其过滤行数据，并在列表上方渲染一枚"只看：某势力〔✕〕"筛选提示条（新增 `#allcity-filter`/`#allgen-filter` 容器与 `.filter-chip` 样式），点 ✕ 清筛选。
+
+### 五、集市一键买入所有宝物
+
+`openMarket` 的"买入"页签新增 `bulkBuyTargets`（本城今日在售、尚未售罄的全部货摊，不分稀有度）与对应的 `🛒 一键买入所有宝物（N 件 · 约 X 金）` 按钮，与既有"一键卖出非传奇宝物"并列展示。点击先二次确认，再核验总价是否够钱（不够则整单作罢，不做"买到哪算哪"的半吊子结算），够钱则逐件走 `Bond.spend`+`Armory.makeItem` 入账。
+
+### 六、全部城市一览增设本地行情列
+
+`AllCityUI.rowData` 补上 `priceFactor`/`priceTxt`（复用 `cityPriceFactor`+`marketTrendSuffix`，海路中转站显示"—"），表头"日进"右侧插入"本地行情"新列，支持点列头按行情高低排序。
+
+**验证**：Playwright 端到端跑通——设置面板切字体后 `body` 计算样式确认生效且写入 `localStorage`；点击某势力"曹魏"的城池数/武将数分别跳转到全部城市（3 座，含筛选提示条）与全部武将（4 员）；全部城市表头含"本地行情"列，样例行正确显示"⚖️公道102%"；集市一键买入 4 件宝物，花费与按钮标注金额一致，购毕全部转为"已售出"。`node --check` 复核全过。
