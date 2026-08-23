@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608221144";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608232212";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -7505,42 +7505,32 @@
     owari: "farm", hitachi: "farm", higo: "farm", aki: "farm",
     osaka: "caravan", odawara: "caravan", bungo: "caravan", mikawa: "caravan",
   };
-  /* 城市繁荣度（城市经营二期，六期重新设计）：每城 1~5 星，初始按城市地位分档。
-   * 繁荣点只反映"这座城被砸了多少真金白银去建设"——城建（含新增钱庄）按花费换算点数、
-   * 产业置业/扩建/接管、己方边境战夺城，三者仍计入；悬赏完成与设施挑战获胜均已移出（六期），
-   * 二者是战斗成就而非市政建设，与"这城有多繁荣"没有关系。
-   * 影响产业收益倍率（0.9~1.3）、集市摊位数（≥4星 +1）与铁匠铺专精工钱（≥4星 再降三成）。
-   * 数据存战役层 m.prosper。 */
+  /* 城市繁荣度（城市经营二期，二十六期改为纯城建驱动）：不再单独记账，直接由该城六项城建
+   * （医馆/书院/驿站/城墙/演武场/钱庄，各0~10级）等级总和实时算出——修了城建繁荣度自动跟着涨，
+   * 不修就不涨，不再有置业/接管/扩建/AI日常经营/夺城/断道这些各自为政、换算口径都不一样的
+   * "加分事件"。六项城建总和 0~60，每 12 点一档，六项都修到约 8 级（合计48）即可满 5 星，
+   * 与旧版"六种城建各自封顶大致等于 5 星"的设计初衷一致，只是算法从记账变成直接读数。
+   * 初始城建等级按城市地位分三档（大城/普通/边陲）在新开局时一次性随机预置，见 Campaign.reset 附近
+   * 的 seedInitialBuildings；此后不再有任何"起始星级"这个独立概念。
+   * 影响产业收益倍率（0.9~1.3）、集市摊位数（≥4星 +1）、铁匠铺专精工钱（≥4星 再降三成），
+   * 以及人口上限/驻军上限（见 Population/Garrison）。 */
   const PROSPER_INIT_HIGH = ["luoyang", "xuchang", "chengdu", "jianye", "kyoto", "osaka", "owari", "sunpu"];
   const PROSPER_INIT_LOW = ["baidicheng", "shangyong", "oushu", "higo", "hitachi"];
+  // 新开局城建预置总点数：大城/普通/边陲三档，六项城建总和的目标值（对应下方 BUILD_SUM_STEP 的星级门槛）
+  const PROSPER_SEED_SUM = { high: 24, normal: 12, low: 0 };
   const Prosper = {
     MAX: 5,
-    // 城建规模由「3 种×3 级」扩到「6 种×10 级」后，若还按旧门槛，繁荣度会比扩容前涨得更快——
-    // 门槛按新的点数供给量级重新配平：六种城建（含钱庄）各自封顶投入约 97 点（花费/400 累计），
-    // 六种合计约 580 点，与本表 5 星总门槛 600 点大致相当——「把六种城建都修到顶」大致等价于
-    // 摸到 5 星，产业置业/扩建/夺城等其余来源则是加速捷径，而非必经之路
-    STEP_BY_LV: [40, 90, 170, 300],   // 升至 2/3/4/5 星所需累计点数（下标 = 当前星级-1），总计 600
-    // 城建捐修按花费换算繁荣点：花费/400，下限 1 点（见 Buildings.build）
-    PTS_PER_GOLD: 400,
-    ptsFromCost(gold) { return Math.max(1, Math.round(gold / this.PTS_PER_GOLD)); },
-    step(lv) { return this.STEP_BY_LV[lv - 1] ?? this.STEP_BY_LV[this.STEP_BY_LV.length - 1]; },
-    state(m) { if (!m.prosper) m.prosper = {}; return m.prosper; },
-    initLv(cityId) { return PROSPER_INIT_HIGH.includes(cityId) ? 3 : PROSPER_INIT_LOW.includes(cityId) ? 1 : 2; },
-    lv(m, cityId) { const s = this.state(m)[cityId]; return s ? s.lv : this.initLv(cityId); },
+    // 六项城建等级总和 0~60，每跨过一个门槛长一颗星，5 星封顶（总和达 48 即满星，留有余量不必抠到 60）
+    BUILD_SUM_STEP: [12, 24, 36, 48],   // 升至 2/3/4/5 星所需的城建等级总和门槛
+    buildSum(m, cityId) { return Object.keys(BUILD_TYPES).reduce((s, t) => s + Buildings.lv(m, cityId, t), 0); },
+    lv(m, cityId) {
+      const sum = this.buildSum(m, cityId);
+      let lv = 1;
+      for (const step of this.BUILD_SUM_STEP) { if (sum >= step) lv++; }
+      return Math.min(this.MAX, lv);
+    },
     stars(m, cityId) { return "★".repeat(this.lv(m, cityId)); },
     mult(m, cityId) { return 0.8 + 0.1 * this.lv(m, cityId); },
-    // silent：势力日常行动（FactionAI）等非玩家作为静默积攒，升星不弹「你的作为」提示（由夜报另行播报）
-    add(m, cityId, pts, silent) {
-      const st = this.state(m)[cityId] || (this.state(m)[cityId] = { lv: this.initLv(cityId), pts: 0 });
-      if (st.lv >= this.MAX) return;
-      st.pts += pts;
-      while (st.pts >= this.step(st.lv) && st.lv < this.MAX) {
-        st.pts -= this.step(st.lv);
-        st.lv++;
-        if (!silent) toast(`🏙️ 你的作为令${cityName(cityId)}日渐繁荣，升至 ${"★".repeat(st.lv)}！`);
-      }
-      Campaign.save();
-    },
   };
   const Estate = {
     ACCRUE_CAP_DAYS: 15,     // 待收积攒上限（天）：满仓后停止累计，逼你规划巡视路线
@@ -7666,7 +7656,6 @@
       if (!Bond.spend(t.cost)) { toast(`金币不足（置办${t.n}需 ${t.cost} 金）`); return false; }
       m.ap--;
       this.all(m)[cityId] = { type: CITY_ESTATE[cityId], lastDay: m.day, pending: 0, manager: null };
-      Prosper.add(m, cityId, 8);   // 置业兴市，繁荣 +8（六期：门槛整体上调后按比例重新赋值）
       Campaign.save();
       AudioSystem.sfx.victory();
       toast(`${t.icon} 置办${cityName(cityId)}${t.n}成功！此后每日进账，记得常回来收取`);
@@ -7746,7 +7735,6 @@
       this.accrue(m, cityId);   // 先按旧费率结清旧账，再升级生效
       if (!Bond.spend(cost)) { toast(`金币不足（扩建需 ${cost} 金）`); return false; }
       est.lv = lv + 1;
-      Prosper.add(m, cityId, 10);   // 大兴土木，市面又旺一分（六期：门槛整体上调后按比例重新赋值）
       Campaign.save();
       AudioSystem.sfx.victory();
       const t = ESTATE_TYPES[est.type];
@@ -7771,7 +7759,6 @@
       m.ap--;
       delete this.npcAll(m)[cityId];
       this.all(m)[cityId] = { type: CITY_ESTATE[cityId], lastDay: m.day, pending: 0, manager: null, lv: n.lv };
-      Prosper.add(m, cityId, 8);   // 六期：门槛整体上调后按比例重新赋值
       Campaign.save();
       AudioSystem.sfx.victory();
       const t = this.typeOf(cityId);
@@ -7918,9 +7905,8 @@
       if (cost.mats > 0) { Armory.data.materials[matType.k] -= cost.mats; Armory.save(); }
       if (!this.all(m)[cityId]) this.all(m)[cityId] = {};
       this.all(m)[cityId][type] = cur + 1;
-      // 繁荣点按花费换算（越贵的等级贡献越大），而非过去"每级一律 +2"的固定值——
-      // 见 Prosper.ptsFromCost：城建规模从 3 种×3 级扩到 6 种×10 级后，固定值会把星级门槛冲得毫无意义
-      Prosper.add(m, cityId, Prosper.ptsFromCost(cost.gold));
+      // 繁荣度二十六期起直接由城建等级总和实时算出（见 Prosper.lv/buildSum），这里升了城建
+      // 等级，繁荣度自动跟着变，不需要再手动加分
       Campaign.save();
       AudioSystem.sfx.victory();
       toast(`${BUILD_TYPES[type].icon} ${cityName(cityId)}${BUILD_TYPES[type].n}修至 ${cur + 1} 级！（${BUILD_TYPES[type].eff(cur + 1)}）`);
@@ -7957,21 +7943,86 @@
         .map(c => ({ id: c.id, n: c.n, cost: this.postCost(m, c.id) }));
     },
   };
+  // 新开局城建预置：大城/普通/边陲三档总点数不变（对应目标星级），但六项城建之间的具体分配
+  // 每局随机抽签——总量相同、强项各异，同一座史名大城这局可能是"城墙+驿站突出"，下局重开
+  // 又是"钱庄+书院突出"，既保留了"这城起步就该比较繁荣"的地位差异，也不至于每局都长一个样。
+  // 边陲小城总量为0，不参与随机分配（原地起步即可，符合"待开发"的定位）。
+  function randomDistributeLevels(total, types, maxEach) {
+    const out = {}; types.forEach(t => out[t] = 0);
+    for (let i = 0; i < total; i++) {
+      const room = types.filter(t => out[t] < maxEach);
+      if (!room.length) break;   // 理论上不会触发（总量远小于 类型数×封顶），留一道保险不死循环
+      out[room[randInt(0, room.length - 1)]]++;
+    }
+    return out;
+  }
+  function seedInitialBuilds() {
+    const types = Object.keys(BUILD_TYPES);
+    const builds = {};
+    CITIES.filter(c => c.side !== "sea").forEach(c => {
+      const total = PROSPER_INIT_HIGH.includes(c.id) ? PROSPER_SEED_SUM.high
+        : PROSPER_INIT_LOW.includes(c.id) ? PROSPER_SEED_SUM.low : PROSPER_SEED_SUM.normal;
+      if (total > 0) builds[c.id] = randomDistributeLevels(total, types, Buildings.MAX_LV);
+    });
+    return builds;
+  }
   /* ============================================================
-   *  城池驻军（军事一期）：每座非海路城池（不分敌我）各自维护一支驻军，上限随繁荣度/城墙等级
-   *  提升，宿营时按同一节奏回复；边境大战出阵兵力不再纯由武将统帅推算，而是从交战双方各自所在
-   *  城池的驻军中抽调——发达、城墙厚实的边城才能撑起满编大军，弱小边城捉襟见肘。
+   *  人口（二十六期）：每座陆地城市维护一个真实存量的人口数字，上限由繁荣度决定。
+   *  每日按"距上限差值×3%"双向收敛——人口低于上限慢慢补齐，高于上限（多半是城建刚被
+   *  攻城打残、繁荣度骤降导致上限突然变小）也慢慢回落，同一条公式两个方向都适用。
+   *  征兵按1:1消耗人口（见 Garrison.recruit），攻城破城另有一次性折损（见 applyBorderWarOutcome），
+   *  断道计谋也会小幅冲击人口（见 FactionAI 计谋分支）。人口同时是驻军上限与每日征兵配额的
+   *  唯一输入（见 Garrison），人口越空，这座城能养的兵、当天能新募的兵都会跟着缩水，
+   *  形成"竭泽而渔"的自然制衡，不需要额外的冷却机制。数据存战役层 m.population。
+   * ============================================================ */
+  const Population = {
+    CAP_BY_LV: [300000, 450000, 600000, 800000, 1000000],   // 繁荣度1~5星对应的人口上限
+    FLOW_RATE: 0.03,   // 每日按"距上限差值"回流/回落的比例
+    cap(m, cityId) { return this.CAP_BY_LV[Prosper.lv(m, cityId) - 1]; },
+    all(m) { if (!m.population) m.population = {}; return m.population; },
+    // 首次读取即按当前上限满编初始化，与 Garrison.get 同一套"未记录视同齐整"的处理方式
+    get(m, cityId) {
+      const t = this.all(m);
+      if (t[cityId] == null) t[cityId] = this.cap(m, cityId);
+      return t[cityId];
+    },
+    set(m, cityId, v) { this.all(m)[cityId] = Math.max(0, Math.round(v)); },
+    spend(m, cityId, n) { this.set(m, cityId, this.get(m, cityId) - n); },
+    tick(m, cityId) {
+      const cur = this.get(m, cityId), cap = this.cap(m, cityId);
+      this.set(m, cityId, cur + Math.round((cap - cur) * this.FLOW_RATE));
+    },
+    tickAll(m) { CITIES.forEach(c => { if (c.side !== "sea") this.tick(m, c.id); }); },
+  };
+  /* ============================================================
+   *  城池驻军（军事一期，二十六期改为人口驱动）：每座非海路城池（不分敌我）各自维护一支驻军，
+   *  上限随人口/城墙等级提升，宿营时按同一节奏回复；边境大战出阵兵力不再纯由武将统帅推算，
+   *  而是从交战双方各自所在城池的驻军中抽调——人丁兴旺、城墙厚实的边城才能撑起满编大军，
+   *  弱小边城捉襟见肘。另设每日征兵名额（人口×比例×演武场加成），不论多有钱，
+   *  一天最多只能招募这么多人——征兵不再是"有钱就能秒满编"，还要看这座城当天有没有名额。
    *  数据存战役层 m.troops（城→驻军数）。
    * ============================================================ */
   const Garrison = {
-    // 城墙每级 +1,000 驻军上限（原 8,000 太多）：满繁荣 5 星（+60,000）+满级城墙 10 级（+10,000），
-    // 与基础 30,000 相加，每城驻军上限封顶恰好 100,000
-    BASE_CAP: 30000, PROSPER_CAP_STEP: 12000, WALL_CAP_STEP: 1000,
-    BASE_REGEN: 300, PROSPER_REGEN_STEP: 250,
+    // 驻军上限 = 人口×9% + 城墙等级×1000：满人口(100万)+满城墙(10级)时封顶恰好10万，
+    // 城墙这部分维持原有数值不变，只是原来"基础3万+繁荣度"那部分整体替换为人口驱动
+    POP_CAP_RATIO: 0.09, WALL_CAP_STEP: 1000,
+    BASE_REGEN: 300, POP_REGEN_RATIO: 0.001,
     RECRUIT_GOLD_PER: 0.5,   // 每募 1 兵耗 0.5 金
+    // 每日征兵配额：人口×0.5%×(1+演武场等级×15%)，按天重置、不累积——今天没用完不会攒到明天
+    RECRUIT_QUOTA_RATIO: 0.005, DRILL_QUOTA_BONUS: 0.15,
     AI_COMMIT: 0.7,          // 非玩家一方出阵默认调用本城 7 成驻军，留 3 成戍守（无城池经营心思，简化处理）
-    cap(m, cityId) { return this.BASE_CAP + Prosper.lv(m, cityId) * this.PROSPER_CAP_STEP + Buildings.lv(m, cityId, "wall") * this.WALL_CAP_STEP; },
-    regen(m, cityId) { return this.BASE_REGEN + Prosper.lv(m, cityId) * this.PROSPER_REGEN_STEP; },
+    cap(m, cityId) { return Math.round(Population.get(m, cityId) * this.POP_CAP_RATIO + Buildings.lv(m, cityId, "wall") * this.WALL_CAP_STEP); },
+    regen(m, cityId) { return Math.round(this.BASE_REGEN + Population.get(m, cityId) * this.POP_REGEN_RATIO); },
+    recruitQuota(m, cityId) {
+      return Math.round(Population.get(m, cityId) * this.RECRUIT_QUOTA_RATIO * (1 + Buildings.lv(m, cityId, "drill") * this.DRILL_QUOTA_BONUS));
+    },
+    recruitedToday(m, cityId) { return ((m.recruitedToday || {})[cityId + "|" + m.day]) || 0; },
+    addRecruited(m, cityId, n) {
+      if (!m.recruitedToday) m.recruitedToday = {};
+      const key = cityId + "|" + m.day;
+      m.recruitedToday[key] = (m.recruitedToday[key] || 0) + n;
+    },
+    remainingQuota(m, cityId) { return Math.max(0, this.recruitQuota(m, cityId) - this.recruitedToday(m, cityId)); },
     all(m) { if (!m.troops) m.troops = {}; return m.troops; },
     // 首次读取即按当前上限满编初始化（战役刚开局或城池刚被攻陷但尚无记录时，视同兵力齐整）
     get(m, cityId) {
@@ -7982,35 +8033,42 @@
     set(m, cityId, v) { this.all(m)[cityId] = Math.max(0, Math.min(this.cap(m, cityId), Math.round(v))); },
     add(m, cityId, n) { if (n) this.set(m, cityId, this.get(m, cityId) + n); },
     spend(m, cityId, n) { this.set(m, cityId, this.get(m, cityId) - n); },
-    // 宿营时全图城池（不分敌我）同步回复驻军，繁荣越高恢复越快。
+    // 宿营时全图城池（不分敌我）同步回复驻军，人口越多恢复越快。
     // 根因修复：对马岛（对马番所）原被排除在外，导致此地驻军只出不进——一旦被攻占并用其驻军
     // 杀奔对岸，对马岛自身就此归零且永不回复，往后谁占了它都无法再借道继续进攻，中日双方一年多
     // 都卡死在这座中转岛上寸步难进。对马岛虽不能筑城墙（无城建选项），但驻军理应与其余城池一视同仁地回补
     tickAll(m) { CITIES.forEach(c => this.add(m, c.id, this.regen(m, c.id))); },
-    // 募兵：一键花钱尽量补满至上限，金币不足则按现有金币折算尽力募集（不设次数/行动力限制——
-    // 补满一城所需总花费恒定为 (上限-现存)×0.5 金，分几次点击花的钱都一样，无套利空间）
+    // 募兵：一键花钱尽量补满至上限，金币不足、人口不够、当日名额用完，三者取最紧的那个卡死
     recruit(m, cityId) {
       const room = this.cap(m, cityId) - this.get(m, cityId);
       if (room <= 0) { toast("驻军已满编"); return false; }
+      const quota = this.remainingQuota(m, cityId);
+      if (quota <= 0) { toast("今日征兵名额已用尽，明日再来"); return false; }
       const affordable = Math.floor(Bond.gold() / this.RECRUIT_GOLD_PER);
-      const n = Math.min(room, affordable);
+      const n = Math.min(room, affordable, quota, Population.get(m, cityId));
       if (n <= 0) { toast(`金币不足（募兵每员需 ${this.RECRUIT_GOLD_PER} 金）`); return false; }
       const cost = Math.ceil(n * this.RECRUIT_GOLD_PER);
       Bond.spend(cost);
       this.add(m, cityId, n);
+      Population.spend(m, cityId, n);
+      this.addRecruited(m, cityId, n);
       Campaign.save();
-      toast(`🚩 ${cityName(cityId)}募得新兵 ${n.toLocaleString()}，耗 ${cost} 金${n < room ? "（金币所限，未能募满）" : "（已募至满编）"}（现有驻军 ${this.get(m, cityId).toLocaleString()}）`);
+      toast(`🚩 ${cityName(cityId)}募得新兵 ${n.toLocaleString()}，耗 ${cost} 金${n < room ? "（受限于金币/人口/当日名额，未能募满）" : "（已募至满编）"}（现有驻军 ${this.get(m, cityId).toLocaleString()}）`);
       return true;
     },
-    // 按指定数量募兵（供募兵滑杆调用）：数量卡在「兵额尚余」与「金币买得起」两者之间，超额部分自动截断
+    // 按指定数量募兵（供募兵滑杆调用）：数量卡在「兵额尚余」「金币买得起」「人口够不够」「当日名额」
+    // 四者之间，超额部分自动截断
     recruitN(m, cityId, n) {
       const room = this.cap(m, cityId) - this.get(m, cityId);
+      const quota = this.remainingQuota(m, cityId);
       const affordable = Math.floor(Bond.gold() / this.RECRUIT_GOLD_PER);
-      n = Math.max(0, Math.min(room, affordable, Math.round(n)));
-      if (n <= 0) { toast("募兵数量为 0，未曾发兵"); return false; }
+      n = Math.max(0, Math.min(room, affordable, quota, Population.get(m, cityId), Math.round(n)));
+      if (n <= 0) { toast("募兵数量为 0，未曾发兵（金币、人口或当日征兵名额或有不足）"); return false; }
       const cost = Math.ceil(n * this.RECRUIT_GOLD_PER);
       if (!Bond.spend(cost)) { toast(`金币不足（需 ${cost} 金）`); return false; }
       this.add(m, cityId, n);
+      Population.spend(m, cityId, n);
+      this.addRecruited(m, cityId, n);
       Campaign.save();
       toast(`🚩 ${cityName(cityId)}募得新兵 ${n.toLocaleString()}，耗 ${cost} 金（现有驻军 ${this.get(m, cityId).toLocaleString()}）`);
       return true;
@@ -8686,28 +8744,22 @@
       return news;
     },
 
-    /* ---- 营建：政治越高，一次推进得越多（高政治可直接升一级建筑或连涨两点繁荣） ---- */
+    /* ---- 营建：二十六期起繁荣度改为纯城建等级总和实时算出，这个动作原本"50%概率修城建，
+     * 50%概率抽象经营给几点繁荣"的写法里，后一半已经没有意义（繁荣度不再能凭空加点）——
+     * 改为始终挑一座本势力治下、还有城建未封顶的城市，直接升一级，花费按该级实际造价结算
+     * （不再是与升到几级无关的固定300金），找不到可升的城市（六项全满）则本次动作落空 */
     build(m, fid, q, push) {
-      const cities = CITIES.filter(c => c.side !== "sea" && cityFactionId(m, c.id) === fid).map(c => c.id);
+      const cities = CITIES.filter(c => c.side !== "sea" && cityFactionId(m, c.id) === fid).map(c => c.id)
+        .filter(cid => cityBuildOptions(cid).some(t => Buildings.lv(m, cid, t) < Buildings.MAX_LV));
       if (!cities.length) return false;
       const cid = cities[randInt(0, cities.length - 1)];
-      const cost = 300;
-      if (!FactionGold.spend(m, fid, cost)) return false;
-      if (q >= 70 && Math.random() < 0.5) {
-        const opts = cityBuildOptions(cid).filter(t => Buildings.lv(m, cid, t) < Buildings.MAX_LV);
-        if (opts.length) {
-          const t = opts[randInt(0, opts.length - 1)];
-          const curLv = Buildings.lv(m, cid, t);
-          if (!Buildings.all(m)[cid]) Buildings.all(m)[cid] = {};
-          Buildings.all(m)[cid][t] = curLv + 1;
-          Prosper.add(m, cid, Prosper.ptsFromCost(Buildings.COSTS[curLv].gold), true);   // 与玩家自己捐修同一口径
-          push("move", fid, `🏗️ ${factionName(fid)}于${cityName(cid)}修筑${BUILD_TYPES[t].n}至 ${Buildings.all(m)[cid][t]} 级`);
-          return true;
-        }
-      }
-      const before = Prosper.lv(m, cid);
-      Prosper.add(m, cid, q >= 75 ? 8 : 4, true);   // 六期：门槛整体上调后按比例重新赋值
-      if (Prosper.lv(m, cid) > before) push("move", fid, `🏗️ ${factionName(fid)}治下${cityName(cid)}市面愈发繁荣（${Prosper.stars(m, cid)}）`);
+      const opts = cityBuildOptions(cid).filter(t => Buildings.lv(m, cid, t) < Buildings.MAX_LV);
+      const t = opts[randInt(0, opts.length - 1)];
+      const curLv = Buildings.lv(m, cid, t);
+      if (!FactionGold.spend(m, fid, Buildings.COSTS[curLv].gold)) return false;
+      if (!Buildings.all(m)[cid]) Buildings.all(m)[cid] = {};
+      Buildings.all(m)[cid][t] = curLv + 1;
+      push("move", fid, `🏗️ ${factionName(fid)}于${cityName(cid)}修筑${BUILD_TYPES[t].n}至 ${curLv + 1} 级`);
       return true;
     },
     /* ---- 征兵：统帅越高，募得越多 ---- */
@@ -8873,7 +8925,9 @@
           break;
         }
         case "duandao": {
-          Prosper.add(m, pick.to, -15, true);   // 六期：门槛整体上调后按比例重新赋值
+          // 二十六期：繁荣度改由城建等级实时算出，不再能凭空扣点——商路断绝改为直接冲击人口
+          // （行商与工匠出走），比照攻城破城的战争损耗温和不少（那是真刀真枪，这只是断粮道）
+          Population.set(m, pick.to, Math.round(Population.get(m, pick.to) * 0.9));
           FactionGold.spend(m, foe, Math.round(FactionGold.get(m, foe) * 0.1));
           detail = `${cityName(pick.to)}商路断绝，市面萧条`;
           break;
@@ -9501,8 +9555,8 @@
           fame: 0, bounties, activeBounty: null,
           uniqueOwned: { chitu: false, senriGeta: false }, rivalsDefeated: [], cupWon: false, ending: false,
           endingHomeland: false, endingCrossSea: false,
-          statPenalty: {}, statGrowth: {}, activeAssassin: null, estate: {}, prosper: {}, activeEstateRaid: null,
-          builds: {}, npcEstate: {}, guards: {}, captives: {}, activeRescue: null,
+          statPenalty: {}, statGrowth: {}, activeAssassin: null, estate: {}, activeEstateRaid: null,
+          builds: seedInitialBuilds(), population: {}, recruitedToday: {}, npcEstate: {}, guards: {}, captives: {}, activeRescue: null,
           nemesis: null, activeNemesis: null, nemesisChallenge: false,
           troops: {},
           // 势力（军事三期）：城池归属改记势力而非国别；玩家默认在野（浪人），后续可投效/自立；
@@ -9587,9 +9641,10 @@
       if (!m.statGrowth) { m.statGrowth = {}; changed = true; }
       if (m.activeAssassin === undefined) { m.activeAssassin = null; changed = true; }
       if (!m.estate) { m.estate = {}; changed = true; }
-      if (!m.prosper) { m.prosper = {}; changed = true; }
       if (m.activeEstateRaid === undefined) { m.activeEstateRaid = null; changed = true; }
       if (!m.builds) { m.builds = {}; changed = true; }
+      if (!m.population) { m.population = {}; changed = true; }
+      if (!m.recruitedToday) { m.recruitedToday = {}; changed = true; }
       if (!m.npcEstate) { m.npcEstate = {}; changed = true; }
       if (!m.guards) { m.guards = {}; changed = true; }
       if (!m.captives) { m.captives = {}; changed = true; }
@@ -10242,7 +10297,8 @@
     garrisonBtnHtml(m) {
       if (!isMyCity(m, m.curCity)) return "";
       const have = Garrison.get(m, m.curCity), cap = Garrison.cap(m, m.curCity);
-      return `<button class="menu-btn" id="map-garrison"><span class="mi">🚩</span><span>驻军<small>${have.toLocaleString()}/${cap.toLocaleString()}${have >= cap ? "（满编）" : ""}</small></span></button>`;
+      const pop = Population.get(m, m.curCity);
+      return `<button class="menu-btn" id="map-garrison"><span class="mi">🚩</span><span>驻军<small>${have.toLocaleString()}/${cap.toLocaleString()}${have >= cap ? "（满编）" : ""} · 人口 ${pop.toLocaleString()}</small></span></button>`;
     },
     // 驿站快马按钮：本城已建驿站（≥1级）才显示，独立于城建按钮
     postBtnHtml(m) {
@@ -10674,19 +10730,23 @@
       if (!isMyCity(m, cityId)) return;
       const have = Garrison.get(m, cityId), cap = Garrison.cap(m, cityId);
       const wallLv = Buildings.lv(m, cityId, "wall"), prosperLv = Prosper.lv(m, cityId);
+      const pop = Population.get(m, cityId), popCap = Population.cap(m, cityId);
+      const quota = Garrison.recruitQuota(m, cityId), quotaUsed = Garrison.recruitedToday(m, cityId), quotaLeft = Garrison.remainingQuota(m, cityId);
       const room = cap - have;
       const affordable = Math.floor(Bond.gold() / Garrison.RECRUIT_GOLD_PER);
-      const sliderMax = Math.max(0, Math.min(room, affordable));
-      this._grsN = sliderMax;   // 默认拉到当前买得起、兵额也容得下的最大值，可自行下调
+      const sliderMax = Math.max(0, Math.min(room, affordable, quotaLeft, pop));
+      this._grsN = sliderMax;   // 默认拉到当前买得起、兵额/配额/人口都容得下的最大值，可自行下调
       openOverlay(`<div class="result-card detail-card">
         <h1>🚩 ${cityName(cityId)} · 驻军</h1>
-        <div class="wdesc">现有驻军 <b>${have.toLocaleString()}</b> / 上限 <b>${cap.toLocaleString()}</b>（基础 ${Garrison.BASE_CAP.toLocaleString()} + 繁荣${prosperLv}★ ${( Prosper.lv(m,cityId) * Garrison.PROSPER_CAP_STEP).toLocaleString()} + 城墙${wallLv}级 ${(wallLv * Garrison.WALL_CAP_STEP).toLocaleString()}）<br>
+        <div class="wdesc">现有驻军 <b>${have.toLocaleString()}</b> / 上限 <b>${cap.toLocaleString()}</b>（人口 ${pop.toLocaleString()} ×9% ${Math.round(pop * Garrison.POP_CAP_RATIO).toLocaleString()} + 城墙${wallLv}级 ${(wallLv * Garrison.WALL_CAP_STEP).toLocaleString()}）<br>
         每日宿营回复 <b>${Garrison.regen(m, cityId).toLocaleString()}</b>；边境大战出阵兵力由此处驻军按你选定的出阵比例调拨，请量力而行。<br>
+        本城人口 <b>${pop.toLocaleString()}</b> / 上限 ${popCap.toLocaleString()}（繁荣${prosperLv}★，人口每日向上限流动，征兵会消耗人口）<br>
+        今日征兵配额 <b>${quotaLeft.toLocaleString()}</b> / ${quota.toLocaleString()}（已征 ${quotaUsed.toLocaleString()}，明日重置）<br>
         募兵每员 ${Garrison.RECRUIT_GOLD_PER} 金，💰 现有 ${Bond.gold()} 金</div>
         ${sliderMax > 0 ? `
-        <div class="mc-sect">🚩 募兵数量<small>（兵额尚余 ${room.toLocaleString()}，金币最多募 ${affordable.toLocaleString()}）</small></div>
+        <div class="mc-sect">🚩 募兵数量<small>（兵额尚余 ${room.toLocaleString()}，金币最多募 ${affordable.toLocaleString()}，配额尚余 ${quotaLeft.toLocaleString()}）</small></div>
         <input type="range" id="grs-n" min="0" max="${sliderMax}" step="${Math.max(1, Math.round(sliderMax / 200))}" value="${sliderMax}" style="width:100%">
-        <div class="wdesc" id="grs-n-label">${this.recruitLabel(m, cityId, sliderMax)}</div>` : `<div class="wdesc">${room <= 0 ? "驻军已满编" : "金币不足，暂募不得一兵"}</div>`}
+        <div class="wdesc" id="grs-n-label">${this.recruitLabel(m, cityId, sliderMax)}</div>` : `<div class="wdesc">${room <= 0 ? "驻军已满编" : quotaLeft <= 0 ? "今日征兵名额已用尽，明日再来" : pop <= 0 ? "本城人口枯竭，暂募不得一兵" : "金币不足，暂募不得一兵"}</div>`}
         <div class="btns">
           <button class="btn-primary" id="grs-recruit" ${sliderMax > 0 ? "" : "disabled"}>💰 募兵</button>
           <button class="btn-ghost" id="grs-close">离开</button>
@@ -11348,6 +11408,8 @@
       const m = Campaign.mapState();
       m.day++; m.ap = m.apMax;
       m.marketSold = {};   // 新的一天，各城集市重新上货
+      m.recruitedToday = {};   // 新的一天，各城征兵名额重新计算（旧账清空，不会累积成一个越滚越大的对象）
+      Population.tickAll(m); // 全图人口先按当日繁荣度对应的上限双向收敛（驻军回复/征兵配额都要用当天的人口数）
       Garrison.tickAll(m); // 全图城池驻军同步回复（不分敌我）
       const wandered = this.wanderGenerals(m);
       NightReport.reset();
@@ -11686,11 +11748,22 @@
       shuffle(garrisonPool);
       garrisonPool.slice(0, randInt(2, 4)).forEach(g => { m.assign[g.id] = capturedCity; });
       if (winnerFaction === m.playerFaction) {
-        Prosper.add(m, capturedCity, 12);   // 己方光复/开拓此城，百废俱兴（六期：门槛整体上调后按比例重新赋值）
         // 己方夺城，牢门大开：此前被囚于此城的己方守将尽数放还
         Guard.heldAt(m, capturedCity).forEach(g => Guard.free(m, g.id, `——${cityName(capturedCity)}光复，牢门大开`));
         if (m.playerFaction === "_player_") Rewards.grantFeastCharge(m, 1, `攻克${cityName(capturedCity)}`);
       }
+      // 战争损耗：不论谁攻克，破城都会伤及人口与城建，二者各自独立判定——人口打七到九折
+      // （战乱伤亡、流离失所），六项城建各自独立六成概率被打残1~3级（不低于0级）、四成概率完好无损。
+      // 城建受损后繁荣度/驻军上限会自动跟着掉（两者都是从城建/人口实时算出的派生值，不用额外结算），
+      // 新主人得自己掏钱重建，攻城略地不再是"占了就白捡一座满血城市"
+      Population.set(m, capturedCity, Math.round(Population.get(m, capturedCity) * (0.7 + Math.random() * 0.2)));
+      Object.keys(BUILD_TYPES).forEach(t => {
+        if (Math.random() >= 0.6) return;
+        const lv = Buildings.lv(m, capturedCity, t);
+        if (lv <= 0) return;
+        if (!Buildings.all(m)[capturedCity]) Buildings.all(m)[capturedCity] = {};
+        Buildings.all(m)[capturedCity][t] = Math.max(0, lv - randInt(1, 3));
+      });
       if (troops) {
         Garrison.set(m, capturedCity, troops.winner);   // 胜方幸存兵力就地驻守新占之城
         if (troops.loser > 0) {
@@ -12249,6 +12322,7 @@
         bounty: ((m.bounties && m.bounties[c.id]) || []).length,
         // 对马岛虽是海路中转站，驻军照常回补募兵，总览表不再对其隐藏兵力数字（见 Garrison.tickAll 的根因修复）
         troops: Garrison.get(m, c.id), troopsCap: Garrison.cap(m, c.id),
+        population: c.side === "sea" ? null : Population.get(m, c.id),
       };
     },
     render() {
@@ -12271,7 +12345,7 @@
       });
       const arrow = k => key === k ? (dir > 0 ? " ▲" : " ▼") : "";
       const th = (k, label) => `<th data-sort="${k}" class="${key === k ? 'sorted' : ''}">${label}${arrow(k)}</th>`;
-      const head = `<tr>${th("name", "城市")}${th("facn", "势力")}${th("lord", "主公")}${th("owner", "国别")}${th("prosper", "繁荣")}<th>城建</th><th>特色设施</th><th>铁匠专精</th><th>产业</th>${th("dailyGold", "日进")}${th("priceFactor", "本地行情")}${th("troops", "驻军")}${th("appeared", "武将")}${th("bounty", "悬赏")}</tr>`;
+      const head = `<tr>${th("name", "城市")}${th("facn", "势力")}${th("lord", "主公")}${th("owner", "国别")}${th("prosper", "繁荣")}<th>城建</th><th>特色设施</th><th>铁匠专精</th><th>产业</th>${th("dailyGold", "日进")}${th("priceFactor", "本地行情")}${th("population", "人口")}${th("troops", "驻军")}${th("appeared", "武将")}${th("bounty", "悬赏")}</tr>`;
       const body = rows.map(r => `<tr data-id="${r.c.id}"${r.fid === m.playerFaction ? ' class="row-mine"' : ""}>
           <td class="dt-name ${r.owner}"><span class="dt-dot"></span>${r.c.id === m.curCity ? "📍" : ""}${r.c.n}</td>
           <td class="allgen-city">${isRealFaction(r.fid) ? facChip(r.fid) : "—"}</td>
@@ -12284,6 +12358,7 @@
           <td class="allgen-city">${r.estTxt}</td>
           <td class="num">${r.dailyTxt}</td>
           <td class="allgen-city">${r.priceTxt}</td>
+          <td class="num">${r.population == null ? "—" : r.population.toLocaleString()}</td>
           <td class="num">${r.troops == null ? "—" : `${r.troops.toLocaleString()}/${r.troopsCap.toLocaleString()}`}</td>
           <td class="num">${r.appeared}/${r.total}</td>
           <td class="num">${r.bounty}</td>
@@ -12332,7 +12407,8 @@
           ⚒️ 铁匠专精：${r.smith} · 🏪 集市：${factorTxt}<br>
           🏗️ 城建：${buildHtml}<br>
           🛡️ 守将：${guard ? guard.name : "无"}${captNames ? ` · ⛓️ 狱中：${captNames}` : ""}<br>
-          🚩 驻军：${r.troops.toLocaleString()} / ${r.troopsCap.toLocaleString()}（每日回复 ${Garrison.regen(m, cityId).toLocaleString()}）<br>
+          ${r.population == null ? "" : `👨‍👩‍👧 人口：${r.population.toLocaleString()} / ${Population.cap(m, cityId).toLocaleString()}<br>`}
+          🚩 驻军：${r.troops.toLocaleString()} / ${r.troopsCap.toLocaleString()}（每日回复 ${Garrison.regen(m, cityId).toLocaleString()}${r.fid === m.playerFaction ? ` · 今日征兵配额剩 ${Garrison.remainingQuota(m, cityId).toLocaleString()}/${Garrison.recruitQuota(m, cityId).toLocaleString()}` : ""}）<br>
           🏠 产业：${estHtml}<br>
           🚶 本地已现身武将（${r.appeared}/${r.total}）：${appearedNames}<br>
           📋 悬赏（${bounties.length}）：${bounties.map(b => `${b.legendary ? "⭐" : ""}${b.desc}`).join("；") || "暂无"}<br>
@@ -13097,7 +13173,7 @@
 
   // 势力系统的推演调参需要能脱离 UI 直接跑上百天（逐日点「宿营」既慢又会被各种弹窗打断），
   // 故与 window.Skill / window.FieldBattle 同例，导出一个只读的自动化测试句柄
-  window.__wj = { Campaign, FactionAI, FactionFame, FactionOrders, FactionGold, FactionTop5, Loyalty, PlayerRank, Garrison, Prosper, Bond, RPG, MapUI, Buildings, BUILD_TYPES, cityBuildOptions, Estate, Armory, Rewards, DB, CITIES, FACTIONS, cityFactionId, factionCityCount, factionName, liveFactionIds, isRealFaction, adjCities, factionDef, isFactionLord, factionGenerals, FieldFX };
+  window.__wj = { Campaign, FactionAI, FactionFame, FactionOrders, FactionGold, FactionTop5, Loyalty, PlayerRank, Garrison, Population, Prosper, Bond, RPG, MapUI, Buildings, BUILD_TYPES, cityBuildOptions, Estate, Armory, Rewards, DB, CITIES, FACTIONS, cityFactionId, factionCityCount, factionName, liveFactionIds, isRealFaction, adjCities, factionDef, isFactionLord, factionGenerals, FieldFX };
 
   document.addEventListener("DOMContentLoaded", init);
 })();
