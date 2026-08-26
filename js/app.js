@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608232212";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608262104";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -188,7 +188,12 @@
    * Promise 的唯一出路一起关掉，战斗循环从此挂死 */
   const overlay = $("#overlay");
   let overlayModal = false;
-  function openOverlay(html, opts) { $("#overlay-content").innerHTML = html; overlay.classList.add("show"); overlayModal = !!(opts && opts.modal); }
+  // 每次开新弹窗都先清掉内容容器自身可能残留的 onclick——某些弹窗（如两军阵前对比）会给
+  // #overlay-content 直接挂一个"点内容任意处关闭"的处理器，若不在这里兜底清空，这个处理器
+  // 会一直挂在这个全局共用的容器节点上（innerHTML 替换只清子节点，清不掉容器自己的 onclick），
+  // 后续任何一个新弹窗——哪怕是 modal:true、正在 await 玩家点击的关键弹窗——只要点到按钮之外
+  // 的空白处就会被这个陈年处理器误关掉，游戏就此卡死在等一个永远不会再来的点击上
+  function openOverlay(html, opts) { const c = $("#overlay-content"); c.onclick = null; c.innerHTML = html; overlay.classList.add("show"); overlayModal = !!(opts && opts.modal); }
   function closeOverlay() { overlay.classList.remove("show"); overlayModal = false; }
   overlay.addEventListener("click", e => { if (e.target === overlay && !overlayModal) closeOverlay(); });
 
@@ -3585,6 +3590,7 @@
       this.selectedUnit = null; this.selPhase = null; this.actionMode = null; this.deploySel = null;
       this.myCampSiege = 0; this.foeCampSiege = 0;   // 大本营围城计数：连续 3 回合被占领即视为攻破
       this.busy = false;
+      this._advancing = false;   // advanceAutoPlay 防重入标记，见该方法注释
       this.delegated = false;   // 「委托」：玩家中途放弃亲自指挥，余下战斗全自动推演，见 delegate()
       showScreen("fieldgrid");
       // 委外战场且主角未被抽中亲历：跳过排兵布阵画面/点将出阵等一切手动确认，直接开战并自动推演双方
@@ -4092,6 +4098,9 @@
       this.selectedUnit = null; this.selPhase = null;
       if (this.checkBattleEnd()) return;
       this.renderBattle();
+      // 玩家刚出手完毕：按统帅值顺位接着往下推进，把轮到的低统帅队友的行动权还给 AI——
+      // advanceAutoPlay 自身已挡住一切不该触发的场合（敌方回合/委托/全自动/重入），此处无需重复判断
+      this.advanceAutoPlay();
     },
     onCellClick(r, c) {
       if (this.turnSide !== "my" || this.busy) return;
@@ -4240,9 +4249,9 @@
         if (this.gen !== myGen) return;
         if (this.checkBattleEnd()) return;
       }
-      for (const u of this.foeUnits) {
+      for (const u of this.sortedAliveByTong(this.foeUnits)) {
         if (this.gen !== myGen) return;
-        if (!u.alive) continue;
+        if (!u.alive || u.acted) continue;
         await this.aiActUnit(u);
         if (this.gen !== myGen) return;
         if (this.checkBattleEnd()) return;
@@ -4309,7 +4318,7 @@
       const myGen = this.gen;
       // 委托可随时被玩家收回：endTurnCycle 排定本次调用时 delegated 也许还是真，但真正执行的这一刻
       // 玩家可能已经点了收回——改按当下状态走「只帮不可控部众代打」，把可控部众原样留给玩家
-      if (!this.delegated && !(this.external && this.external.auto)) { this.autoPlayNonControlled(); return; }
+      if (!this.delegated && !(this.external && this.external.auto)) { this.advanceAutoPlay(); return; }
       let orderUses = 0;
       const myPlan = this.orderAttemptPlan(this.myOrders);
       while (this.myOrders > 0 && orderUses < myPlan.length && Math.random() < myPlan[orderUses]) {
@@ -4318,9 +4327,9 @@
         if (this.gen !== myGen) return;
         if (this.checkBattleEnd()) return;
       }
-      for (const u of this.myUnits) {
+      for (const u of this.sortedAliveByTong(this.myUnits)) {
         if (this.gen !== myGen) return;
-        if (!u.alive) continue;
+        if (!u.alive || u.acted) continue;
         await this.aiActUnit(u);
         if (this.gen !== myGen) return;
         if (this.checkBattleEnd()) return;
@@ -4328,21 +4337,43 @@
       if (this.gen !== myGen) return;
       this.endMyTurn();
     },
-    // 我方回合开局自动接战：不在玩家直属调度范围内的部众（候选池随机补位而来，见 controllable）
-    // 在每个我方回合一开始就自行行动完毕，只把真正可指挥的部众留给玩家操作；不推进回合本身，
-    // 玩家操作完自己能管的部众后仍需手动点「结束回合」——与全自动推演（autoPlayMyTurn）的区别在于
-    // 这里只挑"不可控"的部分出手，可控部众的 acted 状态原样保留，等玩家亲自处置
-    async autoPlayNonControlled() {
-      const myGen = this.gen;
-      for (const u of this.myUnits) {
+    // 统帅值排序：本回合尚未行动的存活武将按统帅从高到低排成一份固定顺序快照——每次调用都
+    // 重新按"当前谁还没动"筛一遍，但相对先后次序只认统帅高低，不看阵营/是否可操控
+    sortedAliveByTong(units) {
+      return units.filter(u => u.alive && !u.acted).sort((a, b) => b.g.tong - a.g.tong);
+    },
+    // 我方回合的自动接战推进：候选池补位而来、不在玩家直属调度范围内的部众（见 controllable）
+    // 按统帅值从高到低依次自动接战，一旦轮到玩家可操控的部众就立即停手，把回合交还给玩家——
+    // 这正是本轮要修的缺陷：旧版不分统帅高低，一律先把全体不可控部众打完仗，等玩家真正上场时
+    // 队友早已全部「已行动」，eligibleFlankers 的 !acted 判定形同虚设，玩家永远拉不到人夹击。
+    // 现在统帅比玩家本人低的队友会留到玩家出手之后再继续（由 afterAction 收尾时接着调用本函数
+    // 往下推进），统帅比玩家高的队友则仍先手行动，与统帅代表的"用兵反应速度"设定相符。
+    // 玩家操作完自己能管的部众后仍需手动点「结束回合」——本函数只负责推进队列，不代为结束回合。
+    // 三重把关缺一不可：①只在真正的"我方回合、半自动"场景下才有意义，委托/全自动推演自有各自
+    // 独立的整队循环（autoFinishMyTurn/autoPlayMyTurn），敌方回合更是完全不相干——武将的主动战法/
+    // 单挑（useActiveSkill、challenge）AI 与玩家共用同一份实现，末尾都会调用 afterAction()，
+    // 若不挡住 turnSide!=="my"/delegated/external.auto 这些场合，AI 出招时也会稀里糊涂地
+    // 触发一次本函数；②_advancing 防重入——本函数内部 await this.aiActUnit(u) 时，若这一步
+    // 恰好用出主动战法又顺带调用了 afterAction()，会试图在尚未跑完的这次调用里再套一层自己，
+    // 两份调用各拿着自己那份"谁还没行动"的快照并发去抢同一个武将的行动权，双重出手、动画错乱
+    async advanceAutoPlay() {
+      if (this.turnSide !== "my" || this.delegated || (this.external && this.external.auto) || this._advancing) return;
+      this._advancing = true;
+      try {
+        const myGen = this.gen;
+        for (const u of this.sortedAliveByTong(this.myUnits)) {
+          if (this.gen !== myGen) return;
+          if (!u.alive || u.acted) continue;
+          if (this.controllable(u.g)) return;
+          await this.aiActUnit(u);
+          if (this.gen !== myGen) return;
+          if (this.checkBattleEnd()) return;
+        }
         if (this.gen !== myGen) return;
-        if (!u.alive || u.acted || this.controllable(u.g)) continue;
-        await this.aiActUnit(u);
-        if (this.gen !== myGen) return;
-        if (this.checkBattleEnd()) return;
+        this.renderBattle();
+      } finally {
+        this._advancing = false;
       }
-      if (this.gen !== myGen) return;
-      this.renderBattle();
     },
     // 「委托」：玩家中途放弃亲自指挥，把本回合剩余「未行动」的部众（含此前一直由玩家亲自操控的部众）
     // 一并交给 AI 接管，随后调用 endMyTurn 进入敌方回合——此后每个我方回合，endTurnCycle 见 this.delegated
@@ -4350,7 +4381,7 @@
     async autoFinishMyTurn() {
       const myGen = this.gen;
       this.selectedUnit = null; this.selPhase = null; this.actionMode = null; this.orderMode = null;
-      for (const u of this.myUnits) {
+      for (const u of this.sortedAliveByTong(this.myUnits)) {
         if (this.gen !== myGen) return;
         if (!u.alive || u.acted) continue;
         await this.aiActUnit(u);
@@ -4459,7 +4490,7 @@
       this.renderBattle();
       // 委外战场且并非全自动推演（主角亲历，但麾下未必人人由你直接调度）：一开局就先让不在调度范围内的
       // 部众自行接战，把回合真正交到玩家手上的只有可指挥的那部分
-      if (this.rpg && !this.delegated && !(this.external && this.external.auto)) this.autoPlayNonControlled();
+      if (this.rpg && !this.delegated && !(this.external && this.external.auto)) this.advanceAutoPlay();
     },
     endTurnCycle() {
       this.formTurnsLeft = Math.max(0, this.formTurnsLeft - 1);
@@ -4519,7 +4550,7 @@
         this.scheduleIfCurrent(() => this.autoPlayMyTurn(), 400);
       } else if (this.rpg && this.phase === "battle") {
         // 半自动：主角亲历但麾下未必人人受你直接调度，每回合开局先让不可控的部众自行接战
-        this.autoPlayNonControlled();
+        this.advanceAutoPlay();
       }
     },
     // 胜负判定：一方全部武将皆已溃退（兵力或士气归零）才算落败——单场单挑或单一部的溃散
@@ -4800,7 +4831,11 @@
         ${this.matchupDetailInner()}
         <div class="fg-matchup-overlay-hint">点任意处关闭</div>
       </div>`);
-      $("#overlay-content").onclick = () => closeOverlay();
+      // 点击关闭的处理器只挂在这层浮层自己的包裹元素上（随下一次 openOverlay 替换 innerHTML
+      // 一并消失），不能像旧版那样直接挂到 #overlay-content 这个全局共用容器上——那个容器
+      // 不会因为内容被替换而自动摘掉自己的 onclick，会一直残留、错关后续弹窗（见 openOverlay 注）
+      const wrapEl = $(".fg-matchup-overlay", $("#overlay-content"));
+      if (wrapEl) wrapEl.onclick = () => closeOverlay();
       // 委托/半自动战斗时后台仍在不断出手，浮层若只画开启那一刻的快照很快就会过时——按战斗节奏
       // 定时把兵力/士气/攻防数据刷成最新，直到浮层被关闭、或切换成了别的战斗（gen 变化）为止
       const timer = setInterval(() => {
@@ -6418,6 +6453,22 @@
       this.data.items.splice(idx, 1); this.save();
       toast(`分解「${item.name}」，获得 ${this.typeDef(item.type).n}材料 +${n}`);
       return true;
+    },
+    // 一键拆解：批量分解所有「已鉴定 · 未装备 · 非传说」的宝物，跳过神秘宝物（尚未鉴宝，拆解入口本就不放行）、
+    // 已装备的宝物、以及传说级（大概率是主力装备或稀缺材料来源，误拆代价太高，一律排除在批量操作之外）
+    dismantleAllNonLegendUnequipped() {
+      const targets = this.data.items.filter(i => i.identified !== false && !i.equippedBy && i.rarity !== "legend");
+      if (!targets.length) return null;
+      const gained = {};
+      targets.forEach(item => {
+        const n = this.DISMANTLE_RETURN[item.rarity];
+        this.data.materials[item.type] = (this.data.materials[item.type] || 0) + n;
+        gained[item.type] = (gained[item.type] || 0) + n;
+      });
+      const uids = new Set(targets.map(i => i.uid));
+      this.data.items = this.data.items.filter(i => !uids.has(i.uid));
+      this.save();
+      return { count: targets.length, gained };
     },
 
     /* ---- 行商贩卖：按「当前所在城市」的集市行情结算售价——
@@ -12831,8 +12882,10 @@
       });
       if (!totalCount) return `<div class="empty">尚未获得任何宝物——去战场上搏一件吧</div>`;
       const filterBar = this.stockFilterOptionsHtml();
-      if (!items.length) return `${filterBar}<div class="empty">没有符合筛选条件的宝物</div>`;
-      return `${filterBar}<div class="section-hint">各玩法获胜后有机会掉落，但掉落的宝物为「未鉴定」状态，需花金鉴宝才能查看细节、装备与拆解；已装备的宝物请先在「角色扮演」或武将详情中卸下，才能在此拆解。</div>
+      const bulkCount = Armory.data.items.filter(i => i.identified !== false && !i.equippedBy && i.rarity !== "legend").length;
+      const bulkBar = `<div class="stock-bulk-row"><button class="btn-ghost" id="stock-dismantle-all" ${bulkCount ? "" : "disabled"}>🔨 一键拆解非传说未装备（${bulkCount}）</button></div>`;
+      if (!items.length) return `${filterBar}${bulkBar}<div class="empty">没有符合筛选条件的宝物</div>`;
+      return `${filterBar}${bulkBar}<div class="section-hint">各玩法获胜后有机会掉落，但掉落的宝物为「未鉴定」状态，需花金鉴宝才能查看细节、装备与拆解；已装备的宝物请先在「角色扮演」或武将详情中卸下，才能在此拆解。</div>
         <div class="item-grid">${items.map(itemCard).join("")}</div>`;
     },
     renderDex() {
@@ -12887,6 +12940,18 @@
         const item = Armory.data.items.find(i => i.uid === +b.dataset.uid);
         if (item && confirm(`确定拆解「${item.name}」？将永久失去此宝物，换取材料。`)) { Armory.dismantle(item.uid); this.render(); }
       });
+      const bulkBtn = $("#stock-dismantle-all");
+      if (bulkBtn) bulkBtn.onclick = () => {
+        const n = Armory.data.items.filter(i => i.identified !== false && !i.equippedBy && i.rarity !== "legend").length;
+        if (!n) return;
+        if (!confirm(`确定一键拆解全部 ${n} 件「非传说·未装备」宝物？将永久失去这些宝物，换取材料，此操作不可撤销。`)) return;
+        const result = Armory.dismantleAllNonLegendUnequipped();
+        if (result) {
+          const gainedTxt = Object.entries(result.gained).map(([type, n]) => `${Armory.typeDef(type).n}+${n}`).join("、");
+          toast(`一键拆解 ${result.count} 件宝物，获得 ${gainedTxt}`);
+        }
+        this.render();
+      };
       $$(".ic-identify").forEach(b => b.onclick = () => { if (Armory.identify(+b.dataset.uid)) this.render(); });
       const ft = $("#stock-f-type"); if (ft) ft.onchange = (e) => { this._stockType = e.target.value; this.render(); };
       const fr = $("#stock-f-rarity"); if (fr) fr.onchange = (e) => { this._stockRarity = e.target.value; this.render(); };
@@ -13173,7 +13238,7 @@
 
   // 势力系统的推演调参需要能脱离 UI 直接跑上百天（逐日点「宿营」既慢又会被各种弹窗打断），
   // 故与 window.Skill / window.FieldBattle 同例，导出一个只读的自动化测试句柄
-  window.__wj = { Campaign, FactionAI, FactionFame, FactionOrders, FactionGold, FactionTop5, Loyalty, PlayerRank, Garrison, Population, Prosper, Bond, RPG, MapUI, Buildings, BUILD_TYPES, cityBuildOptions, Estate, Armory, Rewards, DB, CITIES, FACTIONS, cityFactionId, factionCityCount, factionName, liveFactionIds, isRealFaction, adjCities, factionDef, isFactionLord, factionGenerals, FieldFX };
+  window.__wj = { Campaign, FactionAI, FactionFame, FactionOrders, FactionGold, FactionTop5, Loyalty, PlayerRank, Garrison, Population, Prosper, Bond, RPG, MapUI, Buildings, BUILD_TYPES, cityBuildOptions, Estate, Armory, Rewards, DB, CITIES, FACTIONS, cityFactionId, factionCityCount, factionName, liveFactionIds, isRealFaction, adjCities, factionDef, isFactionLord, factionGenerals, FieldFX, GridBattle };
 
   document.addEventListener("DOMContentLoaded", init);
 })();

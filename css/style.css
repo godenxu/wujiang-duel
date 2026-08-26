@@ -989,6 +989,8 @@ html, body {
 .ic-btn-row { display: flex; gap: 6px; }
 .ic-btn-row .ic-dismantle { flex: 1 1 100%; width: 100%; margin-top: 8px; }
 .stock-filter-row { display: flex; gap: 8px; margin: 4px 0 10px; }
+.stock-bulk-row { margin: 0 0 10px; }
+.stock-bulk-row .btn-ghost { width: 100%; padding: 9px; font-size: 13px; }
 .stock-filter-row select {
   flex: 1 1 0; min-width: 0; padding: 9px 6px; border-radius: 8px; border: 1px solid rgba(212,175,55,.35);
   background: rgba(0,0,0,.3); color: var(--paper); font-family: inherit; font-size: 13px;
