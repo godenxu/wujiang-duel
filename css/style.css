@@ -1123,10 +1123,13 @@ html, body {
 .map-zoom-layer { position: absolute; inset: 0; transform-origin: center center; }
 .map-lines { position: absolute; inset: 0; width: 100%; height: 100%; }
 .map-lines line.map-road { stroke: rgba(212,175,55,.32); stroke-width: 1.6px; stroke-dasharray: 3 2.4; }
-.map-lines path.map-land { stroke-width: .6; vector-effect: non-scaling-stroke; }
-.map-lines path.map-land.cn { fill: rgba(193,39,45,.22); stroke: rgba(232,194,90,.5); }
-.map-lines path.map-land.jp { fill: rgba(58,73,138,.26); stroke: rgba(232,194,90,.45); }
-.map-lines path.map-river { fill: none; stroke: rgba(94,195,224,.45); stroke-width: .5; vector-effect: non-scaling-stroke; }
+/* 卫星地形栅格铺底后，海岸线不再需要靠纯色块表意国别——改成只描边（低透明度国别色只作淡淡提示），
+   把山丘/平原/水系这些真实地貌留给底图本身来说话，避免纯色覆盖盖掉栅格纹理 */
+.map-relief { opacity: .92; }
+.map-lines path.map-land { stroke-width: .5; vector-effect: non-scaling-stroke; }
+.map-lines path.map-land.cn { fill: rgba(193,39,45,.08); stroke: rgba(232,194,90,.65); }
+.map-lines path.map-land.jp { fill: rgba(58,73,138,.1); stroke: rgba(232,194,90,.6); }
+.map-lines path.map-river { fill: none; stroke: rgba(94,195,224,.55); stroke-width: .4; vector-effect: non-scaling-stroke; }
 .map-zoom-ctl { position: absolute; top: 8px; right: 8px; z-index: 4; display: flex; flex-direction: column; gap: 6px; }
 .map-zoom-ctl button {
   width: 30px; height: 30px; border-radius: 8px; border: 1px solid rgba(212,175,55,.5);
