@@ -1122,7 +1122,8 @@ html, body {
 .map-svg-box:active { cursor: grabbing; }
 .map-zoom-layer { position: absolute; inset: 0; transform-origin: center center; }
 .map-lines { position: absolute; inset: 0; width: 100%; height: 100%; }
-.map-lines line.map-road { stroke: rgba(212,175,55,.32); stroke-width: 1.6px; stroke-dasharray: 3 2.4; }
+.map-lines line.map-road-halo { stroke: rgba(0,0,0,.55); stroke-width: 3px; }
+.map-lines line.map-road { stroke: rgba(232,194,90,.85); stroke-width: 1.6px; stroke-dasharray: 3 2.4; }
 /* 卫星地形栅格铺底后，海岸线不再需要靠纯色块表意国别——改成只描边（低透明度国别色只作淡淡提示），
    把山丘/平原/水系这些真实地貌留给底图本身来说话，避免纯色覆盖盖掉栅格纹理 */
 .map-relief { opacity: .92; }
@@ -1139,31 +1140,27 @@ html, body {
 .map-zoom-ctl button:active { transform: scale(.92); }
 /* 城池徽章：底色/边框取所属势力色（--fac 由行内 style 注入），左缘 2px 竖条取国别色作双保险；
    cur/adj/far 三态一律只用 box-shadow / opacity 表达，绝不覆写 border-color，以免与势力色互相打架 */
+/* 城池改用剪影图标（按繁荣度星级放大/加旗，见 cityIconSvg）代表，不再是色块名牌——
+   卫星地形底图上到处是纹理，纯色色块会显得又扁又假，图标+半透明小标签更贴近"这是一座城池"的观感 */
 .map-city {
-  position: absolute; transform: translate(-50%, -50%); display: flex; align-items: center; justify-content: center;
-  cursor: pointer; z-index: 1; padding: 1.5px 3px 1.5px 5px; min-width: 16px; border-radius: 3px;
-  --fac: #7a7a7a; --natl: rgba(212,175,55,.6);
-  border: 1px solid var(--fac);
-  /* 用半透明黑渐变压暗势力本色，既保留可辨的色相又不至于亮到盖过白色城名；
-     刻意不用 color-mix()——部分旧版移动端浏览器尚不支持，此写法则处处可用 */
-  background: linear-gradient(135deg, rgba(0,0,0,.3), rgba(0,0,0,.62)), var(--fac);
-  overflow: hidden;
+  position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column;
+  align-items: center; cursor: pointer; z-index: 1;
+  --fac: #7a7a7a;
 }
-.map-city::before {
-  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--natl);
+.mcity-icon { display: block; filter: drop-shadow(0 1px 1.5px rgba(0,0,0,.65)); }
+.mcity-name {
+  font-size: 6px; font-weight: 700; color: #fff; white-space: nowrap; line-height: 1.3; margin-top: 1px;
+  text-shadow: 0 1px 2px #000; background: rgba(0,0,0,.42); padding: 0 3px; border-radius: 2px;
 }
-.map-city.cn { --natl: #ff6b6b; }
-.map-city.jp { --natl: #7a90ff; }
-.map-city.sea { --natl: #bebebe; }
-.mcity-name { font-size: 6px; font-weight: 700; color: #fff; white-space: nowrap; line-height: 1.4; text-shadow: 0 1px 2px #000; position: relative; }
-/* 所在城池/势力城池：金色勾边收细并淡化辉光，作低调精致的身份标记，不再抢占势力底色的可辨度 */
-.map-city.mine { box-shadow: 0 0 0 1px rgba(232,194,90,.75); }
-.map-city.cur { box-shadow: 0 0 0 1px var(--cn-gold), 0 0 4px rgba(232,194,90,.65); z-index: 3; }
-.map-city.cur .mcity-name { color: var(--cn-gold); font-size: 8px; }
+/* 所在城池/势力城池：图标改用金色辉光标记身份，不再靠色块勾边——drop-shadow 天然贴合剪影轮廓 */
+.map-city.mine .mcity-icon { filter: drop-shadow(0 0 2px rgba(232,194,90,.9)) drop-shadow(0 1px 1.5px rgba(0,0,0,.6)); }
+.map-city.cur { z-index: 3; }
+.map-city.cur .mcity-icon { filter: drop-shadow(0 0 2.5px var(--cn-gold)) drop-shadow(0 0 1.5px var(--cn-gold)); }
+.map-city.cur .mcity-name { color: var(--cn-gold); font-size: 7px; background: rgba(0,0,0,.58); }
 /* 相邻可达城池：不再用勾边光圈标注——势力配色本已够挤，额外的一圈色只添混淆；
    "可去"信号改由点击后的目标城市列表/操作面板承担，地图上只保留 z-index 让其略压在远城之上 */
 .map-city.adj { z-index: 2; }
-.map-city.far { opacity: .55; }
+.map-city.far { opacity: .62; }
 
 /* 宿营夜报：撑满可视高度、内部滚动、按类别分节全量播报 */
 .night-report { max-height: 90vh; display: flex; flex-direction: column; padding-bottom: 12px; }

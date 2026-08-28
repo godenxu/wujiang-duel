@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608290734";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608290749";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -10058,6 +10058,26 @@
   // 卫星地形底图（Natural Earth 1:50m 明暗浮雕地形栅格，裁剪范围比矢量海岸线略大，
   // 露出朝鲜半岛/台湾岛等背景陪衬）在同一套归一化坐标系下的放置位置——见 assets/map/relief.jpg
   const MAP_RELIEF_RECT = { x: 0.98, y: 1.01, w: 98.04, h: 98.01 };
+  // 城池图样：地图上不再用色块名牌代表城市，改用一座城池剪影图标，按繁荣度星级（Prosper.lv，1~5）
+  // 逐级放大、逐级加旗——星级越高的名城，图标越大、越气派（3 级起挂旗，5 级旗更大更醒目），
+  // 一眼就能从地图上看出各城的发展规模，不必点进去才知道
+  const CITY_ICON_PATH = "M2,22 L2,13 L5,13 L5,9 L9,9 L9,13 L15,13 L15,9 L19,9 L19,13 L22,13 L22,22 Z";
+  const CITY_ICON_SIZE = [13, 16, 19, 22, 26];   // 各星级对应的图标边长（px，实际渲染时按缩放比例换算）
+  function cityIconSvg(lv) {
+    const size = CITY_ICON_SIZE[Math.max(0, Math.min(4, lv - 1))];
+    let flag = "", topPad = 0;
+    if (lv >= 3) {
+      const big = lv >= 5;
+      const fh = big ? 10 : 7, fw = big ? 7 : 5;
+      topPad = fh + 2;
+      flag = `<line x1="12" y1="9" x2="12" y2="${9 - fh}" stroke="#8a6a2a" stroke-width="1"/>
+        <path d="M12,${9 - fh} L${12 + fw},${9 - fh + 2} L12,${9 - fh + 4} Z" fill="#e8c25a"/>`;
+    }
+    const vbH = 24 + topPad;
+    return `<svg class="mcity-icon" viewBox="0 -${topPad} 24 ${vbH}" width="${size}" height="${Math.round(size * vbH / 24)}">
+      <path d="${CITY_ICON_PATH}" fill="var(--fac)" stroke="#1a1410" stroke-width="1.3"/>${flag}
+    </svg>`;
+  }
   const MapZoom = { scale: 1, x: 0, y: 0 };
   let MapLegendOpen = false;   // 势力色图例展开态，与 MapZoom 同为模块级、跨 render() 持久
   const MapUI = {
@@ -10096,7 +10116,12 @@
       this.bindZoom($(".map-svg-box"));
     },
     svgHtml(m) {
+      // 换了写实卫星底图后，原来那条低透明度金色虚线常被复杂地形纹理"吃掉"看不清——每条路都先垫一条
+      // 更粗的深色实线做"描边衬底"，再在上面叠一条原有的金色虚线，不论压在山地还是平原上都能看清
       const lines = ROADS.map(([a, b]) => {
+        const A = cityDef(a), B = cityDef(b);
+        return `<line x1="${A.x}" y1="${A.y}" x2="${B.x}" y2="${B.y}" class="map-road-halo" vector-effect="non-scaling-stroke"/>`;
+      }).join("") + ROADS.map(([a, b]) => {
         const A = cityDef(a), B = cityDef(b);
         return `<line x1="${A.x}" y1="${A.y}" x2="${B.x}" y2="${B.y}" class="map-road" vector-effect="non-scaling-stroke"/>`;
       }).join("");
@@ -10105,11 +10130,13 @@
         const cls = c.id === m.curCity ? "cur" : adj.includes(c.id) ? "adj" : "far";
         const owner = cityOwnerSide(m, c.id);
         const fid = cityFactionId(m, c.id);
-        // 势力色走行内 style（势力多达 22 家，逐一写死 CSS 类不现实）；国别仍留 owner 类名，
-        // 供左缘 2px 国别竖条与 .sea 等既有样式挂钩——cur/adj/far 三态则一律改用 box-shadow 表达，不再抢占 border-color
+        // 势力色走行内 style（势力多达 22 家，逐一写死 CSS 类不现实）；国别仍留 owner 类名供 .sea 等既有样式挂钩
         const mine = fid && fid === m.playerFaction;
+        // 城池图样按繁荣度星级取用不同大小/装饰的图标（见 cityIconSvg）——海路中转站无城建无从算繁荣度，按最低星级处理
+        const lv = c.side === "sea" ? 1 : Prosper.lv(m, c.id);
         return `<div class="map-city ${owner} ${cls}${mine ? " mine" : ""}" data-id="${c.id}"
           style="left:${c.x}%;top:${c.y}%;--fac:${factionColor(fid)}">
+          ${cityIconSvg(lv)}
           <span class="mcity-name">${c.n}</span>
         </div>`;
       }).join("");
@@ -10416,10 +10443,12 @@
       if (layer) layer.style.transform = `translate(${MapZoom.x}px,${MapZoom.y}px) scale(${MapZoom.scale})`;
     },
     clampZoomState(box) {
-      MapZoom.scale = Math.min(3, Math.max(1, MapZoom.scale));
+      MapZoom.scale = Math.min(8, Math.max(1, MapZoom.scale));
       const rect = box.getBoundingClientRect();
-      const maxX = (MapZoom.scale - 1) * rect.width / 2 + 40;
-      const maxY = (MapZoom.scale - 1) * rect.height / 2 + 40;
+      // 平移边界严格卡死在地图实际范围内，不再额外放宽 40px——放宽的那部分露出的是地图之外
+      // 空空如也的容器背景（并非真的还有地图），换了写实卫星底图后这块空白格外扎眼，故收紧
+      const maxX = (MapZoom.scale - 1) * rect.width / 2;
+      const maxY = (MapZoom.scale - 1) * rect.height / 2;
       MapZoom.x = Math.min(maxX, Math.max(-maxX, MapZoom.x));
       MapZoom.y = Math.min(maxY, Math.max(-maxY, MapZoom.y));
     },
@@ -10483,8 +10512,8 @@
       };
       box.addEventListener("click", e => { if (box._justDragged) { e.stopPropagation(); e.preventDefault(); } }, true);
       const zoomStep = d => { MapZoom.scale += d; if (MapZoom.scale <= 1.001) { MapZoom.x = 0; MapZoom.y = 0; } this.clampZoomState(box); this.applyZoom(box); };
-      const inBtn = $("#map-zoom-in"); if (inBtn) inBtn.onclick = () => zoomStep(0.4);
-      const outBtn = $("#map-zoom-out"); if (outBtn) outBtn.onclick = () => zoomStep(-0.4);
+      const inBtn = $("#map-zoom-in"); if (inBtn) inBtn.onclick = () => zoomStep(0.7);
+      const outBtn = $("#map-zoom-out"); if (outBtn) outBtn.onclick = () => zoomStep(-0.7);
       const focusBtn = $("#map-zoom-focus"); if (focusBtn) focusBtn.onclick = () => this.focusCurCity(box);
       const overviewBtn = $("#map-zoom-overview"); if (overviewBtn) overviewBtn.onclick = () => { MapZoom.scale = 1; MapZoom.x = 0; MapZoom.y = 0; this.applyZoom(box); };
     },
@@ -10493,7 +10522,7 @@
       const m = Campaign.mapState(); if (!m) return;
       const c = cityDef(m.curCity); if (!c) return;
       const rect = box.getBoundingClientRect();
-      MapZoom.scale = 2.2;
+      MapZoom.scale = 4.5;
       MapZoom.x = MapZoom.scale * rect.width * (0.5 - c.x / 100);
       MapZoom.y = MapZoom.scale * rect.height * (0.5 - c.y / 100);
       this.clampZoomState(box);
