@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608290844";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608290907";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -10080,6 +10080,7 @@
     </svg>`;
   }
   const MapZoom = { scale: 1, x: 0, y: 0 };
+  const MAP_ZOOM_MAX = 8;   // 地图最大缩放倍数，与城池图标"随缩放小幅放大"的换算共用同一个上限
   let MapLegendOpen = false;   // 势力色图例展开态，与 MapZoom 同为模块级、跨 render() 持久
   const MapUI = {
     // 边境战胜负犒赏/赔付：不再是固定数额，改为所夺/被夺城池金币日产出的倍数（约合一月产出），见 resolveBorderWar 的 onDone
@@ -10444,11 +10445,17 @@
     applyZoom(box) {
       const layer = box.querySelector(".map-zoom-layer");
       if (layer) layer.style.transform = `translate(${MapZoom.x}px,${MapZoom.y}px) scale(${MapZoom.scale})`;
-      // 城池图标/城名要按固定视觉大小显示、不随地图放大而跟着变大变小——图标本身仍在会被整体
-      // scale() 的 .map-zoom-layer 里（这样它们的锚点位置才能继续跟着地图缩放/平移走），
-      // 于是在 .map-city 上叠一个反向的 scale(1/MapZoom.scale)抵消掉，二者相乘净效果就是"位置跟着
-      // 地图走、尺寸不跟着变"；CSS 变量挂在 box 上，.map-city 作为其后代天然继承
-      box.style.setProperty("--zk", (1 / MapZoom.scale).toFixed(4));
+      // 城池图标/城名的视觉大小随地图缩放小幅联动，而不是完全固定不变——完全固定过（--zk 严格
+      // 等于 1/MapZoom.scale，图标位置跟着地图走、尺寸却纹丝不动）试过一轮才发现问题：地图缩到
+      // 最小（默认视图）时城池锚点本就挤在一起，图标尺寸没法再小，只能眼睁睁看着堆叠；地图放大到
+      // 最大时锚点已经拉开老远，图标却还是那么大一丁点，反而不容易一眼看到、没有"放大细看"该有的效果。
+      // 现在改为把最终显示大小在"缩到最小时更小（缓解堆叠）"与"放大到最大时更大（更醒目）"之间
+      // 线性插值，图标本身仍在会被整体 scale() 的 .map-zoom-layer 里（锚点位置照常跟着地图走），
+      // 反推出对应这一缩放级别所需的 --zk：设计基准尺寸（乘上 --rk 做过设备自适应后）在最小缩放时
+      // 只呈现 55%，在最大缩放时放大到 150%，中间按缩放进度线性过渡
+      const zoomProgress = (MapZoom.scale - 1) / (MAP_ZOOM_MAX - 1);
+      const visualMult = 0.55 + (1.5 - 0.55) * zoomProgress;
+      box.style.setProperty("--zk", (visualMult / MapZoom.scale).toFixed(4));
     },
     // 城池图标/城名的自适应缩放：同样的固定像素尺寸，在手机上（.map-svg-box 实际渲染宽度窄）
     // 显得过大，在桌面浏览器（未设上限宽度，随窗口铺得很宽）上却刚好——按当前容器实际宽度相对
@@ -10479,24 +10486,39 @@
     // 让另一个方向超出视野），再以外包框中心为基准点套用与聚焦当前城市相同的换算方式
     zoomToFitSide(box, side) {
       const list = CITIES.filter(c => c.side === side);
+      // 对马岛严格算国别是「海路中转站」（side:"sea"），但它地理上紧邻九州、概念上属于日本一侧，
+      // 缩放至战国全境时若不把它算进外包框，它仍会因为落在别的城池外包框+留白范围内而被显示出来，
+      // 但只是"恰好蹭到"、不是外包框真正的边界，导致它这一侧的留白比奥州那一侧明显更宽、看着不对称；
+      // 把它显式并入日本这份外包框，让它跟奥州一样成为真正参与"取外包框边界"计算的一员，两侧留白才能对称
+      if (side === "jp") { const ts = cityDef("tsushima"); if (ts) list.push(ts); }
       if (!list.length) return;
       const pad = 8;
-      const minX = Math.max(0, Math.min(...list.map(c => c.x)) - pad);
-      const maxX = Math.min(100, Math.max(...list.map(c => c.x)) + pad);
-      const minY = Math.max(0, Math.min(...list.map(c => c.y)) - pad);
-      const maxY = Math.min(100, Math.max(...list.map(c => c.y)) + pad);
+      const minX = Math.min(...list.map(c => c.x)) - pad;
+      const maxX = Math.max(...list.map(c => c.x)) + pad;
+      const minY = Math.min(...list.map(c => c.y)) - pad;
+      const maxY = Math.max(...list.map(c => c.y)) + pad;
       const rect = box.getBoundingClientRect();
       const scaleX = 100 / Math.max(1, maxX - minX);
       const scaleY = 100 / Math.max(1, maxY - minY);
-      MapZoom.scale = Math.max(1, Math.min(8, Math.min(scaleX, scaleY)));
       const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+      // 中国、日本两片区域在整张地图里本就不是各自居中的（比如日本偏在地图右侧），只按"刚好装下
+      // 外包框"选缩放倍数（fitScale）常常不够——倍数太低时，平移能挪动的范围（随缩放倍数增大而增大）
+      // 也跟着很小，不够把视野从"整张地图的正中心"挪到"日本片区的正中心"，于是被下面 clampZoomState
+      // 的平移边界卡住，实际显示的画面就没能真正居中在这片区域上，会出现一侧留白明显比另一侧宽的
+      // 假性不对称（并非留白量算错，而是想挪到位却挪不动）。这里额外按"要挪动这么远、至少得留多少
+      // 平移余量"反推一个下限缩放倍数，与刚好装下的倍数取较大者，确保居中挪得到位、两侧留白才是真对称
+      const fitScale = Math.min(scaleX, scaleY);
+      const kx = Math.abs(0.5 - cx / 100), ky = Math.abs(0.5 - cy / 100);
+      const centerScaleX = kx >= 0.499 ? MAP_ZOOM_MAX : 1 / (1 - 2 * kx);
+      const centerScaleY = ky >= 0.499 ? MAP_ZOOM_MAX : 1 / (1 - 2 * ky);
+      MapZoom.scale = Math.max(1, Math.min(MAP_ZOOM_MAX, Math.max(fitScale, centerScaleX, centerScaleY)));
       MapZoom.x = MapZoom.scale * rect.width * (0.5 - cx / 100);
       MapZoom.y = MapZoom.scale * rect.height * (0.5 - cy / 100);
       this.clampZoomState(box);
       this.applyZoom(box);
     },
     clampZoomState(box) {
-      MapZoom.scale = Math.min(8, Math.max(1, MapZoom.scale));
+      MapZoom.scale = Math.min(MAP_ZOOM_MAX, Math.max(1, MapZoom.scale));
       const rect = box.getBoundingClientRect();
       // 平移边界严格卡死在地图实际范围内，不再额外放宽 40px——放宽的那部分露出的是地图之外
       // 空空如也的容器背景（并非真的还有地图），换了写实卫星底图后这块空白格外扎眼，故收紧
@@ -10556,7 +10578,7 @@
             const now = Date.now();
             const tapDist = Math.hypot(e.clientX - lastTapX, e.clientY - lastTapY);
             if (now - lastTapTime < 350 && tapDist < 30) {
-              this.zoomAtPoint(box, e.clientX, e.clientY, Math.min(8, MapZoom.scale * 2));
+              this.zoomAtPoint(box, e.clientX, e.clientY, Math.min(MAP_ZOOM_MAX, MapZoom.scale * 2));
               lastTapTime = 0;
             } else {
               lastTapTime = now; lastTapX = e.clientX; lastTapY = e.clientY;
