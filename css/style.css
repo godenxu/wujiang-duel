@@ -1152,8 +1152,11 @@ html, body {
 .map-city {
   /* scale(var(--zk)) 抵消地图整体缩放：--zk 由 MapUI.applyZoom 按 1/MapZoom.scale 实时写在
      .map-svg-box 上，图标锚点仍随地图缩放/平移移动，但视觉大小固定不随之放大——scale 默认围绕
-     元素自身中心生效，与前面的居中位移互不干扰，地图缩得再大城池图标/城名也不会跟着变成一大坨 */
-  position: absolute; transform: translate(-50%, -50%) scale(var(--zk, 1)); display: flex; flex-direction: column;
+     元素自身中心生效，与前面的居中位移互不干扰，地图缩得再大城池图标/城名也不会跟着变成一大坨。
+     再叠一个 var(--rk) 做设备自适应：同样的固定像素尺寸在手机窄屏上显得偏大、在不设上限宽度的
+     桌面浏览器里却刚好，--rk 由 applyResponsiveScale 按 .map-svg-box 实际渲染宽度算出，
+     容器越窄这个值越小，图标/城名跟着等比缩小，宽屏时封顶回到原尺寸不再继续放大 */
+  position: absolute; transform: translate(-50%, -50%) scale(calc(var(--zk, 1) * var(--rk, 1))); display: flex; flex-direction: column;
   align-items: center; cursor: pointer; z-index: 1;
   --fac: #7a7a7a;
 }

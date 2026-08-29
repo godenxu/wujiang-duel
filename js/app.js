@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608290827";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608290844";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -10163,6 +10163,8 @@
         <button id="map-zoom-out" type="button">－</button>
         <button id="map-zoom-focus" type="button" title="聚焦当前城市">🎯</button>
         <button id="map-zoom-overview" type="button" title="显示全景">🗺️</button>
+        <button id="map-zoom-cn" type="button" title="缩放至三国全境">🇨🇳</button>
+        <button id="map-zoom-jp" type="button" title="缩放至战国全境">🇯🇵</button>
       </div>
       ${legend}`;
     },
@@ -10448,6 +10450,15 @@
       // 地图走、尺寸不跟着变"；CSS 变量挂在 box 上，.map-city 作为其后代天然继承
       box.style.setProperty("--zk", (1 / MapZoom.scale).toFixed(4));
     },
+    // 城池图标/城名的自适应缩放：同样的固定像素尺寸，在手机上（.map-svg-box 实际渲染宽度窄）
+    // 显得过大，在桌面浏览器（未设上限宽度，随窗口铺得很宽）上却刚好——按当前容器实际宽度相对
+    // 一个"桌面观感恰好"的参照宽度取比例，容器越窄缩得越小，越宽最多缩回原尺寸（不再继续放大，
+    // 避免超宽显示器上图标反而失控变得更大）；与 --zk 各管一段、在 CSS 里相乘生效
+    applyResponsiveScale(box) {
+      const rect = box.getBoundingClientRect();
+      const rk = Math.max(0.5, Math.min(1, rect.width / 800));
+      box.style.setProperty("--rk", rk.toFixed(3));
+    },
     // 以屏幕上某一点为不动点缩放（双击/双触摸点按位置放大用）：先按当前缩放/平移状态反推出
     // 该屏幕点对应的地图归一化坐标，换到目标缩放倍数后，再反过来解出让这一坐标仍显示在同一
     // 屏幕点所需的新平移量——这样双击哪里就以哪里为中心放大，而不是永远从画面正中心放大
@@ -10460,6 +10471,27 @@
       MapZoom.scale = targetScale;
       MapZoom.x = px - (cx + MapZoom.scale * (origX - cx));
       MapZoom.y = py - (cy + MapZoom.scale * (origY - cy));
+      this.clampZoomState(box);
+      this.applyZoom(box);
+    },
+    // 缩放至某一国别全境可见：取该国全部城池坐标的外包框（留一圈余量，不让边缘城池贴边），
+    // 按 x/y 两个方向分别算出恰好把这个外包框整个纳入视野所需的缩放倍数，取较小者（较大者会
+    // 让另一个方向超出视野），再以外包框中心为基准点套用与聚焦当前城市相同的换算方式
+    zoomToFitSide(box, side) {
+      const list = CITIES.filter(c => c.side === side);
+      if (!list.length) return;
+      const pad = 8;
+      const minX = Math.max(0, Math.min(...list.map(c => c.x)) - pad);
+      const maxX = Math.min(100, Math.max(...list.map(c => c.x)) + pad);
+      const minY = Math.max(0, Math.min(...list.map(c => c.y)) - pad);
+      const maxY = Math.min(100, Math.max(...list.map(c => c.y)) + pad);
+      const rect = box.getBoundingClientRect();
+      const scaleX = 100 / Math.max(1, maxX - minX);
+      const scaleY = 100 / Math.max(1, maxY - minY);
+      MapZoom.scale = Math.max(1, Math.min(8, Math.min(scaleX, scaleY)));
+      const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+      MapZoom.x = MapZoom.scale * rect.width * (0.5 - cx / 100);
+      MapZoom.y = MapZoom.scale * rect.height * (0.5 - cy / 100);
       this.clampZoomState(box);
       this.applyZoom(box);
     },
@@ -10476,6 +10508,19 @@
     bindZoom(box) {
       if (!box) return;
       this.applyZoom(box);
+      this.applyResponsiveScale(box);
+      // 响应式缩放只需要在窗口尺寸变化时重算一次，用全局唯一的一个监听器、每次都现查当前
+      // .map-svg-box（而不是闭包捕获这次 render() 传入的 box）——render() 每次都会整体重建
+      // map-wrap 的 DOM，若照搬"每次 bindZoom 都新增一个 resize 监听"的写法，旧监听器绑的
+      // box 早已从 DOM 摘除、自身不会内存泄漏，但 window 级监听器会跟着 render() 次数越攒越多，
+      // 长时间游玩后每次缩放窗口都要白跑一遍所有失效的旧监听器
+      if (!MapUI._resizeBound) {
+        window.addEventListener("resize", () => {
+          const curBox = $(".map-svg-box");
+          if (curBox) MapUI.applyResponsiveScale(curBox);
+        });
+        MapUI._resizeBound = true;
+      }
       // 注：不使用 setPointerCapture——它会让 click 事件的目标被劫持到 box 本身，
       // 导致捏合/拖拽绑定后城池点击彻底失效；改为在 document 上临时挂 move/up 监听，手势结束即摘除
       const pointers = new Map();
@@ -10550,6 +10595,8 @@
       const outBtn = $("#map-zoom-out"); if (outBtn) outBtn.onclick = () => zoomStep(-0.7);
       const focusBtn = $("#map-zoom-focus"); if (focusBtn) focusBtn.onclick = () => this.focusCurCity(box);
       const overviewBtn = $("#map-zoom-overview"); if (overviewBtn) overviewBtn.onclick = () => { MapZoom.scale = 1; MapZoom.x = 0; MapZoom.y = 0; this.applyZoom(box); };
+      const cnBtn = $("#map-zoom-cn"); if (cnBtn) cnBtn.onclick = () => this.zoomToFitSide(box, "cn");
+      const jpBtn = $("#map-zoom-jp"); if (jpBtn) jpBtn.onclick = () => this.zoomToFitSide(box, "jp");
     },
     // 聚焦当前城市：以其相对坐标为中心放大（越靠近地图边缘，越可能被 clampZoomState 的平移边界收紧，属预期内的安全兜底）
     focusCurCity(box) {
