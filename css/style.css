@@ -1143,7 +1143,10 @@ html, body {
 /* 城池改用剪影图标（按繁荣度星级放大/加旗，见 cityIconSvg）代表，不再是色块名牌——
    卫星地形底图上到处是纹理，纯色色块会显得又扁又假，图标+半透明小标签更贴近"这是一座城池"的观感 */
 .map-city {
-  position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column;
+  /* scale(var(--zk)) 抵消地图整体缩放：--zk 由 MapUI.applyZoom 按 1/MapZoom.scale 实时写在
+     .map-svg-box 上，图标锚点仍随地图缩放/平移移动，但视觉大小固定不随之放大——scale 默认围绕
+     元素自身中心生效，与前面的居中位移互不干扰，地图缩得再大城池图标/城名也不会跟着变成一大坨 */
+  position: absolute; transform: translate(-50%, -50%) scale(var(--zk, 1)); display: flex; flex-direction: column;
   align-items: center; cursor: pointer; z-index: 1;
   --fac: #7a7a7a;
 }
