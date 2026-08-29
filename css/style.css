@@ -1122,15 +1122,22 @@ html, body {
 .map-svg-box:active { cursor: grabbing; }
 .map-zoom-layer { position: absolute; inset: 0; transform-origin: center center; }
 .map-lines { position: absolute; inset: 0; width: 100%; height: 100%; }
-.map-lines line.map-road-halo { stroke: rgba(0,0,0,.55); stroke-width: 3px; }
-.map-lines line.map-road { stroke: rgba(232,194,90,.85); stroke-width: 1.6px; stroke-dasharray: 3 2.4; }
+/* vector-effect: non-scaling-stroke 只能抵消 SVG 自身坐标系内的缩放（viewBox/内部 transform），
+   抵消不了 .map-zoom-layer 这层在 SVG 外部、用 CSS transform: scale() 施加的整体放大——描边粗细
+   照样会跟着地图放大等比例变粗。做法与城池图标的 --zk 同源：用 calc() 把 stroke-width/dasharray
+   都反向除以当前缩放倍数，抵消外层放大后净效果就是线宽、虚线疏密恒定，不随地图放大变粗变松散 */
+.map-lines line.map-road-halo { stroke: rgba(0,0,0,.55); stroke-width: calc(3px * var(--zk, 1)); }
+.map-lines line.map-road {
+  stroke: rgba(232,194,90,.85); stroke-width: calc(1.6px * var(--zk, 1));
+  stroke-dasharray: calc(3px * var(--zk, 1)) calc(2.4px * var(--zk, 1));
+}
 /* 卫星地形栅格铺底后，海岸线不再需要靠纯色块表意国别——改成只描边（低透明度国别色只作淡淡提示），
    把山丘/平原/水系这些真实地貌留给底图本身来说话，避免纯色覆盖盖掉栅格纹理 */
 .map-relief { opacity: .92; }
-.map-lines path.map-land { stroke-width: .5; vector-effect: non-scaling-stroke; }
+.map-lines path.map-land { stroke-width: calc(.5px * var(--zk, 1)); vector-effect: non-scaling-stroke; }
 .map-lines path.map-land.cn { fill: rgba(193,39,45,.08); stroke: rgba(232,194,90,.65); }
 .map-lines path.map-land.jp { fill: rgba(58,73,138,.1); stroke: rgba(232,194,90,.6); }
-.map-lines path.map-river { fill: none; stroke: rgba(94,195,224,.55); stroke-width: .4; vector-effect: non-scaling-stroke; }
+.map-lines path.map-river { fill: none; stroke: rgba(94,195,224,.55); stroke-width: calc(.4px * var(--zk, 1)); vector-effect: non-scaling-stroke; }
 .map-zoom-ctl { position: absolute; top: 8px; right: 8px; z-index: 4; display: flex; flex-direction: column; gap: 6px; }
 .map-zoom-ctl button {
   width: 30px; height: 30px; border-radius: 8px; border: 1px solid rgba(212,175,55,.5);
@@ -1150,16 +1157,16 @@ html, body {
   align-items: center; cursor: pointer; z-index: 1;
   --fac: #7a7a7a;
 }
-.mcity-icon { display: block; filter: drop-shadow(0 1px 1.5px rgba(0,0,0,.65)); }
+.mcity-icon { display: block; filter: drop-shadow(0 3px 4.5px rgba(0,0,0,.65)); }
 .mcity-name {
-  font-size: 6px; font-weight: 700; color: #fff; white-space: nowrap; line-height: 1.3; margin-top: 1px;
-  text-shadow: 0 1px 2px #000; background: rgba(0,0,0,.42); padding: 0 3px; border-radius: 2px;
+  font-size: 18px; font-weight: 700; color: #fff; white-space: nowrap; line-height: 1.3; margin-top: 3px;
+  text-shadow: 0 1px 2px #000; background: rgba(0,0,0,.42); padding: 0 6px; border-radius: 4px;
 }
 /* 所在城池/势力城池：图标改用金色辉光标记身份，不再靠色块勾边——drop-shadow 天然贴合剪影轮廓 */
-.map-city.mine .mcity-icon { filter: drop-shadow(0 0 2px rgba(232,194,90,.9)) drop-shadow(0 1px 1.5px rgba(0,0,0,.6)); }
+.map-city.mine .mcity-icon { filter: drop-shadow(0 0 6px rgba(232,194,90,.9)) drop-shadow(0 3px 4.5px rgba(0,0,0,.6)); }
 .map-city.cur { z-index: 3; }
-.map-city.cur .mcity-icon { filter: drop-shadow(0 0 2.5px var(--cn-gold)) drop-shadow(0 0 1.5px var(--cn-gold)); }
-.map-city.cur .mcity-name { color: var(--cn-gold); font-size: 7px; background: rgba(0,0,0,.58); }
+.map-city.cur .mcity-icon { filter: drop-shadow(0 0 7.5px var(--cn-gold)) drop-shadow(0 0 4.5px var(--cn-gold)); }
+.map-city.cur .mcity-name { color: var(--cn-gold); font-size: 21px; background: rgba(0,0,0,.58); }
 /* 相邻可达城池：不再用勾边光圈标注——势力配色本已够挤，额外的一圈色只添混淆；
    "可去"信号改由点击后的目标城市列表/操作面板承担，地图上只保留 z-index 让其略压在远城之上 */
 .map-city.adj { z-index: 2; }

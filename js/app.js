@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608290814";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608290827";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -10063,7 +10063,7 @@
   // 逐级放大、逐级加旗——星级越高的名城，图标越大、越气派（3 级起挂旗，5 级旗更大更醒目），
   // 一眼就能从地图上看出各城的发展规模，不必点进去才知道
   const CITY_ICON_PATH = "M2,22 L2,13 L5,13 L5,9 L9,9 L9,13 L15,13 L15,9 L19,9 L19,13 L22,13 L22,22 Z";
-  const CITY_ICON_SIZE = [13, 16, 19, 22, 26];   // 各星级对应的图标边长（px，实际渲染时按缩放比例换算）
+  const CITY_ICON_SIZE = [39, 48, 57, 66, 78];   // 各星级对应的图标边长（px，固定视觉大小，不随地图缩放变化）
   function cityIconSvg(lv) {
     const size = CITY_ICON_SIZE[Math.max(0, Math.min(4, lv - 1))];
     let flag = "", topPad = 0;
