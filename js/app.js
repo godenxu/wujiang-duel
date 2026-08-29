@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608290907";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608300732";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -7292,40 +7292,40 @@
     { id: "luoyang", n: "洛阳", side: "cn", x: 29.37, y: 32.23 },
     { id: "xuchang", n: "许昌", side: "cn", x: 32.56, y: 35.11 },
     { id: "ye", n: "邺城", side: "cn", x: 34.31, y: 24.57 },
-    { id: "xuzhou", n: "徐州", side: "cn", x: 39.73, y: 34.28 },
-    { id: "jingzhou", n: "荆州", side: "cn", x: 28.66, y: 44.3 },
-    { id: "chaisang", n: "柴桑", side: "cn", x: 37.67, y: 54.8 },
+    { id: "xuzhou", n: "徐州", side: "cn", x: 40.38, y: 34.28 },
+    { id: "jingzhou", n: "荆州", side: "cn", x: 28.66, y: 44.22 },
+    { id: "chaisang", n: "柴桑", side: "cn", x: 37.46, y: 54.8 },
     { id: "jianye", n: "建业", side: "cn", x: 43.84, y: 44.04 },
     { id: "tianshui", n: "天水", side: "cn", x: 14.02, y: 32.55 },
     { id: "baidicheng", n: "白帝城", side: "cn", x: 22.71, y: 48.69 },
     { id: "shangyong", n: "上庸", side: "cn", x: 24.24, y: 43.54 },
     { id: "jiangling", n: "江陵", side: "cn", x: 28.89, y: 51.84 },
-    { id: "wancheng", n: "宛城", side: "cn", x: 29.55, y: 39.72 },
+    { id: "wancheng", n: "宛城", side: "cn", x: 29.55, y: 39.8 },
     { id: "runan", n: "汝南", side: "cn", x: 33.74, y: 39.71 },
-    { id: "xiapi", n: "下邳", side: "cn", x: 42.55, y: 33.74 },
-    { id: "shouchun", n: "寿春", side: "cn", x: 39.24, y: 41.17 },
-    { id: "hefei", n: "合肥", side: "cn", x: 40.26, y: 45.63 },
-    { id: "wuchang", n: "武昌", side: "cn", x: 34.72, y: 51.61 },
+    { id: "xiapi", n: "下邳", side: "cn", x: 41.91, y: 33.74 },
+    { id: "shouchun", n: "寿春", side: "cn", x: 39.24, y: 41.67 },
+    { id: "hefei", n: "合肥", side: "cn", x: 40.26, y: 45.13 },
+    { id: "wuchang", n: "武昌", side: "cn", x: 34.93, y: 51.61 },
     { id: "tsushima", n: "对马岛", side: "sea", x: 67.76, y: 34.28 },
     { id: "satsuma", n: "萨摩", side: "jp", x: 70.66, y: 46.14 },
-    { id: "aki", n: "安艺", side: "jp", x: 74.5, y: 33.48 },
-    { id: "kyoto", n: "京都", side: "jp", x: 81.19, y: 30.59 },
-    { id: "osaka", n: "大坂", side: "jp", x: 79.86, y: 32.05 },
-    { id: "owari", n: "尾张", side: "jp", x: 85.71, y: 29.82 },
-    { id: "kai", n: "甲斐", side: "jp", x: 89.11, y: 26.75 },
-    { id: "sunpu", n: "骏府", side: "jp", x: 89.64, y: 31.22 },
-    { id: "odawara", n: "小田原", side: "jp", x: 92.2, y: 29.45 },
+    { id: "aki", n: "安艺", side: "jp", x: 74.99, y: 33.42 },
+    { id: "kyoto", n: "京都", side: "jp", x: 82.54, y: 30.59 },
+    { id: "osaka", n: "大坂", side: "jp", x: 81.92, y: 32.05 },
+    { id: "owari", n: "尾张", side: "jp", x: 85.13, y: 29.82 },
+    { id: "kai", n: "甲斐", side: "jp", x: 88.92, y: 27.63 },
+    { id: "sunpu", n: "骏府", side: "jp", x: 88.49, y: 30.73 },
+    { id: "odawara", n: "小田原", side: "jp", x: 90.24, y: 29.45 },
     { id: "echigo", n: "越后", side: "jp", x: 89.99, y: 17.33 },
     { id: "oushu", n: "奥州", side: "jp", x: 94.16, y: 15.73 },
-    { id: "higo", n: "肥后", side: "jp", x: 70.62, y: 40.71 },
-    { id: "bungo", n: "丰后", side: "jp", x: 73.5, y: 38.66 },
-    { id: "izumo", n: "出云", side: "jp", x: 74.7, y: 28.89 },
-    { id: "bizen", n: "备前", side: "jp", x: 77.22, y: 32.19 },
-    { id: "omi", n: "近江", side: "jp", x: 84.49, y: 30.64 },
-    { id: "echizen", n: "越前", side: "jp", x: 82.67, y: 25.07 },
-    { id: "kaga", n: "加贺", side: "jp", x: 85.43, y: 23.53 },
-    { id: "mino", n: "美浓", side: "jp", x: 83.16, y: 29.46 },
-    { id: "mikawa", n: "三河", side: "jp", x: 87.71, y: 31.25 },
+    { id: "higo", n: "肥后", side: "jp", x: 71.07, y: 40.71 },
+    { id: "bungo", n: "丰后", side: "jp", x: 73.05, y: 38.66 },
+    { id: "izumo", n: "出云", side: "jp", x: 75.65, y: 28.95 },
+    { id: "bizen", n: "备前", side: "jp", x: 78.34, y: 32.19 },
+    { id: "omi", n: "近江", side: "jp", x: 82.76, y: 30.64 },
+    { id: "echizen", n: "越前", side: "jp", x: 83.56, y: 25.81 },
+    { id: "kaga", n: "加贺", side: "jp", x: 84.54, y: 23.53 },
+    { id: "mino", n: "美浓", side: "jp", x: 84.79, y: 28.72 },
+    { id: "mikawa", n: "三河", side: "jp", x: 85.7, y: 30.87 },
     { id: "hitachi", n: "常陆", side: "jp", x: 93.21, y: 24.53 },
   ];
   const ROADS = [
@@ -10475,7 +10475,9 @@
       const cx = rect.width / 2, cy = rect.height / 2;
       const origX = cx + (px - MapZoom.x - cx) / MapZoom.scale;
       const origY = cy + (py - MapZoom.y - cy) / MapZoom.scale;
-      MapZoom.scale = targetScale;
+      // 目标倍数先夹到合法范围再用于解平移量——否则倍数越界时会先按越界值算出平移，
+      // 随后 clampZoomState 又把倍数拉回合法范围，两者不一致，导致锚点在到达上下限时跳漂
+      MapZoom.scale = Math.min(MAP_ZOOM_MAX, Math.max(1, targetScale));
       MapZoom.x = px - (cx + MapZoom.scale * (origX - cx));
       MapZoom.y = py - (cy + MapZoom.scale * (origY - cy));
       this.clampZoomState(box);
@@ -10554,7 +10556,10 @@
         if (pointers.size === 2) {
           const pts = [...pointers.values()];
           const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-          if (pinchDist > 0) { MapZoom.scale = pinchScale * dist / pinchDist; this.clampZoomState(box); this.applyZoom(box); }
+          if (pinchDist > 0) {
+            const midX = (pts[0].x + pts[1].x) / 2, midY = (pts[0].y + pts[1].y) / 2;
+            this.zoomAtPoint(box, midX, midY, pinchScale * dist / pinchDist);
+          }
           return;
         }
         if (dragging) {
@@ -10607,12 +10612,15 @@
       };
       box.onwheel = e => {
         e.preventDefault();
-        MapZoom.scale += e.deltaY < 0 ? 0.15 : -0.15;
-        this.clampZoomState(box);
-        this.applyZoom(box);
+        this.zoomAtPoint(box, e.clientX, e.clientY, MapZoom.scale + (e.deltaY < 0 ? 0.15 : -0.15));
       };
       box.addEventListener("click", e => { if (box._justDragged) { e.stopPropagation(); e.preventDefault(); } }, true);
-      const zoomStep = d => { MapZoom.scale += d; if (MapZoom.scale <= 1.001) { MapZoom.x = 0; MapZoom.y = 0; } this.clampZoomState(box); this.applyZoom(box); };
+      // 缩放按钮：以地图框当前的屏幕中心为基准点缩放——中心点对应的地图内容在缩放前后保持不变，
+      // 而不是每次都拉回地图的几何中心（那样会导致玩家已经平移过去的观察位置一放大/缩小就跳走）
+      const zoomStep = d => {
+        const rect = box.getBoundingClientRect();
+        this.zoomAtPoint(box, rect.left + rect.width / 2, rect.top + rect.height / 2, MapZoom.scale + d);
+      };
       const inBtn = $("#map-zoom-in"); if (inBtn) inBtn.onclick = () => zoomStep(0.7);
       const outBtn = $("#map-zoom-out"); if (outBtn) outBtn.onclick = () => zoomStep(-0.7);
       const focusBtn = $("#map-zoom-focus"); if (focusBtn) focusBtn.onclick = () => this.focusCurCity(box);
@@ -13394,7 +13402,7 @@
 
   // 势力系统的推演调参需要能脱离 UI 直接跑上百天（逐日点「宿营」既慢又会被各种弹窗打断），
   // 故与 window.Skill / window.FieldBattle 同例，导出一个只读的自动化测试句柄
-  window.__wj = { Campaign, FactionAI, FactionFame, FactionOrders, FactionGold, FactionTop5, Loyalty, PlayerRank, Garrison, Population, Prosper, Bond, RPG, MapUI, Buildings, BUILD_TYPES, cityBuildOptions, Estate, Armory, Rewards, DB, CITIES, FACTIONS, cityFactionId, factionCityCount, factionName, liveFactionIds, isRealFaction, adjCities, factionDef, isFactionLord, factionGenerals, FieldFX, GridBattle, ArmoryUI };
+  window.__wj = { Campaign, FactionAI, FactionFame, FactionOrders, FactionGold, FactionTop5, Loyalty, PlayerRank, Garrison, Population, Prosper, Bond, RPG, MapUI, MapZoom, Buildings, BUILD_TYPES, cityBuildOptions, Estate, Armory, Rewards, DB, CITIES, FACTIONS, cityFactionId, factionCityCount, factionName, liveFactionIds, isRealFaction, adjCities, factionDef, isFactionLord, factionGenerals, FieldFX, GridBattle, ArmoryUI };
 
   document.addEventListener("DOMContentLoaded", init);
 })();
