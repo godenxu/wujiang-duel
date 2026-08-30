@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608300732";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608300818";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -10452,9 +10452,11 @@
       // 现在改为把最终显示大小在"缩到最小时更小（缓解堆叠）"与"放大到最大时更大（更醒目）"之间
       // 线性插值，图标本身仍在会被整体 scale() 的 .map-zoom-layer 里（锚点位置照常跟着地图走），
       // 反推出对应这一缩放级别所需的 --zk：设计基准尺寸（乘上 --rk 做过设备自适应后）在最小缩放时
-      // 只呈现 55%，在最大缩放时放大到 150%，中间按缩放进度线性过渡
+      // 呈现 75%，在最大缩放时放大到 180%，中间按缩放进度线性过渡——"缩放至中/日全境"按钮算出来的
+      // 倍数通常落在 2~3 倍左右这个偏低区间，此前 55%~150% 的曲线在这一档只有六七成大小，
+      // 玩家反馈聚焦国别全境时图标和城名偏小，故整体上调下限与上限
       const zoomProgress = (MapZoom.scale - 1) / (MAP_ZOOM_MAX - 1);
-      const visualMult = 0.55 + (1.5 - 0.55) * zoomProgress;
+      const visualMult = 0.75 + (1.8 - 0.75) * zoomProgress;
       box.style.setProperty("--zk", (visualMult / MapZoom.scale).toFixed(4));
     },
     // 城池图标/城名的自适应缩放：同样的固定像素尺寸，在手机上（.map-svg-box 实际渲染宽度窄）
@@ -10495,10 +10497,16 @@
       if (side === "jp") { const ts = cityDef("tsushima"); if (ts) list.push(ts); }
       if (!list.length) return;
       const pad = 8;
-      const minX = Math.min(...list.map(c => c.x)) - pad;
-      const maxX = Math.max(...list.map(c => c.x)) + pad;
-      const minY = Math.min(...list.map(c => c.y)) - pad;
-      const maxY = Math.max(...list.map(c => c.y)) + pad;
+      // 留白（pad）叠加后的外包框要卡在卫星底图实际覆盖的范围内（MAP_RELIEF_RECT），不能超出去——
+      // 超出的那部分底图压根没画到那里，只有 .map-svg-box 自身的纯色背景，超出越多在画面边缘露出
+      // 的空档就越明显（此前不设上限，日本一侧奥州/常陆等城市 pad 完能到 x≈101，而底图右边缘只到
+      // 99.02，缩放至日本全境时右边就露出一整条空档背景）
+      const imgMinX = MAP_RELIEF_RECT.x, imgMaxX = MAP_RELIEF_RECT.x + MAP_RELIEF_RECT.w;
+      const imgMinY = MAP_RELIEF_RECT.y, imgMaxY = MAP_RELIEF_RECT.y + MAP_RELIEF_RECT.h;
+      const minX = Math.max(imgMinX, Math.min(...list.map(c => c.x)) - pad);
+      const maxX = Math.min(imgMaxX, Math.max(...list.map(c => c.x)) + pad);
+      const minY = Math.max(imgMinY, Math.min(...list.map(c => c.y)) - pad);
+      const maxY = Math.min(imgMaxY, Math.max(...list.map(c => c.y)) + pad);
       const rect = box.getBoundingClientRect();
       const scaleX = 100 / Math.max(1, maxX - minX);
       const scaleY = 100 / Math.max(1, maxY - minY);
@@ -10522,12 +10530,24 @@
     clampZoomState(box) {
       MapZoom.scale = Math.min(MAP_ZOOM_MAX, Math.max(1, MapZoom.scale));
       const rect = box.getBoundingClientRect();
-      // 平移边界严格卡死在地图实际范围内，不再额外放宽 40px——放宽的那部分露出的是地图之外
-      // 空空如也的容器背景（并非真的还有地图），换了写实卫星底图后这块空白格外扎眼，故收紧
-      const maxX = (MapZoom.scale - 1) * rect.width / 2;
-      const maxY = (MapZoom.scale - 1) * rect.height / 2;
-      MapZoom.x = Math.min(maxX, Math.max(-maxX, MapZoom.x));
-      MapZoom.y = Math.min(maxY, Math.max(-maxY, MapZoom.y));
+      const s = MapZoom.scale;
+      // 平移边界不再按"整张 0~100 归一化层"卡死——卫星底图实际只画到 MAP_RELIEF_RECT 这个范围
+      // （四边都留了一点点没画到），之前直接按整层 0~100 算边界时，靠近真实地图边缘的城池
+      // （比如成都本就贴着西边裁切边界）一旦聚焦放大，就会把这一小圈"层里有、图里没有"的空白
+      // 也一并拉进画面、放大成一大片纯色空档。这里改成按底图实际覆盖的那个更窄的范围算边界，
+      // 可视窗口（宽度=1/scale）被约束在底图范围内，缺口就出现在推得到位不到位的问题，而不再是
+      // 露出真正的空白——两轴各自独立换算，因为底图四边留白量并不对称
+      const fracMinX = MAP_RELIEF_RECT.x / 100, fracMaxX = (MAP_RELIEF_RECT.x + MAP_RELIEF_RECT.w) / 100;
+      const fracMinY = MAP_RELIEF_RECT.y / 100, fracMaxY = (MAP_RELIEF_RECT.y + MAP_RELIEF_RECT.h) / 100;
+      const halfWin = 1 / (2 * s);
+      let fcMinX = fracMinX + halfWin, fcMaxX = fracMaxX - halfWin;
+      if (fcMinX > fcMaxX) { const mid = (fracMinX + fracMaxX) / 2; fcMinX = fcMaxX = mid; }
+      let fcMinY = fracMinY + halfWin, fcMaxY = fracMaxY - halfWin;
+      if (fcMinY > fcMaxY) { const mid = (fracMinY + fracMaxY) / 2; fcMinY = fcMaxY = mid; }
+      const txMax = s * rect.width * (0.5 - fcMinX), txMin = s * rect.width * (0.5 - fcMaxX);
+      const tyMax = s * rect.height * (0.5 - fcMinY), tyMin = s * rect.height * (0.5 - fcMaxY);
+      MapZoom.x = Math.min(txMax, Math.max(txMin, MapZoom.x));
+      MapZoom.y = Math.min(tyMax, Math.max(tyMin, MapZoom.y));
     },
     bindZoom(box) {
       if (!box) return;

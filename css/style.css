@@ -1156,13 +1156,20 @@ html, body {
      再叠一个 var(--rk) 做设备自适应：同样的固定像素尺寸在手机窄屏上显得偏大、在不设上限宽度的
      桌面浏览器里却刚好，--rk 由 applyResponsiveScale 按 .map-svg-box 实际渲染宽度算出，
      容器越窄这个值越小，图标/城名跟着等比缩小，宽屏时封顶回到原尺寸不再继续放大 */
-  position: absolute; transform: translate(-50%, -50%) scale(calc(var(--zk, 1) * var(--rk, 1))); display: flex; flex-direction: column;
-  align-items: center; cursor: pointer; z-index: 1;
+  /* 锚点（c.x%/c.y% 与道路连线共用同一坐标）现在对齐到图标的底边，而不是"图标+城名"整个
+     竖排区块的正中心——之前用 translate(-50%,-50%) 时，锚点落在图标中段，道路线正好从图标
+     中间穿过去，视觉上像是从图标"身上"接出来；改成 translate(-50%,-100%) 把整个 .map-city
+     的底边钉在锚点上，且这个块此时只包含城池图标本身（城名用 position:absolute 挪到块外单独
+     排布，不计入这个块的高度），道路自然落在图标正下方的底边上，城名再挂在锚点下方，互不冲突。
+     transform-origin 也从默认的正中心改成底边正中，缩放（--zk/--rk）时锚点位置本身不会跟着挪动 */
+  position: absolute; transform: translate(-50%, -100%) scale(calc(var(--zk, 1) * var(--rk, 1)));
+  transform-origin: 50% 100%; cursor: pointer; z-index: 1;
   --fac: #7a7a7a;
 }
 .mcity-icon { display: block; filter: drop-shadow(0 3px 4.5px rgba(0,0,0,.65)); }
 .mcity-name {
-  font-size: 18px; font-weight: 700; color: #fff; white-space: nowrap; line-height: 1.3; margin-top: 3px;
+  position: absolute; left: 50%; top: 100%; transform: translateX(-50%); margin-top: 3px;
+  font-size: 18px; font-weight: 700; color: #fff; white-space: nowrap; line-height: 1.3;
   text-shadow: 0 1px 2px #000; background: rgba(0,0,0,.42); padding: 0 6px; border-radius: 4px;
 }
 /* 所在城池/势力城池：图标改用金色辉光标记身份，不再靠色块勾边——drop-shadow 天然贴合剪影轮廓 */
