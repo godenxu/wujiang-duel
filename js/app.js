@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608301500";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608301629";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -7927,8 +7927,11 @@
     // （耗资照旧，只是不长城建等级，跟招揽/施计等"先扣费再摇骰子"的既有套路一致）。AI 势力用
     // 麾下政治前五均值（FactionTop5），玩家自选势力用自己亲自出马时的政治资质（RPG.heroGeneral().zheng）——
     // 两边共用这同一条公式，此前 AI 版本的 build() 完全没看政治，各家诸侯修城速度整齐划一，
-    // 玩家自己捐修更是从来没有失败一说，这里一并补上
-    buildChance(zheng) { return Math.max(0.25, Math.min(0.95, zheng / 100)); },
+    // 玩家自己捐修更是从来没有失败一说，这里一并补上。
+    // 公式二度调整：后期武将一多，随便凑个前五政治均值就能上 90，原公式（zheng/100，封顶 95%）
+    // 在 90 分就已经给到 90% 成功率，门槛形同虚设——改为 (zheng-30)/100，封顶降到 80%、下限
+    // 降到 15%，相当于整条曲线右移+压低天花板：90 分只给 60%，要摸到 80% 封顶得堆到 110 分以上
+    buildChance(zheng) { return Math.max(0.15, Math.min(0.80, (zheng - 30) / 100)); },
     all(m) { if (!m.builds) m.builds = {}; return m.builds; },
     of(m, cityId) { return this.all(m)[cityId] || {}; },
     lv(m, cityId, type) { return this.of(m, cityId)[type] || 0; },
@@ -8400,6 +8403,11 @@
     get(m, gid) { return (m.loyalty && m.loyalty[gid] != null) ? m.loyalty[gid] : this.DEFAULT; },
     set(m, gid, v) { if (!m.loyalty) m.loyalty = {}; m.loyalty[gid] = Math.max(0, Math.min(100, Math.round(v))); },
     // 招揽/策反成功率：友谊越深、对方忠诚越低、己方名声越高，越容易得手；忠诚满格几乎打动不了
+    // 忠诚 60 是默认值：60 分以下（本就已有离心迹象）沿用原本"友谊/忠诚各占一份加法"的算法，
+    // 友谊照常起明显作用；一旦超过 60，改为在"忠诚正好等于 60 时的基础值"上按指数衰减——
+    // 60→90 这 30 点衰减到约 4.6%，忠诚从这里开始变成真正压得住友谊的硬门槛，不再是"友谊拉满
+    // 就能完全抵消忠诚"（旧公式下友谊 300、忠诚 100 仍有约 50% 成功率，明显不合理）
+    PERSUADE_DECAY_RATIO: 0.0462,   // 忠诚每超出 60 分 30 点，衰减到这个比例
     persuadeChance(m, gid) {
       const loy = this.get(m, gid);
       const fp = Bond.pts(gid);
@@ -8407,7 +8415,11 @@
       // 势力阻力：从如日中天的大家挖人，本就该比从残破小族处挖人难得多
       const fid = (m.generalFaction || {})[gid];
       const resist = fid ? (FactionFame.get(m, fid) / 8000) * 0.2 : 0;
-      return Math.max(0.05, Math.min(0.85, 0.15 + (fp / Bond.MAX_FRIEND) * 0.35 + ((100 - loy) / 100) * 0.35 + fameBonus - resist));
+      const additive = l => 0.15 + (fp / Bond.MAX_FRIEND) * 0.36 + ((100 - l) / 100) * 0.35 + fameBonus - resist;
+      if (loy <= 60) return Math.max(0.05, Math.min(0.9, additive(loy)));
+      const base60 = additive(60);
+      const decay = Math.pow(this.PERSUADE_DECAY_RATIO, (loy - 60) / 30);
+      return Math.max(0.03, Math.min(0.9, base60 * decay));
     },
     // 招揽费用随目标身价浮动（评分×4，与 Bond.recruitCost 的评分×10 同一取值逻辑但打了六折——
     // 招揽走的是忠诚/友谊/名声的暗中运作，不像明面招募入队那样要价那么足）；固定 200 金此前对高评分
