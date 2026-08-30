@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608301224";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608301304";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -10070,12 +10070,11 @@
   // 不再是同一个形状简单放大缩小，一眼就能从"造型本身"看出各城的发展规模，不必点进去才知道；
   // 塔身用势力色（var(--fac)）区分归属，屋檐/院墙统一用深褐色，全程实心填充不留空隙，
   // 不会在卫星底图上显得"发虚透明"
-  const CITY_ICON_SIZE = [39, 48, 57, 66, 78];   // 各星级对应的图标渲染宽度（px，固定视觉大小，不随地图缩放变化）
+  const CITY_ICON_SIZE = [39, 48, 57, 66, 78];   // 各星级"塔身"基准宽度（px）——见下方 pxPerUnit 说明
   function cityIconSvg(lv) {
     lv = Math.max(1, Math.min(5, lv));
-    const size = CITY_ICON_SIZE[lv - 1];
     const cx = 12, groundY = 22;
-    const storyH = 4, roofH = 3.4, shrink = 1.3;
+    const storyH = 2.3, roofH = 2, shrink = 1.3;
     let w = 8, y = groundY, body = "";
     for (let i = 0; i < lv; i++) {
       const bodyTop = y - storyH, roofTop = bodyTop - roofH;
@@ -10090,19 +10089,31 @@
     // 唯一保留的旗帜：只在五级（全图最高规格的名城）顶端出现，标志着"这是这一带数一数二的
     // 大城"，不再是三级起就挂、看不出区分度的泛用符号
     if (lv >= 5) {
-      body += `<path d="M${cx},${(y - 3.6).toFixed(1)} L${cx},${(y - 10).toFixed(1)} L${(cx + 6.5).toFixed(1)},${(y - 8.4).toFixed(1)} L${cx},${(y - 6.8).toFixed(1)} Z" fill="#e8c25a" stroke="#1a1410" stroke-width="0.8"/>`;
-      topY = y - 10;
+      body += `<path d="M${cx},${(y - 3.6).toFixed(1)} L${cx},${(y - 5.8).toFixed(1)} L${(cx + 4.5).toFixed(1)},${(y - 5).toFixed(1)} L${cx},${(y - 4.2).toFixed(1)} Z" fill="#e8c25a" stroke="#1a1410" stroke-width="0.8"/>`;
+      topY = y - 5.8;
     }
-    // 三级起两侧加院墙，暗示这是一座有城墙拱卫的市镇；级别越高院墙越宽越高
+    // 三级起两侧加院墙，暗示这是一座有城墙拱卫的市镇；级别越高院墙越宽越高。院墙尺寸比初版
+    // 收窄了不少——初版 gap=8.6/wallW 起步 5，三级一加墙 viewBox 宽度直接从二级的 16.8 涨到
+    // 29.2，涨了 74%，但下面 width 属性只从 48 涨到 57（+19%），涨得完全不够抵消 viewBox
+    // 变宽的效果，实际渲染出来塔身反而比二级更小——这正是"二级图标比三级还大"这个问题的根源
     let minX = cx - w - 3, maxX = cx + w + 3;
     if (lv >= 3) {
-      const wallH = 3 + (lv - 3) * 1.2, wallW = 5 + (lv - 3) * 2.5, wallY = groundY - wallH, gap = 8.6;
+      const wallH = 2.6 + (lv - 3) * 1, wallW = 3.5 + (lv - 3) * 1.5, wallY = groundY - wallH, gap = 6;
       body = `<rect x="${(cx - gap - wallW).toFixed(1)}" y="${wallY.toFixed(1)}" width="${wallW.toFixed(1)}" height="${wallH.toFixed(1)}" fill="#3c2f20" stroke="#1a1410" stroke-width="1"/>
         <rect x="${(cx + gap).toFixed(1)}" y="${wallY.toFixed(1)}" width="${wallW.toFixed(1)}" height="${wallH.toFixed(1)}" fill="#3c2f20" stroke="#1a1410" stroke-width="1"/>` + body;
       minX = cx - gap - wallW - 1; maxX = cx + gap + wallW + 1;
     }
     const vbX = minX, vbW = maxX - minX, vbY = topY - 1, vbH = groundY - vbY + 1;
-    return `<svg class="mcity-icon" viewBox="${vbX.toFixed(1)} ${vbY.toFixed(1)} ${vbW.toFixed(1)} ${vbH.toFixed(1)}" width="${size}" height="${Math.round(size * vbH / vbW)}">${body}</svg>`;
+    // 塔身（不含院墙）在各级之间的最宽处（首层屋檐出挑后）恒为 19.2 个 viewBox 单位，与是否
+    // 加院墙无关——按"这 19.2 个单位要渲染成 CITY_ICON_SIZE[lv-1] 像素宽"反推每单位应占的
+    // 像素数（pxPerUnit），再用这个比例去换算整个 viewBox（含院墙）的实际渲染宽高。这样不管
+    // 院墙让 viewBox 变多宽，塔身本身的像素大小始终精确对应设计好的那一档尺寸，不会像"整个
+    // viewBox 硬塞进同一个固定宽度"那样被院墙拖累缩水；院墙只会让整个图标"看起来更宽阔"，
+    // 不会反过来压缩塔身
+    const towerUnits = 19.2;
+    const pxPerUnit = CITY_ICON_SIZE[lv - 1] / towerUnits;
+    const renderW = vbW * pxPerUnit, renderH = vbH * pxPerUnit;
+    return `<svg class="mcity-icon" viewBox="${vbX.toFixed(1)} ${vbY.toFixed(1)} ${vbW.toFixed(1)} ${vbH.toFixed(1)}" width="${renderW.toFixed(1)}" height="${renderH.toFixed(1)}">${body}</svg>`;
   }
   const MapZoom = { scale: 1, x: 0, y: 0 };
   const MAP_ZOOM_MAX = 8;   // 地图最大缩放倍数，与城池图标"随缩放小幅放大"的换算共用同一个上限
