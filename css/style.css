@@ -1166,6 +1166,12 @@ html, body {
   transform-origin: 50% 100%; cursor: pointer; z-index: 1;
   --fac: #7a7a7a;
 }
+/* 日本/海路一侧城池真实经纬度间距普遍比中国窄得多，放大到底时若跟中国用同一条放大曲线，
+   图标长得比城池间距还快，反而挤成一团——改用 --zk-jp（MapUI.applyZoom 里单独算的一条放大
+   上限低得多的曲线）。城池的地理归属（geo-xx）不随占领方变化，用它挂钩比用会变的 owner 类可靠 */
+.map-city.geo-jp, .map-city.geo-sea {
+  transform: translate(-50%, -100%) scale(calc(var(--zk-jp, 1) * var(--rk, 1)));
+}
 .mcity-icon { display: block; filter: drop-shadow(0 3px 4.5px rgba(0,0,0,.65)); }
 .mcity-name {
   position: absolute; left: 50%; top: 100%; transform: translateX(-50%); margin-top: 3px;

@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608300818";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608300833";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -10136,7 +10136,10 @@
         const mine = fid && fid === m.playerFaction;
         // 城池图样按繁荣度星级取用不同大小/装饰的图标（见 cityIconSvg）——海路中转站无城建无从算繁荣度，按最低星级处理
         const lv = c.side === "sea" ? 1 : Prosper.lv(m, c.id);
-        return `<div class="map-city ${owner} ${cls}${mine ? " mine" : ""}" data-id="${c.id}"
+        // geo-xx 按城池真实地理归属（c.side，不随势力占领变化）单独挂一个类，供图标缩放曲线区分
+        // 日本一侧密度明显更高的城池群使用更收敛的放大上限（见 applyZoom 里的 --zk-jp）——
+        // owner 类会随占领方变化（比如中原势力打下了日本某城），但地理密度不会变，两者不能混用
+        return `<div class="map-city ${owner} geo-${c.side} ${cls}${mine ? " mine" : ""}" data-id="${c.id}"
           style="left:${c.x}%;top:${c.y}%;--fac:${factionColor(fid)}">
           ${cityIconSvg(lv)}
           <span class="mcity-name">${c.n}</span>
@@ -10458,6 +10461,15 @@
       const zoomProgress = (MapZoom.scale - 1) / (MAP_ZOOM_MAX - 1);
       const visualMult = 0.75 + (1.8 - 0.75) * zoomProgress;
       box.style.setProperty("--zk", (visualMult / MapZoom.scale).toFixed(4));
+      // 日本一侧城池的真实经纬度间距普遍比中国一侧密得多（近江/京都/大坂这一带尤其挤，最近的
+      // 两座城直线距离不到中国最近城池对的六分之一）——用同一条放大上限 180% 的曲线时，中国那边
+      // 地方大、放到最大照样能拉开距离，日本这边地方小，图标越放大反而挤得越死、一片糊在一起。
+      // 这里单独给日本/海路一侧算一条上限低得多（105%，基本只随缩放做最小限度的放大）的曲线，
+      // 通过 geo-jp/geo-sea 类挂到对应城池上；中国一侧的城池仍走原来 180% 上限的 --zk，两边
+      // 互不影响——这不是牺牲真实地理位置去防重叠（位置完全没动），只是放大后不让图标本身长得
+      // 比城池间距还快
+      const visualMultJp = 0.75 + (1.05 - 0.75) * zoomProgress;
+      box.style.setProperty("--zk-jp", (visualMultJp / MapZoom.scale).toFixed(4));
     },
     // 城池图标/城名的自适应缩放：同样的固定像素尺寸，在手机上（.map-svg-box 实际渲染宽度窄）
     // 显得过大，在桌面浏览器（未设上限宽度，随窗口铺得很宽）上却刚好——按当前容器实际宽度相对
