@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608300947";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608301018";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -10478,12 +10478,16 @@
       box.style.setProperty("--zk-jp", (visualMultJp / MapZoom.scale).toFixed(4));
     },
     // 城池图标/城名的自适应缩放：同样的固定像素尺寸，在手机上（.map-svg-box 实际渲染宽度窄）
-    // 显得过大，在桌面浏览器（未设上限宽度，随窗口铺得很宽）上却刚好——按当前容器实际宽度相对
-    // 一个"桌面观感恰好"的参照宽度取比例，容器越窄缩得越小，越宽最多缩回原尺寸（不再继续放大，
-    // 避免超宽显示器上图标反而失控变得更大）；与 --zk 各管一段、在 CSS 里相乘生效
+    // 显得过大，故容器越窄缩得越小（下限 50%）。但原先"越宽最多缩回 100% 原尺寸、不再继续放大"
+    // 这条上限是错的——它假设桌面浏览器只要不小于参照宽度（800px）就"刚好"，实际上一部手机
+    // （如 420px 宽）和一台桌面显示器（1400px+ 宽）只要都 ≥800px，会被这条封顶规则拉平成完全
+    // 相同的图标像素尺寸，可桌面显示器物理尺寸大得多、观看距离也更远，同样的像素大小看着明显
+    // 偏小，跟手机上不是同一套观感——玩家反馈"电脑上图标太小、好像跟手机不是同一套自适应规则"
+    // 正是这个封顶造成的。现在把上限从 100% 放宽到 150%（约 1200px 宽封顶），桌面浏览器能继续
+    // 随窗口变宽而适度放大，不再被"参照宽度"这个手机尺寸的基准锁死；与 --zk 各管一段、在 CSS 里相乘生效
     applyResponsiveScale(box) {
       const rect = box.getBoundingClientRect();
-      const rk = Math.max(0.5, Math.min(1, rect.width / 800));
+      const rk = Math.max(0.5, Math.min(1.5, rect.width / 800));
       box.style.setProperty("--rk", rk.toFixed(3));
     },
     // 以屏幕上某一点为不动点缩放（双击/双触摸点按位置放大用）：先按当前缩放/平移状态反推出
@@ -10635,7 +10639,11 @@
         }
       };
       box.onpointerdown = e => {
-        if (e.target.closest(".map-zoom-ctl")) return;
+        // 城池图标自己已经绑了 click（跳转/移动），不该再被地图背景的拖拽/双击缩放手势接管——
+        // 否则快速点两下同一座城池（比如离得太远弹了确认框/提示、玩家又点了一下）会被误判成
+        // "双击定点放大"，地图无缘无故跳到 2 倍，城池图标看着"莫名其妙变大"，且这次意外缩放
+        // 用其它方式缩回去后落点未必和原来分毫不差，让人觉得"缩小后图标和之前不一致"
+        if (e.target.closest(".map-zoom-ctl") || e.target.closest(".map-city")) return;
         pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
         document.addEventListener("pointermove", onMove);
         document.addEventListener("pointerup", onUp);
