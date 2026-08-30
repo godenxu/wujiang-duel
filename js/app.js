@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608301018";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608301047";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -10476,18 +10476,26 @@
       // 比城池间距还快
       const visualMultJp = 0.75 + (1.05 - 0.75) * zoomProgress;
       box.style.setProperty("--zk-jp", (visualMultJp / MapZoom.scale).toFixed(4));
+      this.applyResponsiveScale(box);
     },
     // 城池图标/城名的自适应缩放：同样的固定像素尺寸，在手机上（.map-svg-box 实际渲染宽度窄）
-    // 显得过大，故容器越窄缩得越小（下限 50%）。但原先"越宽最多缩回 100% 原尺寸、不再继续放大"
-    // 这条上限是错的——它假设桌面浏览器只要不小于参照宽度（800px）就"刚好"，实际上一部手机
-    // （如 420px 宽）和一台桌面显示器（1400px+ 宽）只要都 ≥800px，会被这条封顶规则拉平成完全
-    // 相同的图标像素尺寸，可桌面显示器物理尺寸大得多、观看距离也更远，同样的像素大小看着明显
-    // 偏小，跟手机上不是同一套观感——玩家反馈"电脑上图标太小、好像跟手机不是同一套自适应规则"
-    // 正是这个封顶造成的。现在把上限从 100% 放宽到 150%（约 1200px 宽封顶），桌面浏览器能继续
-    // 随窗口变宽而适度放大，不再被"参照宽度"这个手机尺寸的基准锁死；与 --zk 各管一段、在 CSS 里相乘生效
+    // 显得过大，故容器越窄缩得越小（下限 50%）；桌面浏览器（≥800px 宽）原先封顶在 100%，玩家
+    // 反馈"电脑上图标太小、好像跟手机不是同一套规则"，一度把上限直接放宽到 150%——结果闹出
+    // 更大的问题：这个放大倍数不分青红皂白地在任何缩放级别（包括缩到最小的默认全景视图）都
+    // 生效，而默认视图这个尺寸是按"最挤的几对城池刚好不重叠"精细调校过的，桌面上一律乘以 1.5
+    // 倍直接把好几处本来紧凑但不重叠的城池挤到糊在一起——这才是玩家说"移动到另一城市后所有
+    // 图标突然变大好多、缩小地图后全叠一起"的真正原因（跟移动本身无关，只是移动后大概率会看到
+    // 城池更密集的区域，才显得突出）。现在把"桌面加成"和当前缩放进度挂钩：缩放倍数越接近默认
+    // 最小值，加成越接近 0（即完全等同未加成前的 100%，默认视图的防重叠调校原样保留）；
+    // 缩放倍数越大（放大细看），加成越接近满值 150%——这样默认视图在任何设备宽度下都不变、
+    // 不会重新引入重叠，只有玩家主动放大（点击城市聚焦、双击定点、缩放至全境等）以后，桌面端
+    // 才会看到明显更大的图标，且加成进度按 3 倍速趋近满值（缩放到约 1/3 全程即可拿到接近满额
+    // 的加成，不用非缩放到頂才有效果）
     applyResponsiveScale(box) {
       const rect = box.getBoundingClientRect();
-      const rk = Math.max(0.5, Math.min(1.5, rect.width / 800));
+      const rkRaw = Math.max(0.5, Math.min(1.5, rect.width / 800));
+      const zoomProgress = (MapZoom.scale - 1) / (MAP_ZOOM_MAX - 1);
+      const rk = rkRaw <= 1 ? rkRaw : 1 + (rkRaw - 1) * Math.min(1, zoomProgress * 3);
       box.style.setProperty("--rk", rk.toFixed(3));
     },
     // 以屏幕上某一点为不动点缩放（双击/双触摸点按位置放大用）：先按当前缩放/平移状态反推出
@@ -10573,8 +10581,7 @@
     },
     bindZoom(box) {
       if (!box) return;
-      this.applyZoom(box);
-      this.applyResponsiveScale(box);
+      this.applyZoom(box);   // 内部已同步调用 applyResponsiveScale，无需重复调用
       // 响应式缩放只需要在窗口尺寸变化时重算一次，用全局唯一的一个监听器、每次都现查当前
       // .map-svg-box（而不是闭包捕获这次 render() 传入的 box）——render() 每次都会整体重建
       // map-wrap 的 DOM，若照搬"每次 bindZoom 都新增一个 resize 监听"的写法，旧监听器绑的
