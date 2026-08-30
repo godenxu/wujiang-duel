@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608301304";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608301500";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -252,8 +252,13 @@
           // 主公乃一方之尊，非区区财帛可动——要他麾下的地盘与人马，只能堂堂正正灭其势力
           btn = `<div class="bond-gifts"><button class="gift-btn" disabled>👑 一方主公，非金帛可招（唯灭其势力）</button></div>`;
         } else {
-          const chance = Math.round(Loyalty.persuadeChance(mFac, g.id) * 100);
-          btn = `<div class="bond-gifts"><button class="gift-btn" id="bond-persuade">🗣️ 招揽（约 ${chance}% 成功 · ${Loyalty.persuadeCost(g.id)} 金）</button></div>`;
+          const coolLeft = Loyalty.persuadeCooldownLeft(mFac, g.id);
+          if (coolLeft > 0) {
+            btn = `<div class="bond-gifts"><button class="gift-btn" disabled>🗣️ 招揽（新近碰壁，还需 ${coolLeft} 天冷却）</button></div>`;
+          } else {
+            const chance = Math.round(Loyalty.persuadeChance(mFac, g.id) * 100);
+            btn = `<div class="bond-gifts"><button class="gift-btn" id="bond-persuade">🗣️ 招揽（约 ${chance}% 成功 · ${Loyalty.persuadeCost(g.id)} 金）</button></div>`;
+          }
         }
       }
       factionHtml = `<div class="bond-box"><div class="bond-line">${facLine}</div>${btn}</div>`;
@@ -7577,8 +7582,10 @@
   const PROSPER_SEED_SUM = { high: 24, normal: 12, low: 0 };
   const Prosper = {
     MAX: 5,
-    // 六项城建等级总和 0~60，每跨过一个门槛长一颗星，5 星封顶（总和达 48 即满星，留有余量不必抠到 60）
-    BUILD_SUM_STEP: [12, 24, 36, 48],   // 升至 2/3/4/5 星所需的城建等级总和门槛
+    // 六项城建等级总和 0~60，每跨过一个门槛长一颗星，5 星封顶——5 星门槛从 48 提到 56：此前只
+    // 需总和过八成就能封顶，AI 势力单城不到一年就能冲到 5 星，"最后一星"没有体现出应有的分量；
+    // 现在最后一星要啃下总和的九成三，越往后越难，也让 5 星城池真正显得来之不易
+    BUILD_SUM_STEP: [12, 24, 36, 56],   // 升至 2/3/4/5 星所需的城建等级总和门槛
     buildSum(m, cityId) { return Object.keys(BUILD_TYPES).reduce((s, t) => s + Buildings.lv(m, cityId, t), 0); },
     lv(m, cityId) {
       const sum = this.buildSum(m, cityId);
@@ -7916,6 +7923,12 @@
       { gold: 500, mats: 0 }, { gold: 800, mats: 1 }, { gold: 1200, mats: 1 }, { gold: 1800, mats: 2 }, { gold: 2600, mats: 2 },
       { gold: 3600, mats: 3 }, { gold: 4800, mats: 3 }, { gold: 6200, mats: 4 }, { gold: 7800, mats: 4 }, { gold: 9600, mats: 5 },
     ],
+    // 营建成功率随"政治"资质浮动——政治资质好，工程如期完工；资质差，钱粮照掏，工程却可能烂尾
+    // （耗资照旧，只是不长城建等级，跟招揽/施计等"先扣费再摇骰子"的既有套路一致）。AI 势力用
+    // 麾下政治前五均值（FactionTop5），玩家自选势力用自己亲自出马时的政治资质（RPG.heroGeneral().zheng）——
+    // 两边共用这同一条公式，此前 AI 版本的 build() 完全没看政治，各家诸侯修城速度整齐划一，
+    // 玩家自己捐修更是从来没有失败一说，这里一并补上
+    buildChance(zheng) { return Math.max(0.25, Math.min(0.95, zheng / 100)); },
     all(m) { if (!m.builds) m.builds = {}; return m.builds; },
     of(m, cityId) { return this.all(m)[cityId] || {}; },
     lv(m, cityId, type) { return this.of(m, cityId)[type] || 0; },
@@ -7960,6 +7973,13 @@
       if (cost.mats > 0 && (Armory.data.materials[matType.k] || 0) < cost.mats) { toast(`${matType.n}材料不足（需 ${cost.mats} 份，本城铁匠铺专精类）`); return false; }
       if (!Bond.spend(cost.gold)) { toast(`金币不足（捐修需 ${cost.gold} 金）`); return false; }
       if (cost.mats > 0) { Armory.data.materials[matType.k] -= cost.mats; Armory.save(); }
+      // 政治资质不够，钱粮材料照旧扣下，但工程可能烂尾——不长城建等级，见 buildChance
+      const zheng = RPG.heroGeneral().zheng;
+      if (Math.random() >= this.buildChance(zheng)) {
+        Campaign.save();
+        toast(`⚠️ 政务不熟，${cityName(cityId)}${BUILD_TYPES[type].n}营建不利，耗资照旧却未能竣工（材料已用去，可再筹钱粮重修）`);
+        return false;
+      }
       if (!this.all(m)[cityId]) this.all(m)[cityId] = {};
       this.all(m)[cityId][type] = cur + 1;
       // 繁荣度二十六期起直接由城建等级总和实时算出（见 Prosper.lv/buildSum），这里升了城建
@@ -8396,16 +8416,33 @@
       const g = DB.get(gid);
       return g ? ratingScore(Armory.geared(g, gid)) * 4 : 800;
     },
+    // 招揽冷却与反噬：此前失败没有任何代价——金币照扣不假，但"友谊不受影响"、也没有冷却，
+    // 玩家只要金币够多就能对同一人反复尝试，哪怕单次成功率只有三成，试上几次累计成功率也逼近
+    // 必然，"给钱大概率能笼络"说的其实是"反复给钱"而非"一次给钱"。现在失败后加一段冷却
+    // （期间无法再对同一人出手），并顺带小幅拉高对方现有忠诚（越劝反而越坚定），屡败屡战不再是
+    // 稳赚不赔的策略
+    PERSUADE_COOLDOWN_DAYS: 20,
+    PERSUADE_BACKLASH: 6,
+    persuadeCooldownLeft(m, gid) { return Math.max(0, ((m.persuadeCooldown || {})[gid] || 0) - m.day); },
     // 招揽成功：对方转投玩家现效力的势力（玩家在野则等同于策反其在野）；忠诚归零重算——新东家尚需时间收服人心
     persuade(m, gid) {
       const oldFid0 = m.generalFaction[gid];
       // 主公不可招揽（UI 已置灰，此处再兜一道，防止从其它入口绕过）——要一方之尊俯首，唯有灭其势力
       if (oldFid0 && isFactionLord(oldFid0, gid)) { toast(`「${DB.get(gid).name}」乃${factionName(oldFid0)}主公，岂是金帛可动——唯灭其势力，方能收其人`); return false; }
+      const left = this.persuadeCooldownLeft(m, gid);
+      if (left > 0) { toast(`「${DB.get(gid).name}」新近碰壁、戒心正盛，还需 ${left} 天才能再劝`); return false; }
       const cost = this.persuadeCost(gid);
       if (!Bond.spend(cost)) { toast(`金币不足（招揽需 ${cost} 金）`); return false; }
       const g = DB.get(gid);
       const chance = this.persuadeChance(m, gid);
-      if (Math.random() >= chance) { toast(`「${g.name}」不为所动，招揽未果（耗资 ${cost} 金，友谊不受影响）`); return false; }
+      if (Math.random() >= chance) {
+        if (!m.persuadeCooldown) m.persuadeCooldown = {};
+        m.persuadeCooldown[gid] = m.day + this.PERSUADE_COOLDOWN_DAYS;
+        this.set(m, gid, this.get(m, gid) + this.PERSUADE_BACKLASH);
+        Campaign.save();
+        toast(`「${g.name}」不为所动，招揽未果（耗资 ${cost} 金，此举反倒更坚定了对方的忠心，${this.PERSUADE_COOLDOWN_DAYS} 天内不宜再劝）`);
+        return false;
+      }
       const oldFid = m.generalFaction[gid];
       const oldName = oldFid ? factionDef(oldFid).n : "在野";
       const newName = m.playerFaction ? factionDef(m.playerFaction).n : "在野";
@@ -8804,7 +8841,9 @@
     /* ---- 营建：二十六期起繁荣度改为纯城建等级总和实时算出，这个动作原本"50%概率修城建，
      * 50%概率抽象经营给几点繁荣"的写法里，后一半已经没有意义（繁荣度不再能凭空加点）——
      * 改为始终挑一座本势力治下、还有城建未封顶的城市，直接升一级，花费按该级实际造价结算
-     * （不再是与升到几级无关的固定300金），找不到可升的城市（六项全满）则本次动作落空 */
+     * （不再是与升到几级无关的固定300金），找不到可升的城市（六项全满）则本次动作落空。
+     * q 是本势力政治前五均值：政治资质差，钱照花但工程可能烂尾，不长城建等级——此前完全没用
+     * 到 q，各家诸侯不分政治高低修城速度整齐划一，单城势力不到一年就能冲到 5 星，见 buildChance */
     build(m, fid, q, push) {
       const cities = CITIES.filter(c => c.side !== "sea" && cityFactionId(m, c.id) === fid).map(c => c.id)
         .filter(cid => cityBuildOptions(cid).some(t => Buildings.lv(m, cid, t) < Buildings.MAX_LV));
@@ -8814,6 +8853,10 @@
       const t = opts[randInt(0, opts.length - 1)];
       const curLv = Buildings.lv(m, cid, t);
       if (!FactionGold.spend(m, fid, Buildings.COSTS[curLv].gold)) return false;
+      if (Math.random() >= Buildings.buildChance(q)) {
+        push("move", fid, `⚠️ ${factionName(fid)}于${cityName(cid)}营建${BUILD_TYPES[t].n}不利，工程未能竣工`);
+        return true;   // 耗资已经砸下去了，不是"无处可施展"，不该退回军令重抽
+      }
       if (!Buildings.all(m)[cid]) Buildings.all(m)[cid] = {};
       Buildings.all(m)[cid][t] = curLv + 1;
       push("move", fid, `🏗️ ${factionName(fid)}于${cityName(cid)}修筑${BUILD_TYPES[t].n}至 ${curLv + 1} 级`);
