@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608300833";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608300947";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -7279,11 +7279,11 @@
   };
 
   /* ============================================================
-   *  天下地图：40 城（中原二十城 + 战国二十城）+ 对马岛海路中转
-   *  坐标为风格化的相对位置（%），道路为邻接关系，非精确测绘；
-   *  hefei/higo/bungo/bizen/omi 五城坐标经过微调，避免与其无直接道路的另一条 ROADS
-   *  边几乎共线重叠——原坐标下这类"城池恰好落在别处两城连线正中间"会让玩家误以为
-   *  该城与那条线的两端都直接相连（实际上邻接关系仅由 ROADS 决定，与视觉上是否共线无关）
+   *  天下地图：40 城（中原二十城 + 战国十九城 + 对马岛海路中转）
+   *  坐标由真实经纬度换算而来（见 build_map4.py），道路（ROADS）仅表示邻接关系，
+   *  与视觉上是否共线无关；坐标不做防重叠人工位移——试过一版会把靠得很近但真实
+   *  方位重要的城池挤到错误的相对位置（如近江被推到尾张附近），故已放弃该做法，
+   *  完全信任真实经纬度换算结果，重叠留给地图缩放/图标放大策略去缓解
    * ============================================================ */
   const CITIES = [
     { id: "chengdu", n: "成都", side: "cn", x: 10.24, y: 50.38 },
@@ -7321,7 +7321,6 @@
     { id: "bungo", n: "丰后", side: "jp", x: 73.05, y: 38.66 },
     { id: "izumo", n: "出云", side: "jp", x: 75.65, y: 28.95 },
     { id: "bizen", n: "备前", side: "jp", x: 78.34, y: 32.19 },
-    { id: "omi", n: "近江", side: "jp", x: 82.76, y: 30.64 },
     { id: "echizen", n: "越前", side: "jp", x: 83.56, y: 25.81 },
     { id: "kaga", n: "加贺", side: "jp", x: 84.54, y: 23.53 },
     { id: "mino", n: "美浓", side: "jp", x: 84.79, y: 28.72 },
@@ -7330,13 +7329,18 @@
   ];
   const ROADS = [
     ["chengdu", "hanzhong"], ["hanzhong", "chang_an"], ["chang_an", "luoyang"], ["luoyang", "xuchang"],
-    ["luoyang", "ye"], ["xuchang", "xuzhou"], ["xuchang", "jingzhou"], ["jingzhou", "chaisang"],
+    // 邺城原先只有一条路通洛阳，孤零零的度数为 1——补一条通许昌的路，距离虽不算近（10.68），
+    // 但正是官渡之战袁绍、曹操两军对垒的那条官道，既解决孤立问题也有历史呼应
+    ["luoyang", "ye"], ["ye", "xuchang"], ["xuchang", "xuzhou"], ["xuchang", "jingzhou"], ["jingzhou", "chaisang"],
     ["chaisang", "jianye"], ["jianye", "xuzhou"], ["chengdu", "jingzhou"],
     ["tianshui", "hanzhong"], ["tianshui", "chang_an"],
     ["baidicheng", "chengdu"], ["baidicheng", "jiangling"], ["jiangling", "jingzhou"],
     ["shangyong", "hanzhong"], ["shangyong", "jingzhou"],
     ["wancheng", "luoyang"], ["wancheng", "xuchang"], ["wancheng", "jingzhou"],
-    ["runan", "xuchang"], ["xiapi", "xuzhou"],
+    // 汝南原先只有一条路通许昌，孤零零的度数为 1，且与同属袁术势力的寿春之间完全没有直接
+    // 或经自家城池中转的通路，往来须绕道曹魏地盘——现补上离得更近的宛城（同曹魏，4.19，比
+    // 原有的许昌 4.75 还近）和自家的寿春（5.84），解决孤立与"自家两城互通要绕敌国"两个问题
+    ["runan", "xuchang"], ["runan", "wancheng"], ["runan", "shouchun"], ["xiapi", "xuzhou"],
     ["shouchun", "xuzhou"], ["shouchun", "hefei"], ["hefei", "jianye"],
     ["wuchang", "chaisang"], ["wuchang", "jianye"],
     ["satsuma", "aki"], ["aki", "kyoto"], ["kyoto", "osaka"], ["kyoto", "owari"], ["osaka", "owari"],
@@ -7344,8 +7348,11 @@
     ["echigo", "oushu"], ["odawara", "oushu"],
     ["higo", "satsuma"], ["bungo", "satsuma"], ["bungo", "izumo"], ["izumo", "aki"],
     ["bizen", "aki"], ["bizen", "osaka"],
-    ["omi", "kyoto"], ["omi", "owari"], ["echizen", "kyoto"], ["echizen", "kaga"], ["kaga", "echigo"],
-    ["mino", "owari"], ["mino", "omi"], ["mikawa", "owari"], ["mikawa", "sunpu"],
+    ["echizen", "kyoto"], ["echizen", "kaga"], ["kaga", "echigo"],
+    // 近江被砍掉后，美浓原有的两条路（通尾张、通近江）少了一条，变成孤零零的度1——补一条通
+    // 三河（2.33，仅次于尾张的最近邻），尾张/美浓/三河三国边境本就互相接壤，织田、德川结盟
+    // 的清洲同盟正是沿这条线展开，地理和史实都说得通
+    ["mino", "owari"], ["mino", "mikawa"], ["mikawa", "owari"], ["mikawa", "sunpu"],
     ["hitachi", "odawara"], ["hitachi", "oushu"],
     ["jianye", "tsushima"], ["xuzhou", "tsushima"], ["tsushima", "satsuma"], ["tsushima", "higo"],
   ];
@@ -7389,7 +7396,7 @@
     { id: "jingzhou_f", n: "荆州", side: "cn", lord: "刘表", color: "#a02fb1", cities: ["jingzhou", "jiangling"] },
     { id: "dongwu", n: "东吴", side: "cn", lord: "孙权", color: "#b12f7d", cities: ["chaisang", "jianye", "wuchang"] },
     { id: "oda", n: "织田", side: "jp", lord: "织田信长", color: "#7b2fb1", cities: ["owari", "mino"] },
-    { id: "kyoto_f", n: "京都", side: "jp", lord: "足利义昭", color: "#b12fa6", cities: ["kyoto", "omi", "echizen"] },
+    { id: "kyoto_f", n: "京都", side: "jp", lord: "足利义昭", color: "#b12fa6", cities: ["kyoto", "echizen"] },
     { id: "toyotomi", n: "丰臣", side: "jp", lord: "丰臣秀吉", color: "#b12f65", cities: ["osaka", "bizen"] },
     { id: "takeda", n: "武田", side: "jp", lord: "武田信玄", color: "#b13a2f", cities: ["kai"] },
     { id: "tokugawa", n: "德川", side: "jp", lord: "德川家康", color: "#b17b2f", cities: ["sunpu", "mikawa"] },
@@ -7524,7 +7531,6 @@
     bungo: { n: "丰后铳阵", icon: "🛡", mode: "teamBattle" },
     izumo: { n: "出云远征队", icon: "🗺", mode: "conquest" },
     bizen: { n: "备前刀会", icon: "🏆", mode: "cup" },
-    omi: { n: "近江论战场", icon: "🏯", mode: "duel" },
     echizen: { n: "越前一乘谷", icon: "🔥", mode: "gauntlet" },
     kaga: { n: "加贺一向塔", icon: "🗼", mode: "tower" },
     mino: { n: "美浓斋藤馆", icon: "🤝", mode: "duo" },
@@ -7550,7 +7556,7 @@
     hanzhong: "mine", baidicheng: "mine", shangyong: "mine", hefei: "mine",
     chengdu: "farm", runan: "farm", jiangling: "farm", shouchun: "farm",
     chang_an: "caravan", xuzhou: "caravan", chaisang: "caravan", wuchang: "caravan",
-    kyoto: "tavern", omi: "tavern", sunpu: "tavern", bizen: "tavern",
+    kyoto: "tavern", sunpu: "tavern", bizen: "tavern",
     kai: "ranch", echigo: "ranch", oushu: "ranch", mino: "ranch",
     izumo: "mine", satsuma: "mine", kaga: "mine", echizen: "mine",
     owari: "farm", hitachi: "farm", higo: "farm", aki: "farm",
