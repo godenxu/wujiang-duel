@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608301047";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608301118";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -10095,8 +10095,14 @@
       const m = Campaign.ensureMap();   // 旧版本存档自动补建地图状态，保证"继续游戏"总能进入
       if (!m || !RPG.char) { showScreen("home"); return; }
       if (!m.curCity) { m.curCity = RPG.char.side === "jp" ? "kyoto" : "luoyang"; Campaign.save(); }
-      this.render();
+      // 先把地图屏切到可见（display:flex），再 render()——顺序反过来的话，render() 里
+      // bindZoom/applyResponsiveScale 会在 .map-svg-box 还是 display:none 的时候去测它的
+      // getBoundingClientRect()，隐藏元素测出来宽高恒为 0，--rk 直接被地板值（50%）卡死，
+      // 图标显得比正常小一大截；直到玩家随手点一次缩放，重新测量到真实宽度才恢复正常——这正是
+      // "初次打开程序时图标偏小、点任何缩放后又不一样"的根因，与真实设备宽度无关，纯粹是
+      // 首次渲染时机比屏幕真正可见早了一步
       showScreen("map");
+      this.render();
     },
     render() {
       const m = Campaign.mapState();
@@ -10478,24 +10484,31 @@
       box.style.setProperty("--zk-jp", (visualMultJp / MapZoom.scale).toFixed(4));
       this.applyResponsiveScale(box);
     },
-    // 城池图标/城名的自适应缩放：同样的固定像素尺寸，在手机上（.map-svg-box 实际渲染宽度窄）
-    // 显得过大，故容器越窄缩得越小（下限 50%）；桌面浏览器（≥800px 宽）原先封顶在 100%，玩家
-    // 反馈"电脑上图标太小、好像跟手机不是同一套规则"，一度把上限直接放宽到 150%——结果闹出
-    // 更大的问题：这个放大倍数不分青红皂白地在任何缩放级别（包括缩到最小的默认全景视图）都
-    // 生效，而默认视图这个尺寸是按"最挤的几对城池刚好不重叠"精细调校过的，桌面上一律乘以 1.5
-    // 倍直接把好几处本来紧凑但不重叠的城池挤到糊在一起——这才是玩家说"移动到另一城市后所有
-    // 图标突然变大好多、缩小地图后全叠一起"的真正原因（跟移动本身无关，只是移动后大概率会看到
-    // 城池更密集的区域，才显得突出）。现在把"桌面加成"和当前缩放进度挂钩：缩放倍数越接近默认
-    // 最小值，加成越接近 0（即完全等同未加成前的 100%，默认视图的防重叠调校原样保留）；
-    // 缩放倍数越大（放大细看），加成越接近满值 150%——这样默认视图在任何设备宽度下都不变、
-    // 不会重新引入重叠，只有玩家主动放大（点击城市聚焦、双击定点、缩放至全境等）以后，桌面端
-    // 才会看到明显更大的图标，且加成进度按 3 倍速趋近满值（缩放到约 1/3 全程即可拿到接近满额
-    // 的加成，不用非缩放到頂才有效果）
+    // 城池图标/城名的自适应缩放：参照宽度原先取 800px（大致是"手机与桌面的分界"），但完全没
+    // 考虑到 .map-svg-box 在≥600px 宽屏断点会切到"地图变矮（高度 clamp 从 260~380 收窄到
+    // 200~340）+ 下方双栏"这套完全不同的布局——折叠屏展开后宽度落在 600~900px 这个区间，
+    // 用旧参照算出来的 --rk（0.8~1.0）看着"没怎么缩"，但地图框实际宽度只有桌面的一半都不到，
+    // 城池间距（按百分比换算的像素间距）本就窄得多，图标却几乎没跟着等比缩小，好几处并不算
+    // 特别拥挤的城池群直接糊成一片——这才是玩家说"折叠屏展开后图标明显交叠，折叠状态和电脑
+    // 浏览器上却是合适的"的真正原因：折叠、展开、桌面三种状态下地图框的实际宽度差了好几倍，
+    // 只有"跟宽度成正比"才能让城池间距和图标大小的比例在所有设备上保持一致。现改为统一按桌面
+    // 浏览器已验证观感正确的参照宽度（1376px，对应常见 1400px 视口下地图框的实际渲染宽度）
+    // 折算比例，不再用 800 这个仅在窄屏断点内才适用的参照——手机（含折叠屏折叠态）本就远小于
+    // 1376px，天然落入下限（50%），与之前的手感一致；折叠屏展开态（600~900px）现在会按真实
+    // 宽度比例大幅收缩，不再是"看着没怎么缩"的 0.8~1.0；桌面浏览器在参照宽度附近仍是 100%，
+    // 数值上与放宽 --rk 上限那一轮验证过的桌面手感保持一致，且默认视图下高于 100% 的部分依旧
+    // 只在实际放大后才逐步生效（见下方 zoomProgress 换算），不会重新引入默认视图的重叠问题
     applyResponsiveScale(box) {
       const rect = box.getBoundingClientRect();
-      const rkRaw = Math.max(0.5, Math.min(1.5, rect.width / 800));
+      // 默认视图的基准值严格按真实宽度比例算，任何设备都一样——这是防重叠的安全线，谁都不能超
+      const rkBase = Math.max(0.5, Math.min(1.5, rect.width / 1376));
+      // "放大后桌面能进一步变大"这个加成只留给真正意义上的桌面/大屏（≥1000px，折叠屏展开态
+      // 常见的 600~900px 区间被排除在外），且加成上限（150%）与设备实际宽度脱钩、不再是
+      // rkBase 自己涨上去的——否则像 1376px 这种恰好等于参照宽度的常见桌面窗口，rkBase 正好
+      // 卡在 100% 整、涨不出任何"放大后更大"的空间，等于放大功能对这类窗口完全失效
+      const rkCap = rect.width >= 1000 ? Math.max(rkBase, 1.5) : rkBase;
       const zoomProgress = (MapZoom.scale - 1) / (MAP_ZOOM_MAX - 1);
-      const rk = rkRaw <= 1 ? rkRaw : 1 + (rkRaw - 1) * Math.min(1, zoomProgress * 3);
+      const rk = rkCap <= rkBase ? rkBase : rkBase + (rkCap - rkBase) * Math.min(1, zoomProgress * 3);
       box.style.setProperty("--rk", rk.toFixed(3));
     },
     // 以屏幕上某一点为不动点缩放（双击/双触摸点按位置放大用）：先按当前缩放/平移状态反推出
@@ -12295,7 +12308,10 @@
         ${meritRanking ? GridBattle.meritRankingHtml(meritRanking, { limit: 8 }) : ""}
         <div class="btns"><button class="btn-primary" id="bw-close">${heroIn ? "返回天下地图" : "知道了"}</button></div>
       </div>`, { modal: true });
-      $("#bw-close").onclick = () => { closeOverlay(); this.render(); showScreen("map"); };
+      // 先切到地图屏（可能是从别的界面弹出的边境战报，此时地图屏还是隐藏的）再 render()——
+      // 顺序反了的话 render() 里量 .map-svg-box 尺寸时屏幕还是 display:none，量出来恒为 0，
+      // 图标会被地板值卡得偏小，见 MapUI.open() 里的同类注释
+      $("#bw-close").onclick = () => { closeOverlay(); showScreen("map"); this.render(); };
     },
     // 宿营夜袭：若当前城池本地武将中有敌方阵营成员，有 15% 概率被其中一人偷袭，
     // 复用与「刺杀」完全相同的结算通道（m.activeAssassin）——主角获胜则对方六维受创，落败则己方受创
@@ -12382,7 +12398,8 @@
           <div class="wdesc">${runnerHtml}</div>
           <div class="btns"><button class="btn-primary" id="tn-close">返回天下地图</button></div>
         </div>`, { modal: true });
-        $("#tn-close").onclick = () => { closeOverlay(); this.render(); showScreen("map"); };
+        // 同 resolveBorderWar 的 bw-close：先切到地图屏再 render()，避免隐藏状态下量出 0 宽度
+        $("#tn-close").onclick = () => { closeOverlay(); showScreen("map"); this.render(); };
       };
       Tournament.begin(parts);
     },
@@ -12693,8 +12710,10 @@
           MapUI.confirmPostTravel(m, postDest);
           // 从「全部城市」这张只读表格发起的直达：走完驿传后要把玩家带回天下地图去看新位置，
           // 而不是留在原地——这一点与驿站快马面板/地图点城两条既有入口（本就已在地图屏）不同
+          // 先切到地图屏再调 postTravel——它内部末尾会 render()，若地图屏还隐藏着，量出的
+          // .map-svg-box 宽度恒为 0，图标会被地板值卡得偏小，见 MapUI.open() 里的同类注释
           const goBtn = $("#pt-go");
-          if (goBtn) goBtn.onclick = () => { MapUI.postTravel(m, postDest.id); showScreen("map"); };
+          if (goBtn) goBtn.onclick = () => { showScreen("map"); MapUI.postTravel(m, postDest.id); };
         };
       }
     },
