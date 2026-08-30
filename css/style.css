@@ -1181,12 +1181,29 @@ html, body {
 /* 所在城池/势力城池：图标改用金色辉光标记身份，不再靠色块勾边——drop-shadow 天然贴合剪影轮廓 */
 .map-city.mine .mcity-icon { filter: drop-shadow(0 0 6px rgba(232,194,90,.9)) drop-shadow(0 3px 4.5px rgba(0,0,0,.6)); }
 .map-city.cur { z-index: 3; }
-.map-city.cur .mcity-icon { filter: drop-shadow(0 0 7.5px var(--cn-gold)) drop-shadow(0 0 4.5px var(--cn-gold)); }
+/* 当前所在城池：光晕加强到"图标发光 + 底部一圈会脉动的金色光晕"双重表达——原来只有图标本身的
+   drop-shadow，在卫星底图纹理复杂的区域很容易被盖过去、存在感不够；现在额外在锚点（图标落地
+   的位置）叠一圈径向渐变光晕，并配一个缓慢的呼吸动画，不管背景多花都能一眼看到"我在这" */
+.map-city.cur .mcity-icon { filter: drop-shadow(0 0 9px var(--cn-gold)) drop-shadow(0 0 5px var(--cn-gold)); }
 .map-city.cur .mcity-name { color: var(--cn-gold); font-size: 21px; background: rgba(0,0,0,.58); }
+.map-city.cur::before {
+  content: ""; position: absolute; left: 50%; bottom: -3px; width: 34px; height: 14px;
+  transform: translateX(-50%);
+  background: radial-gradient(ellipse, rgba(232,194,90,.95) 0%, rgba(232,194,90,.4) 55%, transparent 78%);
+  border-radius: 50%; z-index: -1; pointer-events: none;
+  animation: cur-city-halo 1.6s ease-in-out infinite;
+}
+@keyframes cur-city-halo {
+  0%, 100% { opacity: .75; transform: translateX(-50%) scale(1); }
+  50% { opacity: 1; transform: translateX(-50%) scale(1.22); }
+}
 /* 相邻可达城池：不再用勾边光圈标注——势力配色本已够挤，额外的一圈色只添混淆；
    "可去"信号改由点击后的目标城市列表/操作面板承担，地图上只保留 z-index 让其略压在远城之上 */
 .map-city.adj { z-index: 2; }
-.map-city.far { opacity: .62; }
+/* 远处城池原先压到 .62 透明度，在卫星底图纹理复杂的区域看着像是"图标本身透明、能看见底下
+   道路"——其实是图标整体被调淡了，不是真的镂空。调高到 .85，图标仍比当前/相邻城池弱化一档
+   （维持层次），但不至于被底图纹理"吃掉" */
+.map-city.far { opacity: .85; }
 
 /* 宿营夜报：撑满可视高度、内部滚动、按类别分节全量播报 */
 .night-report { max-height: 90vh; display: flex; flex-direction: column; padding-bottom: 12px; }

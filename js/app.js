@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608301118";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608301224";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -10065,25 +10065,44 @@
   // 卫星地形底图（Natural Earth 1:50m 明暗浮雕地形栅格，裁剪范围比矢量海岸线略大，
   // 露出朝鲜半岛/台湾岛等背景陪衬）在同一套归一化坐标系下的放置位置——见 assets/map/relief.jpg
   const MAP_RELIEF_RECT = { x: 0.98, y: 1.01, w: 98.04, h: 98.01 };
-  // 城池图样：地图上不再用色块名牌代表城市，改用一座城池剪影图标，按繁荣度星级（Prosper.lv，1~5）
-  // 逐级放大、逐级加旗——星级越高的名城，图标越大、越气派（3 级起挂旗，5 级旗更大更醒目），
-  // 一眼就能从地图上看出各城的发展规模，不必点进去才知道
-  const CITY_ICON_PATH = "M2,22 L2,13 L5,13 L5,9 L9,9 L9,13 L15,13 L15,9 L19,9 L19,13 L22,13 L22,22 Z";
-  const CITY_ICON_SIZE = [39, 48, 57, 66, 78];   // 各星级对应的图标边长（px，固定视觉大小，不随地图缩放变化）
+  // 城池图样：地图上用一座宝塔式城池剪影代表城市，按繁荣度星级（Prosper.lv，1~5）逐级
+  // 加盖楼层——星级越高的名城，塔身越高、样式越复杂（三级起两侧加院墙、五级顶端加旗），
+  // 不再是同一个形状简单放大缩小，一眼就能从"造型本身"看出各城的发展规模，不必点进去才知道；
+  // 塔身用势力色（var(--fac)）区分归属，屋檐/院墙统一用深褐色，全程实心填充不留空隙，
+  // 不会在卫星底图上显得"发虚透明"
+  const CITY_ICON_SIZE = [39, 48, 57, 66, 78];   // 各星级对应的图标渲染宽度（px，固定视觉大小，不随地图缩放变化）
   function cityIconSvg(lv) {
-    const size = CITY_ICON_SIZE[Math.max(0, Math.min(4, lv - 1))];
-    let flag = "", topPad = 0;
-    if (lv >= 3) {
-      const big = lv >= 5;
-      const fh = big ? 10 : 7, fw = big ? 7 : 5;
-      topPad = fh + 2;
-      flag = `<line x1="12" y1="9" x2="12" y2="${9 - fh}" stroke="#8a6a2a" stroke-width="1"/>
-        <path d="M12,${9 - fh} L${12 + fw},${9 - fh + 2} L12,${9 - fh + 4} Z" fill="#e8c25a"/>`;
+    lv = Math.max(1, Math.min(5, lv));
+    const size = CITY_ICON_SIZE[lv - 1];
+    const cx = 12, groundY = 22;
+    const storyH = 4, roofH = 3.4, shrink = 1.3;
+    let w = 8, y = groundY, body = "";
+    for (let i = 0; i < lv; i++) {
+      const bodyTop = y - storyH, roofTop = bodyTop - roofH;
+      const overhang = w + 1.6, nextW = Math.max(3.2, w - shrink);
+      body += `<rect x="${(cx - w).toFixed(1)}" y="${bodyTop.toFixed(1)}" width="${(w * 2).toFixed(1)}" height="${storyH}" fill="var(--fac)" stroke="#1a1410" stroke-width="1"/>`;
+      body += `<path d="M${(cx - overhang).toFixed(1)},${bodyTop.toFixed(1)} L${(cx + overhang).toFixed(1)},${bodyTop.toFixed(1)} L${(cx + nextW).toFixed(1)},${roofTop.toFixed(1)} L${(cx - nextW).toFixed(1)},${roofTop.toFixed(1)} Z" fill="#4a3826" stroke="#1a1410" stroke-width="1"/>`;
+      y = roofTop; w = nextW;
     }
-    const vbH = 24 + topPad;
-    return `<svg class="mcity-icon" viewBox="0 -${topPad} 24 ${vbH}" width="${size}" height="${Math.round(size * vbH / 24)}">
-      <path d="${CITY_ICON_PATH}" fill="var(--fac)" stroke="#1a1410" stroke-width="1.3"/>${flag}
-    </svg>`;
+    // 宝顶尖钉，塔身收顶用
+    body += `<line x1="${cx}" y1="${y.toFixed(1)}" x2="${cx}" y2="${(y - 3).toFixed(1)}" stroke="#8a6a2a" stroke-width="1.2"/><circle cx="${cx}" cy="${(y - 3.6).toFixed(1)}" r="1.3" fill="#e8c25a"/>`;
+    let topY = y - 4.9;
+    // 唯一保留的旗帜：只在五级（全图最高规格的名城）顶端出现，标志着"这是这一带数一数二的
+    // 大城"，不再是三级起就挂、看不出区分度的泛用符号
+    if (lv >= 5) {
+      body += `<path d="M${cx},${(y - 3.6).toFixed(1)} L${cx},${(y - 10).toFixed(1)} L${(cx + 6.5).toFixed(1)},${(y - 8.4).toFixed(1)} L${cx},${(y - 6.8).toFixed(1)} Z" fill="#e8c25a" stroke="#1a1410" stroke-width="0.8"/>`;
+      topY = y - 10;
+    }
+    // 三级起两侧加院墙，暗示这是一座有城墙拱卫的市镇；级别越高院墙越宽越高
+    let minX = cx - w - 3, maxX = cx + w + 3;
+    if (lv >= 3) {
+      const wallH = 3 + (lv - 3) * 1.2, wallW = 5 + (lv - 3) * 2.5, wallY = groundY - wallH, gap = 8.6;
+      body = `<rect x="${(cx - gap - wallW).toFixed(1)}" y="${wallY.toFixed(1)}" width="${wallW.toFixed(1)}" height="${wallH.toFixed(1)}" fill="#3c2f20" stroke="#1a1410" stroke-width="1"/>
+        <rect x="${(cx + gap).toFixed(1)}" y="${wallY.toFixed(1)}" width="${wallW.toFixed(1)}" height="${wallH.toFixed(1)}" fill="#3c2f20" stroke="#1a1410" stroke-width="1"/>` + body;
+      minX = cx - gap - wallW - 1; maxX = cx + gap + wallW + 1;
+    }
+    const vbX = minX, vbW = maxX - minX, vbY = topY - 1, vbH = groundY - vbY + 1;
+    return `<svg class="mcity-icon" viewBox="${vbX.toFixed(1)} ${vbY.toFixed(1)} ${vbW.toFixed(1)} ${vbH.toFixed(1)}" width="${size}" height="${Math.round(size * vbH / vbW)}">${body}</svg>`;
   }
   const MapZoom = { scale: 1, x: 0, y: 0 };
   const MAP_ZOOM_MAX = 8;   // 地图最大缩放倍数，与城池图标"随缩放小幅放大"的换算共用同一个上限
@@ -10614,7 +10633,7 @@
       let lastTapTime = 0, lastTapX = 0, lastTapY = 0;   // 双击/双触摸点按放大用，见 onUp
       const onMove = e => {
         if (!pointers.has(e.pointerId)) return;
-        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, city: pointers.get(e.pointerId).city });
         if (pointers.size === 2) {
           const pts = [...pointers.values()];
           const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
@@ -10634,14 +10653,17 @@
         }
       };
       const onUp = e => {
+        const info = pointers.get(e.pointerId);
         pointers.delete(e.pointerId);
         if (pointers.size < 2) pinchDist = 0;
         if (pointers.size === 0 && dragging) {
           dragging = false;
           if (moved) { box._justDragged = true; setTimeout(() => { box._justDragged = false; }, 60); }
-          else {
+          else if (!(info && info.city)) {
             // 双击/双触摸点按放大：与上一次点按的时间、位置都足够接近才算——点在哪就以哪为中心放大，
-            // 每次放大到当前倍数的两倍（封顶 8 倍），而不是一步到位跳到最大，手感更接近常见地图应用
+            // 每次放大到当前倍数的两倍（封顶 8 倍），而不是一步到位跳到最大，手感更接近常见地图应用。
+            // 这次点按若是落在城池图标上（info.city），完全跳过双击判定——既不检查也不记录
+            // lastTapTime，城池自己的 click 已经处理跳转，不该被地图背景的双击缩放抢戏
             const now = Date.now();
             const tapDist = Math.hypot(e.clientX - lastTapX, e.clientY - lastTapY);
             if (now - lastTapTime < 350 && tapDist < 30) {
@@ -10659,12 +10681,14 @@
         }
       };
       box.onpointerdown = e => {
-        // 城池图标自己已经绑了 click（跳转/移动），不该再被地图背景的拖拽/双击缩放手势接管——
-        // 否则快速点两下同一座城池（比如离得太远弹了确认框/提示、玩家又点了一下）会被误判成
-        // "双击定点放大"，地图无缘无故跳到 2 倍，城池图标看着"莫名其妙变大"，且这次意外缩放
-        // 用其它方式缩回去后落点未必和原来分毫不差，让人觉得"缩小后图标和之前不一致"
-        if (e.target.closest(".map-zoom-ctl") || e.target.closest(".map-city")) return;
-        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (e.target.closest(".map-zoom-ctl")) return;
+        // 手指/鼠标按在城池图标上也要记下来（city:true），但不能像之前那样直接排除在拖拽手势
+        // 之外——排除后，手指按在图标上再拖动会彻底没反应（既不拖不了地图，城池自己的 click
+        // 又因为有位移而不触发），在手机上很影响体验。现在改成"按下时正常加入拖拽/捏合跟踪，
+        // 只在最后判定要不要触发双击缩放时，才根据 city 标记跳过"——拖动照常生效，双击缩放的
+        // 误触发问题（见下面 onUp 里 info.city 的判断）单独解决，两者不冲突
+        const onCity = !!e.target.closest(".map-city");
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, city: onCity });
         document.addEventListener("pointermove", onMove);
         document.addEventListener("pointerup", onUp);
         document.addEventListener("pointercancel", onUp);
