@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const APP_VERSION = "202608301629";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
+  const APP_VERSION = "202608312148";   // 发版时的 UTC+8 时间戳（YYYYMMDD+HHMM），与 sw.js 缓存版本同步生成
   const DB_KEY = "wujiang_db_v1";
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -3447,7 +3447,7 @@
     open() {
       this.gen++;
       this.side = "cn";
-      this.rpg = false; this.external = null; this.troopScale = null;
+      this.rpg = false; this.external = null; this.troopScale = null; this.reinforcements = [];
       GridZoom.scale = 1; GridZoom.x = 0; GridZoom.y = 0;
       const draft = s => { const p = DB.bySide(s).slice(); shuffle(p); return p.slice(0, 10).map(clone); };
       this.mine = draft("cn"); this.foes = draft("jp");
@@ -3465,6 +3465,9 @@
       // 城池驻军覆盖：委外战场按各自实际出阵兵力与「按统帅推算的自然兵力」之比换算缩放系数，
       // 使接战兵力真正取决于所在城池的驻军存量；不传则维持原有纯统帅推算（如小游戏自由试玩）
       this.troopScale = opts.troopScale || null;
+      // 途中援军：边境战/攻城战专属（见 Reinforce），每员各自带着到场所需的剩余回合数，
+      // 由 endTurnCycle→checkReinforceArrivals 逐回合倒数、到点即插入战场（见 spawnReinforcement）
+      this.reinforcements = (opts.reinforcements || []).map(r => ({ ...r }));
       GridZoom.scale = 1; GridZoom.x = 0; GridZoom.y = 0;
       this.mine = myRoster.slice(0, 10);
       this.foes = foeRoster.slice(0, 10);
@@ -4547,6 +4550,7 @@
       this.myUnits.forEach(u => { u.acted = false; });
       this.foeUnits.forEach(u => { u.acted = false; });
       this.log(`—— 第 ${this.turnN} 回合 ——`);
+      this.checkReinforceArrivals();
       this.renderBattle();
       // 委外战场全自动推演（主角未亲历，或玩家中途点了「委托」）：敌方回合刚结束、回到我方回合时，
       // 接着自动跑我方这一轮，不必等玩家点击——与 endMyTurn 里"我方跑完自动接敌方回合"首尾相扣，
@@ -4569,6 +4573,43 @@
       if (!this.myUnits.some(u => u.alive)) { this.finish(false, "我军全部溃退、全线崩溃"); return true; }
       if (!this.foeUnits.some(u => u.alive)) { this.finish(true, "敌军全部溃退、全线崩溃"); return true; }
       return false;
+    },
+    // 途中援军：每打完一整回合，尚未到场的援军各自的剩余回合数就减 1——减到 0 即在此刻加入战场；
+    // 若这场仗（野战）打完了还没减到 0，剩余回合数会原样带到紧随其后的攻城战里继续倒数（见 finishExternal/resolveSiege），
+    // 不会因为换了一场仗就重新按路程算一遍，两阵合计的到场时间才等于当初按地理距离折算出的那个总时长
+    checkReinforceArrivals() {
+      if (!this.reinforcements || !this.reinforcements.length) return;
+      this.reinforcements.forEach(r => {
+        if (r.joined) return;
+        r.remainingRounds--;
+        if (r.remainingRounds <= 0) this.spawnReinforcement(r);
+      });
+    },
+    // 援军入场：按其自身兵力/领兵武将现算一套独立缩放系数（不沿用主力那一套，来源城池、领兵武将都不是一回事），
+    // 就近摆进本方后两排的空位——找不到空位（后排恰好摆满）就直接落在本方大营格
+    spawnReinforcement(r) {
+      r.joined = true;
+      const arr = r.side === "my" ? this.myUnits : this.foeUnits;
+      const natural = r.generals.reduce((s, g) => s + g.tong * 100, 0) || 1;
+      const scale = r.troops / natural;
+      const rows = r.side === "my" ? [this.ROWS - 2, this.ROWS - 1] : [0, 1];
+      const mid = Math.floor(this.COLS / 2);
+      const order = [];
+      for (let d = 0; d <= this.COLS; d++) {
+        if (mid - d >= 0) order.push(mid - d);
+        if (d > 0 && mid + d < this.COLS) order.push(mid + d);
+      }
+      const occupied = new Set([...this.myUnits, ...this.foeUnits].filter(u => u.alive).map(u => u.r + "," + u.c));
+      const cells = [];
+      order.forEach(c => rows.forEach(rr => { if (!occupied.has(rr + "," + c)) cells.push([rr, c]); }));
+      const camp = r.side === "my" ? this.myCamp : this.foeCamp;
+      r.generals.forEach((g, i) => {
+        const u = this.makeUnit(g, r.side, "cone", scale);
+        const cell = cells[i] || [camp.r, camp.c];
+        u.r = cell[0]; u.c = cell[1];
+        arr.push(u);
+      });
+      this.log(`🐎 ${r.side === "my" ? "我方" : "敌方"}援军抵达战场：${r.generals.map(g => g.name).join("、")} 率部 ${r.troops.toLocaleString()} 加入战局！`);
     },
     // 功勋榜结算：存活至终局者再加一份「力战存活」功勋，随后按功勋值把双方所有参战武将一并排出名次——
     // 供 finish() 自身的战报卡片、以及委外战场（边境战/攻城战）的 res.meritRanking 共用同一份数据
@@ -4656,6 +4697,9 @@
         myTroopsLeft: Math.max(0, Math.round(this.totalHp("my"))),
         foeTroopsLeft: Math.max(0, Math.round(this.totalHp("foe"))),
         meritRanking: meritRanking || this.finalizeMerit(),
+        // 到此战结束仍未赶到战场的援军：交回调用方处理——野战交给紧随的攻城战继续倒数，
+        // 攻城战（已是这场边境战的最后一阵）则原样退回来源城池，见 resolveBorderWar/resolveSiege
+        pendingReinforcements: (this.reinforcements || []).filter(r => !r.joined),
       };
       const onDone = this.external.onDone;
       this.external = null;
@@ -8152,6 +8196,52 @@
       Campaign.save();
       toast(`🚩 ${cityName(cityId)}募得新兵 ${n.toLocaleString()}，耗 ${cost} 金（现有驻军 ${this.get(m, cityId).toLocaleString()}）`);
       return true;
+    },
+  };
+  /* ============================================================
+   *  边境战援军：出征/防守时可从相邻己方城池呼叫援军，按真实地理距离折算到场所需天数，
+   *  再换算成网格战斗的回合数——计时贯穿野战与紧随其后的攻城战两个 GridBattle 实例，不重新起算，
+   *  没赶上任何一场仗的援军原样退回来源城池，不折损一兵一卒（详见 BALANCE.md 对应章节）
+   * ============================================================ */
+  const Reinforce = {
+    ROUNDS_PER_DAY: 3,   // 换算值，无实测数据支撑，按"多数援军能在野战中后期到、远的要等到攻城战"估算，可随手感调整
+    MIN_DAYS: 2, MAX_DAYS: 20,
+    MAX_GENERALS: 5,
+    days(fromCity, toCity) {
+      const p = cityDef(fromCity), q = cityDef(toCity);
+      return Math.max(this.MIN_DAYS, Math.min(this.MAX_DAYS, Math.round(Math.hypot(p.x - q.x, p.y - q.y))));
+    },
+    etaRounds(fromCity, toCity) { return this.days(fromCity, toCity) * this.ROUNDS_PER_DAY; },
+    // 来源城市候选：目标城池相邻、属于该势力、本战已出阵的那座城不算、且城中确有已现身武将可领兵——
+    // 纯抽兵没人带队没法出征，直接不列入候选，省得选了却在 build() 里落空
+    candidates(m, fid, anchorCity, excludeCity) {
+      return adjCities(anchorCity).filter(id => id !== excludeCity && cityFactionId(m, id) === fid && this.draftGenerals(m, fid, id).length > 0);
+    },
+    draftGenerals(m, fid, sourceCity) {
+      return DB.list.filter(g => m.generalFaction[g.id] === fid && m.appeared.includes(g.id) && m.assign[g.id] === sourceCity).slice(0, this.MAX_GENERALS);
+    },
+    // 组装一份援军：立即从来源城池抽走对应比例驻军（没赶上仗会原样退回，见 resolveSiege/resolveBorderWar 的退兵处理）
+    build(m, fid, anchorCity, sourceCity, ratio) {
+      if (!sourceCity || !ratio) return null;
+      const generals = this.draftGenerals(m, fid, sourceCity);
+      if (!generals.length) return null;
+      const troops = Math.round(Garrison.get(m, sourceCity) * ratio / 100);
+      if (troops <= 0) return null;
+      Garrison.spend(m, sourceCity, troops);
+      return { faction: fid, sourceCity, troops, generals, remainingRounds: this.etaRounds(sourceCity, anchorCity), anchorCity, joined: false };
+    },
+    // AI 呼叫援军：只有己方此战兵力明显弱于对面才会呼叫（不吃亏就不多此一举），从候选城中驻军最多的一座抽调，
+    // 抽调比例随兵力劣势幅度在 20%~60% 间浮动——劣势越大调得越多，但不会抽空自家候选城的全部家底
+    aiDecide(m, fid, anchorCity, excludeCity, myCommit, foeCommit) {
+      if (myCommit >= foeCommit * 1.1) return null;
+      const opts = this.candidates(m, fid, anchorCity, excludeCity);
+      if (!opts.length) return null;
+      opts.sort((x, y) => Garrison.get(m, y) - Garrison.get(m, x));
+      const sourceCity = opts[0];
+      if (Garrison.get(m, sourceCity) < 500) return null;
+      const deficit = Math.min(1, (foeCommit - myCommit) / Math.max(1, foeCommit));
+      const ratio = Math.round(Math.max(20, Math.min(60, 20 + deficit * 80)));
+      return this.build(m, fid, anchorCity, sourceCity, ratio);
     },
   };
   /* ============================================================
@@ -11896,7 +11986,8 @@
       const homeland = edges.filter(([a, b]) => cityOwnerSide(m, a) === heroCountry || cityOwnerSide(m, b) === heroCountry);
       const pool = mine.length ? mine : (homeland.length ? homeland : edges);
       this._sortieMode = false;
-      this.openBorderWarPicker(m, pool[randInt(0, pool.length - 1)]);
+      const pickedEdge = pool[randInt(0, pool.length - 1)];
+      this.openBorderWarPicker(m, pickedEdge, pickedEdge[1]);   // 月末国战无天然的"攻/守"之分，约定以边的第二个城池作援军锚点
       return true;
     },
     /* ---- AI 主动犯境：填补玩家现效力势力（含自立当主与仕官）从不被 AI 主动攻打的空白 ----
@@ -11921,7 +12012,7 @@
         const fa = cityFactionId(m, a), fb = cityFactionId(m, b);
         const foe = fa === fid ? fb : fa;
         const to = fa === fid ? a : b, from = fa === fid ? b : a;
-        return { edge: [a, b], foe,
+        return { edge: [a, b], foe, to,
           score: (FactionAI.warStrength(m, foe, from) - FactionAI.defStrength(m, fid, to)) + FactionAI.hostility(m, foe, fid) * 3 };
       }).filter(x => !FactionAI.weary(m, x.foe));
       if (!scored.length) return false;
@@ -11932,7 +12023,7 @@
       FactionAI.setWeary(m, pick.foe, 3);
       toast(`⚠️ ${factionName(pick.foe)}举兵来犯！`);
       this._sortieMode = false;
-      this.openBorderWarPicker(m, pick.edge);
+      this.openBorderWarPicker(m, pick.edge, pick.to);   // 援军锚点＝被犯境的这座己方城池
       return true;
     },
     /* 主动出征：玩家随时可从本势力城池向接壤的非本势力城池发兵——耗 1 行动力 + 3 道本势力军令
@@ -11977,14 +12068,16 @@
         Campaign.save();
         closeOverlay();
         this._sortieMode = true;
-        this.openBorderWarPicker(m, [m.curCity, target]);
+        this.openBorderWarPicker(m, [m.curCity, target], target);   // 援军锚点＝进攻目标城池
       });
       $("#sortie-close").onclick = () => { closeOverlay(); this.render(); };
     },
-    openBorderWarPicker(m, edge) {
+    openBorderWarPicker(m, edge, anchorCity) {
       this._bwPicks = new Set();
       this._bwRatio = 60;   // 出阵比例滑杆默认 60%：折中于「倾巢而出」与「固守为主」之间
       this._bwSupport = null;   // 声援哪一方势力（非本势力冲突时需玩家自行抉择，见 renderBorderWarPicker）
+      this._bwAnchor = anchorCity != null ? anchorCity : edge[1];   // 援军锚点：出征时是进攻目标，被犯境时是己方受攻城池
+      this._bwReinforceCity = null; this._bwReinforceRatio = 0;   // 玩家本人是否呼叫援军（AI 一方另由 aiDecide 自行判断）
       this.renderBorderWarPicker(m, edge);
     },
     // 自选出战：只列出主角本人与麾下团队成员供勾选——这两类由玩家亲自决定是否出战；
@@ -12050,6 +12143,10 @@
       // 出阵比例滑杆只在"此战确系本势力"时才由玩家亲自操盘；若只是声援同属本国的他家内战，
       // 兵力调度权本不在玩家手上，改由该势力 AI 按敌我战力对比自行决定（见 resolveBorderWar 的 commitOf）
       const isOwnFactionWar = heroFaction === m.playerFaction;
+      // 援军候选：目标锚点（进攻时是敌城，防守时是己方受攻之城）相邻、属于本势力、且确有已现身武将可领兵的城池——
+      // 只有真打这场仗的自己一方（isOwnFactionWar）才由玩家亲自决定要不要叫、叫哪座、抽几成；
+      // 对面/声援他国内战那一方的援军决策交给 Reinforce.aiDecide，见 resolveBorderWar
+      const reinforceOpts = isOwnFactionWar ? Reinforce.candidates(m, heroFaction, this._bwAnchor, heroCity) : [];
       openOverlay(`<div class="result-card detail-card">
         <h1>⚔️ 边境战事</h1>
         <div class="wdesc">冲突爆发：<b>${cityName(a)}（${defA.n}）</b> vs <b>${cityName(b)}（${defB.n}）</b>，你声援 <b>${factionDef(heroFaction).n}</b> 一方。主角本人一经勾选必定亲历野战；团队成员纵经点选，仍需看当日调度，按概率随军，未必人人到场（其余已现身武将由候选池随机补满，无需你操心）。此战分两阵：先打<b>野战</b>，得胜一方才能乘胜杀奔败方城下再打一场<b>攻城战</b>，攻克方能真正夺城。勾选自己即视为亲历野战，若野战得胜，你将随军继续亲征攻城——攻克可得所夺城池金币日产出 <b>${this.BORDER_WAR_GOLD_DAYS}</b> 倍犒赏，未克也有一份约合十天产出的掳掠慰劳金；野战落败或不勾选自己，则此战胜负不动你的钱袋。</div>
@@ -12061,6 +12158,19 @@
         <input type="range" id="bw-ratio" min="10" max="100" step="5" value="${this._bwRatio}" style="width:100%">
         <div class="wdesc" id="bw-ratio-label">${this.bwRatioLabel(m, heroCity, this._bwRatio)}</div>` : `
         <div class="wdesc">🚩 此战并非本势力亲征，出阵比例由 <b>${factionDef(heroFaction).n}</b> 按敌我战力对比自行调度，不由你操盘。</div>`}
+        ${isOwnFactionWar && reinforceOpts.length ? `
+        <div class="mc-sect">🐎 呼叫援军<small>（可选，来自${cityName(this._bwAnchor)}周边己方城池，按路程折算到场需要的回合数——多数会在野战中后期赶到，远的野战打完还没到就接着在攻城战里等，没赶上任何一仗则原样退回原城）</small></div>
+        <div class="buff-list" id="bw-reinforce-list" style="max-height:22vh;overflow-y:auto">
+          <button class="buff-btn bw-reinforce-city ${this._bwReinforceCity == null ? "active" : ""}" data-id="">
+            <span class="bi">🚫</span><span class="bt"><b>不派援军</b></span>
+          </button>
+          ${reinforceOpts.map(id => `<button class="buff-btn bw-reinforce-city ${this._bwReinforceCity === id ? "active" : ""}" data-id="${id}">
+            <span class="bi">🏯</span><span class="bt"><b>${cityName(id)}</b><small>驻军 ${Garrison.get(m, id).toLocaleString()} · 约 ${Reinforce.days(id, this._bwAnchor)} 天可达</small></span>
+          </button>`).join("")}
+        </div>
+        ${this._bwReinforceCity != null ? `
+        <input type="range" id="bw-reinforce-ratio" min="10" max="100" step="5" value="${this._bwReinforceRatio || 30}" style="width:100%">
+        <div class="wdesc" id="bw-reinforce-ratio-label">${this.bwRatioLabel(m, this._bwReinforceCity, this._bwReinforceRatio || 30)}</div>` : ""}` : ""}
         <div class="btns"><button class="btn-primary" id="bw-go">开战</button></div>
       </div>`, { modal: true });
       const bindPickBtns = () => {
@@ -12088,6 +12198,19 @@
         $("#bw-ratio").oninput = (e) => {
           this._bwRatio = +e.target.value;
           $("#bw-ratio-label").innerHTML = this.bwRatioLabel(m, heroCity, this._bwRatio);
+        };
+      }
+      // 援军来源可选项不多（相邻己方城池），点选后整屏重渲染即可，不必像武将名单那样费心保滚动位置
+      $$(".bw-reinforce-city").forEach(btn => btn.onclick = () => {
+        const id = btn.dataset.id || null;
+        this._bwReinforceCity = id;
+        this._bwReinforceRatio = id ? (this._bwReinforceRatio || 30) : 0;
+        this.renderBorderWarPicker(m, edge);
+      });
+      if ($("#bw-reinforce-ratio")) {
+        $("#bw-reinforce-ratio").oninput = (e) => {
+          this._bwReinforceRatio = +e.target.value;
+          $("#bw-reinforce-ratio-label").innerHTML = this.bwRatioLabel(m, this._bwReinforceCity, this._bwReinforceRatio);
         };
       }
       $("#bw-go").onclick = () => { const ids = [...picks]; const ratio = this._bwRatio; closeOverlay(); this.resolveBorderWar(m, edge, ids, ratio, heroFaction); };
@@ -12185,8 +12308,10 @@
       Garrison.spend(m, a, aCommit);
       Garrison.spend(m, b, bCommit);
 
-      let poolA = DB.list.filter(g => m.generalFaction[g.id] === factionA && m.appeared.includes(g.id)).map(clone);
-      let poolB = DB.list.filter(g => m.generalFaction[g.id] === factionB && m.appeared.includes(g.id)).map(clone);
+      // 根因修复：野战出阵武将此前不问驻地、全势力已现身武将统一混战，逻辑上"人在千里之外的城池却出现在这场边境战"；
+      // 改为与攻城战 defenderPool 同一口径——只有 m.assign 记录驻扎在这座前线城池的武将才会出现在这场野战里
+      let poolA = DB.list.filter(g => m.generalFaction[g.id] === factionA && m.appeared.includes(g.id) && m.assign[g.id] === a).map(clone);
+      let poolB = DB.list.filter(g => m.generalFaction[g.id] === factionB && m.appeared.includes(g.id) && m.assign[g.id] === b).map(clone);
       shuffle(poolA); shuffle(poolB);
       // 守将必上阵：其城在此战线上时置于本方阵前，另享 +3 全维死守加成（_guard 标记）——不论其本人形式上效忠谁，
       // 既已受托驻守此城，此役便与本城共存亡
@@ -12250,17 +12375,33 @@
       const foeRoster = heroCity === a ? rosterB : rosterA;
       const heroIn = !!heroCity && myRoster.some(g => g.id === -1);
 
+      // 援军：亲征一方（heroFaction）由玩家在 renderBorderWarPicker 里的选择决定要不要叫、叫哪座、抽几成；
+      // 另一方（永远轮不到玩家操盘的那一侧）交由 Reinforce.aiDecide 按己方是否吃亏自行判断。
+      // 锚点统一取 this._bwAnchor（进攻时是敌城，防守时是己方受攻之城），双方援军的路程都从各自来源城量到这座锚点，
+      // 到场后先设法赶上这场野战，赶不上就把剩余回合数原样带去紧随其后的攻城战（见 finishExternal/resolveSiege）
+      const anchorCity = this._bwAnchor != null ? this._bwAnchor : b;
+      const reinforceA = factionA === heroFaction
+        ? Reinforce.build(m, factionA, anchorCity, this._bwReinforceCity, this._bwReinforceRatio)
+        : Reinforce.aiDecide(m, factionA, anchorCity, a, aCommit, bCommit);
+      const reinforceB = factionB === heroFaction
+        ? Reinforce.build(m, factionB, anchorCity, this._bwReinforceCity, this._bwReinforceRatio)
+        : Reinforce.aiDecide(m, factionB, anchorCity, b, bCommit, aCommit);
+      this._bwReinforceCity = null; this._bwReinforceRatio = 0;   // 用后即焚，避免残留到下一场战事
+      const sideOfFaction = fid => ((fid === factionA) === (heroCity === a)) ? "my" : "foe";
+      const reinforcements = [reinforceA, reinforceB].filter(Boolean).map(r => ({ ...r, side: sideOfFaction(r.faction) }));
+
       GridBattle.beginExternal(myRoster, foeRoster, heroCountry, {
         rpg: true,             // 返回键归属战役层（回天下地图而非首页）
         observe: !heroIn,      // 主角未被抽中：全自动推演，无需任何点击
         troopScale: { mine: heroCity === a ? heroCommit : foeCommit, foe: heroCity === a ? foeCommit : heroCommit },
+        reinforcements,
         onDone: (res) => {
           // 野战只决出「谁能打到对方城下」，城池是否易主留给随后的攻城战（resolveSiege）定夺；
           // 主角只有在己方野战得胜、且本人幸存时才随军继续攻城，否则（含己方落败）此后一律全自动推演
           const fieldWinnerFaction = res.playerWon === (heroCity === a) ? factionA : factionB;
           const heroWonField = fieldWinnerFaction === heroFaction;
           const heroFought = heroIn && heroWonField && res.mySurvivors.some(g => g.id === -1);
-          this.resolveSiege(m, edge, fieldWinnerFaction, res, heroFought, heroIn, heroCity === a);
+          this.resolveSiege(m, edge, fieldWinnerFaction, res, heroFought, heroIn, heroCity === a, res.pendingReinforcements);
         },
       });
     },
@@ -12268,7 +12409,7 @@
     // 守方＝当前驻守该城的己现身武将（含守将，套城墙守备加成）+ 该城尚未出征的留守驻军（军事一期的"留守"在此终于派上用场）。
     // 守方若一兵一将俱无，视同空城，兵不血刃直接开城，不必再打一场；否则复用野战演武的排兵斗将/挥军破阵流程再打一场攻城战。
     // heroInFieldA 记录主角在野战中处于 a 城一方（true）还是 b 城一方（false），供折算幸存军属于攻方还是守方
-    resolveSiege(m, edge, fieldWinnerFaction, fieldRes, heroFought, heroIn, heroInFieldA) {
+    resolveSiege(m, edge, fieldWinnerFaction, fieldRes, heroFought, heroIn, heroInFieldA, pendingReinforcements) {
       const [a, b] = edge;
       const factionA = cityFactionId(m, a), factionB = cityFactionId(m, b);
       const heroCountry = RPG.char.side;
@@ -12282,6 +12423,15 @@
       const attackerSurvivors = (attackerIsMine ? fieldRes.mySurvivors : fieldRes.foeSurvivors).map(clone);
       const attackerTroops = attackerIsMine ? fieldRes.myTroopsLeft : fieldRes.foeTroopsLeft;
 
+      // 野战阶段还没赶到战场的援军，此刻续算：进攻方（此刻已确定是哪一方）的援军原样带入攻城战继续倒数；
+      // 防守方援军只有当初呼叫时瞄准的锚点恰好就是这座真被攻城的城池才继续有效（比如己方主力反倒打赢了野战、
+      // 城根本没被围，这份援军就没了用武之地）——两种落空的情形都直接原样退回来源城池，不折损一兵一卒
+      const carriedReinforce = [];
+      (pendingReinforcements || []).forEach(r => {
+        if (r.faction === attackerFaction || (r.faction === loserFaction && r.anchorCity === targetCity)) carriedReinforce.push(r);
+        else Garrison.add(m, r.sourceCity, r.troops);
+      });
+
       let defenderPool = DB.list.filter(g => m.generalFaction[g.id] === loserFaction && m.appeared.includes(g.id) && m.assign[g.id] === targetCity).map(clone);
       const gid = Guard.all(m)[targetCity];
       if (gid != null) {
@@ -12292,7 +12442,8 @@
       const attackerName = factionDef(attackerFaction).n;
 
       if (!defenderPool.length) {
-        // 城中一兵一将俱无：兵不血刃，直接开城，无需再打一场
+        // 城中一兵一将俱无：兵不血刃，直接开城，无需再打一场——援军此时也已无仗可打，一并原样退回
+        carriedReinforce.forEach(r => Garrison.add(m, r.sourceCity, r.troops));
         toast(`🏳️ ${cityName(targetCity)}城中空虚，${attackerName}大军兵不血刃，长驱直入！`);
         this.finalizeBorderWar(m, edge, true, attackerFaction, targetCity, attackerCity, heroFought,
           heroFought && attackerSurvivors.some(g => g.id === -1), fieldRes.kills,
@@ -12315,12 +12466,19 @@
       const myTroops = attackerIsMine ? attackerTroops : defenderTroops;
       const foeTroops = attackerIsMine ? defenderTroops : attackerTroops;
 
+      // 攻城战里的援军仍按己方/敌方归位：攻方援军（faction===attackerFaction）永远归入攻方阵营；
+      // 防守方援军能走到这里，已由前面的过滤确认锚点确实对得上这座城，归入守方阵营
+      const reinforcements = carriedReinforce.map(r => ({ ...r, side: (r.faction === attackerFaction) === attackerIsMine ? "my" : "foe" }));
+
       toast(`⚔️ 野战得胜，${attackerName}大军直逼${cityName(targetCity)}城下，攻城战一触即发！`);
       GridBattle.beginExternal(myRoster, foeRoster, heroCountry, {
         rpg: true,
         observe: !heroFought,   // 主角只有随野战得胜之军才继续亲征攻城，否则全自动推演
         troopScale: { mine: myTroops, foe: foeTroops },
+        reinforcements,
         onDone: (siegeRes) => {
+          // 攻城战已是这场边境战的最后一阵，连这里都没赶到的援军彻底没仗可打了，原样退回来源城池
+          (siegeRes.pendingReinforcements || []).forEach(r => Garrison.add(m, r.sourceCity, r.troops));
           const attackerWonSiege = attackerIsMine ? siegeRes.playerWon : !siegeRes.playerWon;
           const attackerTroopsLeft = attackerIsMine ? siegeRes.myTroopsLeft : siegeRes.foeTroopsLeft;
           const defenderTroopsLeft = attackerIsMine ? siegeRes.foeTroopsLeft : siegeRes.myTroopsLeft;
@@ -13423,10 +13581,59 @@
             <span>${f.n}<small>${f.key === this.data.font ? "当前使用" : "点击切换"}</small></span>
           </button>`).join("")}
         </div>
+        <div class="mc-sect">💾 存档管理</div>
+        <div class="wdesc">存档都存在这台设备的浏览器里，清除浏览器数据会一并清空——建议定期导出备份到文件，换设备或清完数据后可用「导入存档」找回。</div>
+        <div class="menu map-menu-free">
+          <button class="menu-btn" id="settings-export"><span>⬇️ 导出存档<small>保存为文件，可自行再转存到网盘/聊天工具</small></span></button>
+          <button class="menu-btn" id="settings-import"><span>⬆️ 导入存档<small>从之前导出的文件恢复（会覆盖当前存档）</small></span></button>
+        </div>
+        <input type="file" id="settings-import-file" accept=".json,application/json" style="display:none">
         <div class="btns"><button class="btn-ghost" id="settings-close">关闭</button></div>
       </div>`, { modal: true });
       $$(".settings-font-btn").forEach(b => b.onclick = () => this.setFont(b.dataset.font));
+      $("#settings-export").onclick = () => SaveManager.exportSave();
+      $("#settings-import").onclick = () => $("#settings-import-file").click();
+      $("#settings-import-file").onchange = (e) => { const f = e.target.files[0]; if (f) SaveManager.importSave(f); };
       $("#settings-close").onclick = () => closeOverlay();
+    },
+  };
+  /* ============================================================
+   *  存档导出/导入：本作是纯静态 PWA，存档全部落在 localStorage 里，玩家一旦手动清浏览器数据
+   *  （很多浏览器"清缓存"选项本身就顺带勾了"网站数据"）就再也找不回——没有账号体系、没有后台
+   *  服务器可以托底。这里补一条"手动导出成文件/从文件导入"的退路：导出的文件躺在设备的下载
+   *  目录里，跟浏览器数据毫无关系，清多少次缓存都不受影响；也可以用来在换机/换浏览器时搬家，
+   *  或者主动传到网盘/聊天工具里当云备份用
+   * ============================================================ */
+  const SaveManager = {
+    // 动态扫描所有 wujiang_ 前缀的 key，而非写死列表——以后新增存档字段无需再改这里
+    keys() { return Object.keys(localStorage).filter(k => k.startsWith("wujiang_")); },
+    exportSave() {
+      const data = {};
+      this.keys().forEach(k => { data[k] = localStorage.getItem(k); });
+      const payload = { app: "wujiang-duel", version: 1, exportedAt: Date.now(), data };
+      const blob = new Blob([JSON.stringify(payload)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const d = new Date();
+      const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+      a.href = url; a.download = `wujiang-save-${stamp}.json`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast("💾 存档已导出，请妥善保存这个文件");
+    },
+    importSave(file) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const payload = JSON.parse(reader.result);
+          if (!payload || payload.app !== "wujiang-duel" || !payload.data) { toast("⚠️ 文件格式不对，不是本作的存档文件"); return; }
+          if (!confirm("导入将覆盖当前所有存档（角色/进度/武将库/宝物库等），确定要继续吗？")) return;
+          Object.entries(payload.data).forEach(([k, v]) => { if (typeof v === "string") localStorage.setItem(k, v); });
+          toast("✅ 导入成功，即将刷新页面");
+          setTimeout(() => location.reload(), 800);
+        } catch (e) { toast("⚠️ 读取失败，文件可能已损坏"); }
+      };
+      reader.readAsText(file);
     },
   };
 
@@ -13457,6 +13664,10 @@
     $("#app-ver").textContent = APP_VERSION;
     RPG.load();   // 提前载入角色：友谊/金币的累计以其存在为前提
     syncHomeButtons();
+    // 申请持久化存储：防不住玩家自己手动清浏览器数据，但能大幅降低浏览器在设备存储紧张时
+    // "自动清理不常用网站数据"这种情况下把存档一并误删的概率——纯粹多一层保险，静默请求，
+    // 不阻塞任何流程，被拒绝也无所谓（大多数浏览器本就要看"使用频率/是否已收藏"等信号才会批准）
+    if (navigator.storage && navigator.storage.persist) { navigator.storage.persist().catch(() => {}); }
 
     // 首屏需用户交互才能启动音频
     let audioStarted = false;
@@ -13564,7 +13775,7 @@
 
   // 势力系统的推演调参需要能脱离 UI 直接跑上百天（逐日点「宿营」既慢又会被各种弹窗打断），
   // 故与 window.Skill / window.FieldBattle 同例，导出一个只读的自动化测试句柄
-  window.__wj = { Campaign, FactionAI, FactionFame, FactionOrders, FactionGold, FactionTop5, Loyalty, PlayerRank, Garrison, Population, Prosper, Bond, RPG, MapUI, MapZoom, Buildings, BUILD_TYPES, cityBuildOptions, Estate, Armory, Rewards, DB, CITIES, FACTIONS, cityFactionId, factionCityCount, factionName, liveFactionIds, isRealFaction, adjCities, factionDef, isFactionLord, factionGenerals, FieldFX, GridBattle, ArmoryUI };
+  window.__wj = { Campaign, FactionAI, FactionFame, FactionOrders, FactionGold, FactionTop5, Loyalty, PlayerRank, Garrison, Population, Prosper, Bond, RPG, MapUI, MapZoom, Buildings, BUILD_TYPES, cityBuildOptions, Estate, Armory, Rewards, DB, CITIES, FACTIONS, cityFactionId, factionCityCount, factionName, liveFactionIds, isRealFaction, adjCities, factionDef, isFactionLord, factionGenerals, FieldFX, GridBattle, ArmoryUI, SaveManager, Settings, Reinforce };
 
   document.addEventListener("DOMContentLoaded", init);
 })();
